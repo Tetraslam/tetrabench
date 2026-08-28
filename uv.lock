@@ -2145,6 +2145,7 @@ name = "tetrabench"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
+    { name = "boto3" },
     { name = "harbor", extra = ["modal"] },
     { name = "modal" },
     { name = "platformdirs" },
@@ -2164,6 +2165,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "boto3", specifier = "==1.43.83" },
     { name = "harbor", extras = ["modal"], specifier = "==0.22.0" },
     { name = "modal", specifier = "==1.5.4" },
     { name = "platformdirs", specifier = ">=4.11.5" },

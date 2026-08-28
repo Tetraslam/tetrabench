@@ -3,11 +3,20 @@
 tetrabench is in early implementation. Its verified surface is an importable
 Python package with bounded, strict RFC 8785 canonical JSON and SHA-256 helpers,
 typed local configuration, catalog and context resolution, and a read-only
-planning CLI. The checked-in benchmark sections currently contain no tasks, so
-their plans contain zero trials and are reported as not runnable. Submission,
-execution, live cloud checks, and artifact publication are not implemented.
+planning CLI. The package also has a verified immutable S3 transport for
+content, request, event, and terminal records; it has not yet passed live AWS
+or Tigris smokes. The checked-in benchmark sections currently contain no tasks,
+so their plans contain zero trials and are reported as not runnable. CLI
+submission and execution are not implemented. `doctor --online` can check
+read-only access to configured AWS or Tigris storage, but live provider
+behavior has not been accepted as proven.
 
 Python 3.12 or newer is required.
+
+S3 reads and publications use bounded visibility checks. They detect every
+request, event-sequence, terminal, and dependency conflict visible during that
+window, but a lagged conflicting record can make a later read conflict. Zero
+visible terminals remains unknown or nonterminal.
 
 ## Reviewed design scope
 
@@ -37,13 +46,22 @@ uv run tetrabench sections
 uv run tetrabench plan systems-design
 uv run tetrabench plan systems-design --json
 uv run tetrabench doctor
+uv run tetrabench doctor --json
+uv run tetrabench doctor --profile local --online
 ```
 
-Human output uses Rich. `plan --json` writes an RFC 8785 canonical JSON plan,
-followed by a newline, to stdout. Errors go to stderr. `doctor` validates the
-project config, catalog, selected profile's task selection, section READMEs,
-and selected context files. It does not perform credential, Modal, or
-storage-provider checks.
+Human output uses Rich. `--json` writes one RFC 8785 canonical JSON document,
+followed by a newline, to stdout. Errors go to stderr; doctor errors are
+canonical JSON on stderr when `--json` is set.
+
+`doctor` validates the project config, catalog, selected profile's task
+selection, section READMEs, and selected context files. This default mode is
+offline: it does not construct a provider client, read credentials, or call
+Modal or storage APIs. `doctor --online` additionally constructs the selected
+storage provider client, calls `HeadBucket`, and lists at most one key under
+the configured prefix. It never calls a mutation API. A successful check proves
+only that those reads worked at that time; writes remain `unproven` and are not
+attempted.
 
 ## Project configuration
 
