@@ -2,10 +2,10 @@
 
 ## Status
 
-- Project state: P0 is complete at public baseline commit [`5400d401467d2550334f375f324a212eae946dbf`](https://github.com/Tetraslam/tetrabench/commit/5400d401467d2550334f375f324a212eae946dbf); implementation has not started.
-- Current action: freeze the RFC 8785/JCS profile and its golden-byte contract fixture in E-013 before serializer code.
-- Next action: after E-013 passes, begin P1 with typed configuration and canonical serialization. Controller code remains blocked on the child-observation contract fixture in E-019.
-- Canonical record updated: 2026-08-27.
+- Project state: P0, the E-013 canonical JSON foundation, and the E-019 Harbor child-observation design gate are complete; broader P1 implementation has not started.
+- Current action: foundation findings are resolved without adding controller code.
+- Next action: continue P1 with typed configuration and record schemas, including per-record golden bytes. Controller implementation is no longer design-blocked; live nested Modal behavior remains P4 smoke evidence.
+- Canonical record updated: 2026-08-28.
 
 ## Systems-Design Working Record
 
@@ -18,7 +18,7 @@
 | Trusted inputs | Strict typed configuration, a canonical resolved-plan JSON document, and explicitly selected local context files. Credentials are obtained from provider chains and are never serialized into plans. |
 | Lifecycle owners | The submitter publishes the request and spawns; the controller records attempts, reconciles, and publishes; Harbor owns task/trial/session/sandbox lifecycle; cancellation publishes intent, drives the controller to quiescence, then performs repeated child cleanup sweeps. |
 | Native primitives | Harbor v0.22.0 artifacts and execution backends, Modal deployed Functions/FunctionCall/Volume/Sandbox primitives, S3 object storage, and Docker for attached local execution. |
-| Capability gaps | Modal has no call idempotency key; Tigris visibility may lag across regions; nested Modal authentication, supported Harbor child observation, live AWS/Tigris behavior, and detached execution lack faithful evidence. |
+| Capability gaps | Modal has no call idempotency key; Tigris visibility may lag across regions; nested Modal authentication and execution, live AWS/Tigris behavior, and detached execution lack faithful evidence. |
 | Planned faithful evidence | Version-matched unit/contract tests, a real Docker smoke, a deployed Modal smoke with interruption/reconciliation, AWS and Tigris publication smokes, cancellation evidence, and artifact inspection. |
 
 Correctness-critical unknowns remain `unproven` until the corresponding evidence row passes.
@@ -41,6 +41,12 @@ Correctness-critical unknowns remain `unproven` until the corresponding evidence
 - [D-007] Never serialize credentials or ambient environment state into the resolved plan.
 
 The review corrections D-023..D-037 below supersede D-006 where they are more specific. P1 serializer work may not start until E-013 freezes the JCS profile and golden-byte fixture requirements.
+
+### Frozen canonical JSON profile (E-013)
+
+Canonical documents are RFC 8785 UTF-8 bytes produced by `rfc8785==0.1.4`. Values are strict Pydantic-compatible nulls, booleans, I-JSON safe integers, strings, arrays, and string-keyed objects, with no coercion or floats. Parsing rejects duplicate decoded keys, invalid UTF-8/JSON, non-canonical bytes, and documents over the inclusive 2 MiB limit; serialization applies the same limit. SHA-256 is the lowercase hex digest of the canonical bytes. Record schemas and unknown-field policy remain P1 work.
+
+E-013 proves only this shared foundation and its canonical JSON golden bytes. Golden bytes for each plan, request, event, and terminal schema remain an incomplete P1 acceptance item.
 
 ### Submission and execution ownership
 
@@ -93,7 +99,7 @@ runs/<run-id>/terminals/<terminal-sha>.json
 - [D-029] Local receipts have `prepared`, `request-published`, and `submitted` phases and are replaced atomically with file and parent-directory `fsync`. The submitter publishes the request before `.spawn`; the controller records its call ID. If the submitter dies after spawn, status recovers the call ID from controller records after they become visible. An unresolved request without controller evidence is never automatically resubmitted.
 - [D-030] Every controller start creates an append-only attempt ID and a distinct physical Harbor jobs directory. Before replay starts a new Harbor attempt, it reconciles terminal state, terminates surviving child sandboxes from earlier attempts, and records abandonment evidence. Tetrabench supplies deterministic Harbor job inputs and tags; it neither owns Harbor session IDs nor mutates Harbor internals.
 - [D-031] The controller sets `retries=0`. Modal may still preempt and replay execution, so the controller reconciles from run and attempt records rather than assuming exactly-once execution.
-- [D-032] Child sandbox IDs and tags must be observable through a supported, version-matched Harbor extension surface. The implementation mechanism remains `unproven`; no controller code may be written until a contract fixture proves observation through `JobConfig`, environment, plugin, or custom-environment surfaces.
+- [D-032] Child sandbox IDs and tags are observed through a Harbor v0.22.0 custom `ModalEnvironment` import path. The adapter overrides public `start` and `stop`, preserves Harbor's session ID, adds tetrabench run/attempt labels, resolves the child with public `Sandbox.from_name`, and sweeps with public tag-filtered `Sandbox.list`. Tetrabench rejects Modal sandbox v2 for this pinned path and does not fork `Trial` or read Harbor private fields.
 - [D-033] Cancellation first publishes durable intent. At startup and phase boundaries, the controller checks the intent, stops creating children, terminates owned children, and publishes quiescence evidence. The canceller waits boundedly for quiescence; if none appears, it cancels the controller. After the controller stops, the canceller repeatedly sweeps children by persisted IDs or tags until none remain, or reports cleanup failure. This ordering closes the child-after-sweep race.
 - [D-034] Submitter credentials permit context/request writes and status reads. Controller credentials permit event, artifact, terminal, and cleanup operations. Child agent and verifier sandboxes receive no S3 publication credentials unless a future task defines separate scoped access. Buckets are private and encrypted by default; bucket or prefix policy and run-ID/path validation enforce scope. V1 has no delete permission. Configuration and receipts contain no secret values.
 - [D-035] Harbor logs and artifacts are sensitive and may contain workload-emitted secrets. Tetrabench guarantees only that it does not deliberately serialize credentials. It preserves native bytes in private storage; public sanitization and export are deferred.
@@ -154,9 +160,9 @@ runs/<run-id>/terminals/<terminal-sha>.json
 - [ ] [U-001] `unproven`: live nested Harbor Modal authentication through the supported version-matched path. Resolve with a deployed smoke before claiming nested Modal execution works.
 - [ ] [U-002] `unproven`: exact Harbor v0.22.0 native job directory and artifact paths consumed by publication. Resolve against the pinned package and a real job.
 - [ ] [U-003] `unproven`: replay/preemption behavior with physical attempt reconciliation under a real interruption.
-- [ ] [U-004] `unproven` and implementation-blocking: child sandbox IDs/tags can be observed through supported Harbor v0.22.0 extension surfaces. A contract fixture must prove this before controller code begins.
+- [x] [U-004] Resolved by E-019: a version-matched contract fixture proves child identity and tag observation through the supported custom-environment import path and public Modal APIs. Live nested behavior remains U-001/P4 smoke evidence.
 - [ ] [U-005] `unproven`: live AWS and Tigris behavior for all required v1 object operations, including existing-object byte verification and lag-aware reads. No conditional-write behavior is required.
-- [ ] [U-006] `unproven`: frozen RFC 8785/JCS profile, integer/string limits, duplicate-key rejection, no-float schemas, and 2 MiB boundary tests. Freeze E-013 before P1 serializer work.
+- [x] [U-006] Resolved by E-013: the shared profile, safe-integer range, duplicate-key and float rejection, and inclusive 2 MiB boundary are executable and golden-byte tested. Record-specific schemas remain P1 work.
 - [ ] [U-007] `unproven`: named Volume version, mount paths, and commit/reload sequence under the pinned Modal SDK.
 - [ ] [U-008] `unproven`: detached Modal smoke covering disconnect, controller record visibility, and terminal publication.
 
@@ -204,11 +210,11 @@ Acceptance: complete. All planning surfaces exist in public commit [`5400d401467
 
 - [ ] [P1-01] Add exact dependency pins.
 - [ ] [P1-02] Implement strict AWS/Tigris configuration variants.
-- [ ] [P1-03] Freeze the RFC 8785/JCS profile and golden-byte contract fixture before serializer implementation.
+- [x] [P1-03] Freeze the RFC 8785/JCS profile and golden-byte contract fixture before serializer implementation.
 - [ ] [P1-04] Implement strict canonical plans, requests, events, and terminals with duplicate-key rejection, no floats, plan size limit, and two-sided SHA-256 verification.
 - [ ] [P1-05] Test unknown fields, provider separation, golden bytes, duplicate keys, float rejection, tampering, and boundary sizes.
 
-Acceptance: E-013 is frozen before serializer code; version-matched tests prove D-002, D-005..D-007, and D-023; malformed or oversized inputs fail closed.
+Acceptance: E-013 is frozen before serializer code; version-matched tests prove D-002, D-005..D-007, and D-023; malformed or oversized inputs fail closed; every plan, request, event, and terminal schema has its own golden bytes. The per-record schema golden bytes are incomplete.
 
 ### P2: Immutable context and S3 records
 
@@ -231,8 +237,8 @@ Acceptance: fault injection proves D-012 and D-029, including durable phase tran
 ### P4: Harbor execution paths
 
 - [ ] [P4-01] Implement attached local Docker execution.
-- [ ] [P4-02] After E-019 passes, implement the deployed Modal controller with `retries=0` and self-recorded FunctionCall ID.
-- [ ] [P4-03] After E-019 passes, integrate Harbor v0.22.0 with distinct attempt job directories, deterministic job inputs/tags, and supported child observation.
+- [ ] [P4-02] Implement the deployed Modal controller with `retries=0` and self-recorded FunctionCall ID.
+- [ ] [P4-03] Integrate Harbor v0.22.0 with distinct attempt job directories, deterministic job inputs/tags, and the E-019 custom-environment observation path.
 - [ ] [P4-04] Implement disjoint Volume paths and explicit commit/reload boundaries.
 - [ ] [P4-05] Run Docker and deployed Modal smokes, including the nested authentication sentinel.
 
@@ -271,13 +277,13 @@ Acceptance: a new user can follow the README against released or pinned componen
 | E-010 | Replay reconciles without duplicate child sessions | Forced interruption/preemption test and run record inspection | superseded by E-018 | P5 |
 | E-011 | Cancellation terminates children first | Live cancellation test with recorded child and controller identities | superseded by E-020 | P5 |
 | E-012 | Terminal conflicts remain observable | Concurrent conflicting publication test yielding more than one terminal | unproven | P5 |
-| E-013 | RFC 8785/JCS profile is frozen before serializer work | Written profile plus version-matched golden bytes for every serialized record, duplicate-key rejection, no-float model checks, and size boundaries | unproven; blocks P1 serializer code | U-006/P1 |
+| E-013 | RFC 8785/JCS foundation is frozen before serializer work | Written shared profile plus version-matched canonical JSON golden bytes, direct-model safe-integer validation, duplicate-key and float rejection, and size boundaries | passed | `src/tetrabench/canonical_json.py`; `tests/test_canonical_json.py`; Python 3.12 validation on 2026-08-28. Per-record schema golden bytes remain P1. |
 | E-014 | Content keys bind verified bytes | Existing-object same-byte and mismatched-byte contract tests plus live AWS/Tigris round trips | unproven | D-024/P2 |
 | E-015 | A run ID admits one request digest | Idempotent same-request recovery and second-digest conflict tests | unproven | D-025/P2 |
 | E-016 | Terminal-last publication and lag-aware reads preserve authority | Complete-inventory checks, HEAD/hash verification, zero/one/many tests, delayed-visibility fixture, and Modal-state combination | unproven | D-027..D-028/P2 |
 | E-017 | Receipt phases recover post-spawn ambiguity | File and parent-directory fsync tests plus fault injection and delayed controller-record recovery | unproven | D-029/P3 |
 | E-018 | Replay preserves physical attempts | Forced replay proves distinct job directories, prior-child termination, and abandonment evidence before a new Harbor attempt | unproven | D-030..D-031/P5 |
-| E-019 | Supported Harbor surfaces expose child IDs/tags | Version-matched contract fixture using only supported `JobConfig`, environment, plugin, or custom-environment hooks | unproven; blocks all controller code | D-032/U-004/P4 |
+| E-019 | Supported Harbor surfaces expose child IDs/tags | Version-matched contract fixture using a custom-environment import path and public Harbor/Modal lifecycle and lookup APIs | passed; controller design gate cleared | Persistent proof: `~/.local/share/opencode/tetrabench-research/proof/`; pinned sources: `harbor-v0.22.0/src/harbor/environments/{factory.py,modal.py}` and `modal-1.5.4/modal/sandbox.py`; D-032/U-004/P4 |
 | E-020 | Cancellation closes the child-after-sweep race | Fault injection creates a child near cancellation; intent/quiescence/controller stop/repeated sweeps leave none or report cleanup failure | unproven | D-033/P5 |
 | E-021 | Credential boundaries prevent child publication | Policy tests for submitter/controller scopes, no-delete access, private encryption, path validation, and child environment inspection | unproven | D-034/P6 |
 | E-022 | Immutable context rejects races and unsafe files | No-follow, before/after `fstat`, mutation, symlink/special-file, path, mode, count, per-file, total-size, and materialization tests | unproven | D-036/P2 |

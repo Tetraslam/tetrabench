@@ -1,8 +1,6 @@
 # tetrabench
 
-tetrabench is in design. No execution command or public API is implemented or verified yet.
-
-The planning content has been reviewed, but P0 remains incomplete until these untracked planning files have a committed baseline. Implementation is not yet permitted by the plan.
+tetrabench is in early implementation. Its verified surface is an importable Python 3.12 package with bounded, strict RFC 8785 canonical JSON and SHA-256 helpers. No execution command or configuration schema exists yet.
 
 ## Reviewed design scope
 
