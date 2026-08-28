@@ -9,6 +9,8 @@ At the start of every session, read these files in order:
 3. [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md);
 4. [NOTES.md](NOTES.md).
 
+Read questionnaire-meme.png.
+
 Inspect the repository state before editing. Apply the global Systems Design gate to pinned interfaces, lifecycle boundaries, canonical state, distributed mutation, destructive actions, and other high-blast-radius work.
 
 ## Planning Record
@@ -33,6 +35,8 @@ Inspect the repository state before editing. Apply the global Systems Design gat
 ## User Documentation
 
 [README.md](README.md) contains only verified user-facing behavior. Do not document planned commands, APIs, or capabilities as working. Keep design detail, progress, and unresolved evidence in the plan.
+
+Edit existing human-facing documentation in place. Preserve its facts, intent, voice, structure, links, and caveats, and inspect the old/new diff for loss. Rewrite only when requested or structurally necessary.
 
 ## Change Discipline
 
