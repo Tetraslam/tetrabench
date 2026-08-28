@@ -5,14 +5,15 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from tetrabench.canonical_json import dumps_canonical_json
-from tetrabench.models import ResolvedPlan, ResolvedRequest
+from tetrabench.canonical_json import dumps_canonical_json, sha256_hex
+from tetrabench.models import ResolvedPlan
 from tetrabench.plan import (
     canonical_model_bytes,
     parse_canonical_model,
     plan_digest,
     resolve_plan,
 )
+from tetrabench.records import ContextManifest, RequestRecord
 
 ROOT = Path(__file__).parents[1]
 
@@ -32,11 +33,14 @@ def test_empty_section_plan_is_canonical_deterministic_and_not_runnable() -> Non
 def test_plan_and_request_golden_bytes() -> None:
     plan = resolve_plan(ROOT, "systems-design")
     plan_bytes = canonical_model_bytes(plan)
-    request = ResolvedRequest(
+    manifest = ContextManifest(schema_version=1, files=())
+    request = RequestRecord(
         schema_version=1,
         run_id="example-run",
         plan_sha256=plan_digest(plan),
         plan=plan,
+        context_manifest_sha256=sha256_hex(canonical_model_bytes(manifest)),
+        context_manifest=manifest,
     )
 
     assert plan_bytes == (
@@ -54,7 +58,7 @@ def test_plan_and_request_golden_bytes() -> None:
         "421a4d777f1bba9531402b0c56b4802747ad09e0f470e9b15ee9c56fea1d61c9"
     )
     request_bytes = canonical_model_bytes(request)
-    assert parse_canonical_model(request_bytes, ResolvedRequest) == request
+    assert parse_canonical_model(request_bytes, RequestRecord) == request
 
 
 def test_plan_parser_rejects_unknown_fields() -> None:

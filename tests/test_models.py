@@ -8,11 +8,11 @@ from tetrabench.models import (
     ContextFileSpec,
     ProjectConfig,
     ResolvedPlan,
-    ResolvedRequest,
     ResolvedTrial,
     TigrisStorageConfig,
 )
 from tetrabench.plan import plan_digest
+from tetrabench.records import ContextManifest, RequestRecord
 
 
 def _resolved_plan(**changes: object) -> ResolvedPlan:
@@ -136,6 +136,25 @@ def test_resolved_plan_enforces_direct_deserialization_invariants() -> None:
     with pytest.raises(ValidationError, match="destinations must be unique"):
         _resolved_plan(context=(duplicate, duplicate))
 
+    def context_file(index: int, size: int = 0) -> dict[str, object]:
+        return {
+            "destination": f"files/{index}",
+            "mode": 420,
+            "size": size,
+            "sha256": "0" * 64,
+        }
+
+    with pytest.raises(ValidationError, match="more than 256 files"):
+        _resolved_plan(context=tuple(context_file(index) for index in range(257)))
+    with pytest.raises(ValidationError, match="16 MiB"):
+        _resolved_plan(context=(context_file(0, 16 * 1024 * 1024 + 1),))
+    with pytest.raises(ValidationError, match="128 MiB"):
+        _resolved_plan(
+            context=tuple(context_file(index, 16 * 1024 * 1024) for index in range(9))
+        )
+    with pytest.raises(ValidationError, match="less than or equal"):
+        _resolved_plan(context=(context_file(0, 1 << 53),))
+
 
 @pytest.mark.parametrize("task_id", ["", " task", "task ", "bad/id"])
 def test_resolved_trial_rejects_invalid_task_ids(task_id: str) -> None:
@@ -145,18 +164,27 @@ def test_resolved_trial_rejects_invalid_task_ids(task_id: str) -> None:
 
 def test_resolved_request_verifies_embedded_plan_digest() -> None:
     plan = _resolved_plan()
+    manifest = ContextManifest(schema_version=1, files=())
+    from tetrabench.canonical_json import sha256_hex
+    from tetrabench.plan import canonical_model_bytes
+
+    manifest_digest = sha256_hex(canonical_model_bytes(manifest))
     with pytest.raises(ValidationError, match="does not match"):
-        ResolvedRequest(
+        RequestRecord(
             schema_version=1,
             run_id="run",
             plan_sha256="0" * 64,
             plan=plan,
+            context_manifest_sha256=manifest_digest,
+            context_manifest=manifest,
         )
-    request = ResolvedRequest(
+    request = RequestRecord(
         schema_version=1,
         run_id="run",
         plan_sha256=plan_digest(plan),
         plan=plan,
+        context_manifest_sha256=manifest_digest,
+        context_manifest=manifest,
     )
     assert request.plan is plan
 

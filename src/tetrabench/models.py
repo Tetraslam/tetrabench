@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from pathlib import PurePosixPath
 from typing import Annotated, Literal
 
 from pydantic import (
@@ -34,6 +33,14 @@ TaskId = Annotated[
     StringConstraints(pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]*$"),
 ]
 Sha256 = Annotated[str, StringConstraints(pattern=r"^[0-9a-f]{64}$")]
+RecordIdentifier = Annotated[
+    str,
+    StringConstraints(
+        min_length=1,
+        max_length=64,
+        pattern=r"^[a-z0-9][a-z0-9._-]*$",
+    ),
+]
 
 
 class StrictModel(BaseModel):
@@ -54,12 +61,26 @@ class AwsStorageConfig(StrictModel):
     region: NonEmptyString
     prefix: ExactString = ""
 
+    @model_validator(mode="after")
+    def validate_prefix(self) -> AwsStorageConfig:
+        from tetrabench.storage import validate_prefix
+
+        validate_prefix(self.prefix)
+        return self
+
 
 class TigrisStorageConfig(StrictModel):
     provider: Literal["tigris"]
     bucket: NonEmptyString
     region: Literal["auto"] = "auto"
     prefix: ExactString = ""
+
+    @model_validator(mode="after")
+    def validate_prefix(self) -> TigrisStorageConfig:
+        from tetrabench.storage import validate_prefix
+
+        validate_prefix(self.prefix)
+        return self
 
 
 StorageConfig = Annotated[
@@ -248,11 +269,14 @@ class ConfigOverrides(ProfilePatch):
 
 
 def _validate_destination(value: str) -> None:
-    path = PurePosixPath(value)
-    if path.is_absolute() or value != path.as_posix() or ".." in path.parts:
-        raise ValueError("destination must be a normalized relative POSIX path")
-    if value in {"", "."}:
-        raise ValueError("destination must name a file")
+    from tetrabench.storage import validate_logical_path
+
+    try:
+        validate_logical_path(value)
+    except ValueError as error:
+        raise ValueError(
+            "destination must be a normalized relative POSIX path"
+        ) from error
 
 
 class ResolvedAwsStorageConfig(FrozenRecord):
@@ -261,6 +285,13 @@ class ResolvedAwsStorageConfig(FrozenRecord):
     region: NonEmptyString
     prefix: ExactString = ""
 
+    @model_validator(mode="after")
+    def validate_prefix(self) -> ResolvedAwsStorageConfig:
+        from tetrabench.storage import validate_prefix
+
+        validate_prefix(self.prefix)
+        return self
+
 
 class ResolvedTigrisStorageConfig(FrozenRecord):
     provider: Literal["tigris"]
@@ -268,6 +299,13 @@ class ResolvedTigrisStorageConfig(FrozenRecord):
     region: Literal["auto"] = "auto"
     prefix: ExactString = ""
     endpoint_url: Literal["https://t3.storage.dev"] = "https://t3.storage.dev"
+
+    @model_validator(mode="after")
+    def validate_prefix(self) -> ResolvedTigrisStorageConfig:
+        from tetrabench.storage import validate_prefix
+
+        validate_prefix(self.prefix)
+        return self
 
 
 ResolvedStorageConfig = Annotated[
@@ -325,7 +363,7 @@ class ResolvedTaskSelection(FrozenRecord):
 class ResolvedContextFile(FrozenRecord):
     destination: NonEmptyString
     mode: Literal[420, 493]
-    size: Annotated[int, Field(ge=0)]
+    size: Annotated[int, Field(ge=0, le=(1 << 53) - 1)]
     sha256: Sha256
 
     @model_validator(mode="after")
@@ -360,8 +398,14 @@ class ResolvedPlan(FrozenRecord):
         if not compatible:
             raise ValueError("controller and execution are incompatible")
         destinations = [item.destination for item in self.context]
+        if len(self.context) > 256:
+            raise ValueError("context contains more than 256 files")
         if len(destinations) != len(set(destinations)):
             raise ValueError("context destinations must be unique")
+        if any(item.size > 16 * 1024 * 1024 for item in self.context):
+            raise ValueError("context file exceeds 16 MiB")
+        if sum(item.size for item in self.context) > 128 * 1024 * 1024:
+            raise ValueError("context exceeds 128 MiB")
         task_ids = [trial.task_id for trial in self.trials]
         if len(task_ids) != len(set(task_ids)):
             raise ValueError("trial task IDs must be unique")
@@ -369,22 +413,4 @@ class ResolvedPlan(FrozenRecord):
             raise ValueError("a plan with zero trials is not runnable")
         if self.runnable == bool(self.not_runnable_reasons):
             raise ValueError("runnable and not_runnable_reasons disagree")
-        return self
-
-
-class ResolvedRequest(FrozenRecord):
-    schema_version: SchemaVersion
-    run_id: NonEmptyString
-    plan_sha256: Sha256
-    plan: ResolvedPlan
-
-    @model_validator(mode="after")
-    def validate_plan_digest(self) -> ResolvedRequest:
-        from tetrabench.canonical_json import dumps_canonical_json, sha256_hex
-
-        plan_bytes = dumps_canonical_json(
-            self.plan.model_dump(mode="json", by_alias=True)
-        )
-        if sha256_hex(plan_bytes) != self.plan_sha256:
-            raise ValueError("plan_sha256 does not match embedded plan")
         return self

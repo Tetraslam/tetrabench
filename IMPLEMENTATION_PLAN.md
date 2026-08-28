@@ -2,9 +2,9 @@
 
 ## Status
 
-- Project state: P0 and the P1 planning foundation are complete: exact Harbor, Modal, Pydantic, and JCS pins, strict provider/project/profile/catalog schemas, canonical resolved plan/request skeletons, local context resolution, and the read-only CLI are implemented. Full request/event/terminal publication records remain incomplete.
-- Current action: the empty local catalog resolves deterministically to a visibly non-runnable zero-trial plan; no controller, execution, or provider mutation exists.
-- Next action: complete immutable context and S3 record publication in P2 before adding submission or live controller behavior. Live nested Modal behavior remains P4 smoke evidence.
+- Project state: P0 and P1 are complete. Strict frozen request, attempt-event, context-manifest, terminal, and run-read records now have exact JCS identities; direct plan validation and local context sealing enforce the absolute context bounds. P2 storage transport and publication remain incomplete.
+- Current action: local record construction, attempt-scoped key construction, race-safe bounded context sealing, and zero/one/many terminal interpretation are implemented without S3 clients, controller behavior, execution, or provider mutation.
+- Next action: add verified S3 object transport, request/event/terminal publication ordering, lag-aware reads, and AWS/Tigris smoke evidence. Live nested Modal behavior remains P4 smoke evidence.
 - Canonical record updated: 2026-08-28.
 
 ## Systems-Design Working Record
@@ -18,7 +18,7 @@
 | Trusted inputs | Strict typed configuration, a canonical resolved-plan JSON document, and explicitly selected local context files. Credentials are obtained from provider chains and are never serialized into plans. |
 | Lifecycle owners | The submitter publishes the request and spawns; the controller records attempts, reconciles, and publishes; Harbor owns task/trial/session/sandbox lifecycle; cancellation publishes intent, drives the controller to quiescence, then performs repeated child cleanup sweeps. |
 | Native primitives | Harbor v0.22.0 artifacts and execution backends, Modal deployed Functions/FunctionCall/Volume/Sandbox primitives, S3 object storage, and Docker for attached local execution. |
-| Capability gaps | Modal has no call idempotency key; Tigris visibility may lag across regions; nested Modal authentication and execution, live AWS/Tigris behavior, and detached execution lack faithful evidence. |
+| Capability gaps | Modal has no call idempotency key; Tigris visibility may lag across regions; S3 transport/publication, nested Modal authentication and execution, live AWS/Tigris behavior, and detached execution lack faithful evidence. |
 | Planned faithful evidence | Version-matched unit/contract tests, a real Docker smoke, a deployed Modal smoke with interruption/reconciliation, AWS and Tigris publication smokes, cancellation evidence, and artifact inspection. |
 
 Correctness-critical unknowns remain `unproven` until the corresponding evidence row passes.
@@ -105,6 +105,8 @@ runs/<run-id>/terminals/<terminal-sha>.json
 - [D-035] Harbor logs and artifacts are sensitive and may contain workload-emitted secrets. Tetrabench guarantees only that it does not deliberately serialize credentials. It preserves native bytes in private storage; public sanitization and export are deferred.
 - [D-036] Context v1 accepts at most 256 explicitly selected regular files, 16 MiB per file and 128 MiB total; configuration may only lower these limits. It rejects symlinks and special files. For each source, it opens once with no-follow semantics, compares `fstat` before and after reading, and rejects mutation. It normalizes the destination to one unique relative POSIX path with no absolute form, `..`, or collision, and normalizes mode to `0755` when any executable bit is set or `0644` otherwise. It uploads each file and the canonical manifest by content digest. Execution materializes only bytes whose size and digest verify.
 - [D-037] Docker is explicit attached local development execution; detached Modal remains the default submission mode. Harbor owns task, trial, session, and sandbox lifecycle. Tetrabench uses supported `JobConfig`, environment, plugin, or custom-environment extension surfaces only when a contract fixture proves a native capability gap.
+- [D-038] Record identifiers are 1–64 lowercase ASCII alphanumeric, dot, underscore, or hyphen characters and begin alphanumerically. Event keys use zero-padded safe-integer sequences. Requests embed and digest both the resolved plan and context manifest, terminals require the named config/lock/result digests to occur in the unique-path inventory, and zero visible terminals is represented explicitly as `unknown_or_nonterminal`. Context sealing retains one immutable `bytes` value per file rather than a concatenated bundle; transport may later stream those independently.
+- [D-039] This decision supersedes D-026, D-027, D-036, and D-038 where more specific. Event keys are attempt-scoped at `runs/<run-id>/events/<attempt-id>/<sequence>-<event-sha>.json`, and sequence monotonicity is checked independently per attempt. Direct `ResolvedPlan` validation enforces 256 files, 16 MiB per file, 128 MiB total, safe-integer sizes, unique portable logical destinations, and UTF-8 byte limits of 255 per path component and 4095 per path; every S3 key is at most 1,024 UTF-8 bytes. On supported POSIX systems, context sources are traversed component by component with directory FDs and no-follow directory opens; the final component is opened no-follow and nonblocking before regular-file verification. Unsupported platforms fail explicitly. Each read is bounded by the remaining total before allocation. Terminal config, lock, and result fields bind both logical path and digest; successful terminals require all three, failed or cancelled terminals may omit artifacts that do not exist, and every present binding must match the inventory. Roles may share content digests.
 
 ## Authorities, Lifecycle, and Security Boundaries
 
@@ -137,6 +139,8 @@ runs/<run-id>/terminals/<terminal-sha>.json
 | D-033 | Intent-first cancellation, quiescence, controller cancellation, and repeated child sweeps | accepted; supersedes D-022 | Closes the child-after-sweep race. |
 | D-034..D-035 | Split credentials, private encrypted storage, no delete, and sensitive native-byte handling | accepted | Limits publication authority without claiming tetrabench can sanitize workload output. |
 | D-036..D-037 | Bounded immutable files and Harbor-owned lifecycle through proven extensions | accepted; supersedes D-013..D-014 and narrows D-004 | Defines the context race boundary and prohibits unsupported Harbor mutation. |
+| D-038 | Safe record identifiers, canonical key sequence formatting, embedded request bindings, terminal digest inventory, explicit unknown read state, and per-file retained context bytes | accepted | Makes direct deserialization and local byte ownership closed and testable before storage transport exists. |
+| D-039 | Attempt-scoped events, closed direct-plan bounds, dir-FD context traversal, portable UTF-8 key/path limits, and path-plus-digest terminal bindings | accepted; supersedes D-026, D-027, D-036, and D-038 where more specific | Closes direct-deserialization, parent-symlink, FIFO blocking, retained-byte, cross-attempt conflict, and artifact-role ambiguity gaps. |
 
 ### Superseded or Rejected
 
@@ -211,16 +215,16 @@ Acceptance: complete. All planning surfaces exist in public commit [`5400d401467
 - [x] [P1-01] Add exact Harbor and Modal dependency pins while retaining the Pydantic and JCS pins.
 - [x] [P1-02] Implement strict AWS/Tigris configuration variants.
 - [x] [P1-03] Freeze the RFC 8785/JCS profile and golden-byte contract fixture before serializer implementation.
-- [ ] [P1-04] Implement strict canonical plans, requests, events, and terminals with duplicate-key rejection, no floats, plan size limit, and two-sided SHA-256 verification.
-- [ ] [P1-05] Test unknown fields, provider separation, golden bytes, duplicate keys, float rejection, tampering, and boundary sizes.
+- [x] [P1-04] Implement strict canonical plans, requests, events, and terminals with duplicate-key rejection, no floats, plan size limit, and two-sided SHA-256 verification.
+- [x] [P1-05] Test unknown fields, provider separation, golden bytes, duplicate keys, float rejection, tampering, and boundary sizes.
 - [x] [P1-06] Add strict project/profile/catalog/controller/execution/context/task-selection schemas with narrow project, profile, and typed-override precedence.
 - [x] [P1-07] Add deterministic empty-section planning plus the read-only `sections`, `plan`, and `doctor` CLI surface.
 
-Acceptance: E-013 is frozen before serializer code; version-matched tests prove D-002, D-005..D-007, and D-023; malformed or oversized inputs fail closed; every plan, request, event, and terminal schema has its own golden bytes. The per-record schema golden bytes are incomplete.
+Acceptance: complete. E-013 was frozen before serializer code; version-matched tests prove D-002, D-005..D-007, D-023, and D-038; malformed or oversized inputs fail closed; plan, request, event, terminal, and context-manifest schemas have exact golden bytes and digests. E-027 records the evidence.
 
 ### P2: Immutable context and S3 records
 
-- [ ] [P2-01] Implement explicit-file manifest construction and normalization.
+- [x] [P2-01] Implement explicit-file manifest construction and normalization.
 - [ ] [P2-02] Implement verified content-object uploads and conflict handling.
 - [ ] [P2-03] Implement content-addressed requests, sequenced events, complete artifact inventories, and terminal-last publication.
 - [ ] [P2-04] Test one/many terminal interpretation, zero-as-unknown behavior, lag-aware retry, and conflicting records.
@@ -280,19 +284,21 @@ Acceptance: a new user can follow the README against released or pinned componen
 | E-011 | Cancellation terminates children first | Live cancellation test with recorded child and controller identities | superseded by E-020 | P5 |
 | E-012 | Terminal conflicts remain observable | Concurrent conflicting publication test yielding more than one terminal | unproven | P5 |
 | E-013 | RFC 8785/JCS foundation is frozen before serializer work | Written shared profile plus version-matched canonical JSON golden bytes, direct-model safe-integer validation, duplicate-key and float rejection, and size boundaries | passed | `src/tetrabench/canonical_json.py`; `tests/test_canonical_json.py`; Python 3.12 validation on 2026-08-28. Per-record schema golden bytes remain P1. |
-| E-014 | Content keys bind verified bytes | Existing-object same-byte and mismatched-byte contract tests plus live AWS/Tigris round trips | unproven | D-024/P2 |
-| E-015 | A run ID admits one request digest | Idempotent same-request recovery and second-digest conflict tests | unproven | D-025/P2 |
-| E-016 | Terminal-last publication and lag-aware reads preserve authority | Complete-inventory checks, HEAD/hash verification, zero/one/many tests, delayed-visibility fixture, and Modal-state combination | unproven | D-027..D-028/P2 |
+| E-014 | Content keys bind verified bytes | Existing-object same-byte and mismatched-byte contract tests plus live AWS/Tigris round trips | local descriptor/key/byte checks passed; transport and live behavior unproven | `src/tetrabench/storage.py`; `tests/test_records.py`; D-024/P2 |
+| E-015 | A run ID admits one request digest | Idempotent same-request recovery and second-digest conflict tests | canonical request binding passed; publication conflict behavior unproven | `src/tetrabench/records.py`; `tests/test_records.py`; D-025/P2 |
+| E-016 | Terminal-last publication and lag-aware reads preserve authority | Complete-inventory checks, HEAD/hash verification, zero/one/many tests, delayed-visibility fixture, and Modal-state combination | inventory and zero/one/many local interpretation passed; publication, retry, and Modal combination unproven | `src/tetrabench/records.py`; `tests/test_records.py`; D-027..D-028/P2 |
 | E-017 | Receipt phases recover post-spawn ambiguity | File and parent-directory fsync tests plus fault injection and delayed controller-record recovery | unproven | D-029/P3 |
 | E-018 | Replay preserves physical attempts | Forced replay proves distinct job directories, prior-child termination, and abandonment evidence before a new Harbor attempt | unproven | D-030..D-031/P5 |
 | E-019 | Supported Harbor surfaces expose child IDs/tags | Version-matched contract fixture using a custom-environment import path and public Harbor/Modal lifecycle and lookup APIs | passed; controller design gate cleared | Persistent proof: `~/.local/share/opencode/tetrabench-research/proof/`; pinned sources: `harbor-v0.22.0/src/harbor/environments/{factory.py,modal.py}` and `modal-1.5.4/modal/sandbox.py`; D-032/U-004/P4 |
 | E-020 | Cancellation closes the child-after-sweep race | Fault injection creates a child near cancellation; intent/quiescence/controller stop/repeated sweeps leave none or report cleanup failure | unproven | D-033/P5 |
 | E-021 | Credential boundaries prevent child publication | Policy tests for submitter/controller scopes, no-delete access, private encryption, path validation, and child environment inspection | unproven | D-034/P6 |
-| E-022 | Immutable context rejects races and unsafe files | No-follow, before/after `fstat`, mutation, symlink/special-file, path, mode, count, per-file, total-size, and materialization tests | unproven | D-036/P2 |
+| E-022 | Immutable context rejects races and unsafe files | No-follow, before/after `fstat`, mutation, symlink/special-file, path, mode, count, per-file, total-size, and materialization tests | local sealing passed; cloud materialization remains P2 transport work | `src/tetrabench/context.py`; `tests/test_context.py`; D-036/P2 |
 | E-023 | Native sensitive bytes remain private without false sanitization claims | Security review, private-storage check, deliberate-credential serialization tests, and documented export deferral | unproven | D-035/P6 |
 | E-024 | P0 has a durable baseline | Commit containing the planning surfaces plus link/symlink, whitespace, and secret checks against committed content | passed | [`5400d401467d2550334f375f324a212eae946dbf`](https://github.com/Tetraslam/tetrabench/commit/5400d401467d2550334f375f324a212eae946dbf) |
 | E-025 | Review findings are dispositioned consistently | Decision, supersession, unresolved, phase, and evidence cross-check covering D-023..D-037 and S-008..S-012 | complete; durable in E-024 | 2026-08-27 review correction |
 | E-026 | P1 planning foundation is strict, deterministic, and read-only | Full tests, Ruff check/format, ty, lock check, build, isolated wheel CLI smoke, whitespace check, and secret scan | passed | 59 tests on Python 3.12, including direct record invariants, deep immutability, typed patch precedence, provider endpoints, task selection, and doctor; wheel/sdist content inspection; installed CLI plan/doctor smoke; Ruff, ty, lock, diff, and audited secret scan on 2026-08-28 |
+| E-027 | P1 record contracts and local P2 context sealing are canonical and immutable | Exact schema bytes/digests, direct-deserialization invariants, deep mutation rejection, unsafe key/path rejection, context race/type/limit tests, full validation suite | passed locally; no storage-provider claim | 94 tests on Python 3.12; exact request/event/terminal/context-manifest goldens; Ruff check/format, ty, lock check, package build, diff check, and secret scan on 2026-08-28 |
+| E-028 | Review-corrected record and context boundaries fail closed | Direct 257-file/per-file/total/safe-integer plan tests; parent-symlink and real-FIFO tests; per-attempt sequence reuse; pre-read remaining-budget test; UTF-8 key/path boundaries; successful/failed terminal binding tests; full local validation | passed locally; provider transport remains unproven | 98 tests on Python 3.12; Ruff check/format, ty, lock check, and package build on 2026-08-28; `src/tetrabench/{context.py,models.py,records.py,storage.py}` and focused tests |
 
 ## Deferred Capabilities
 
