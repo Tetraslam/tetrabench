@@ -2,9 +2,9 @@
 
 ## Status
 
-- Project state: planning content has been reviewed; implementation has not started, and P0 is incomplete until the planning baseline is committed.
-- Current action: freeze the RFC 8785/JCS profile and its golden-byte contract fixture, then commit the planning baseline.
-- Next action: after that baseline exists, begin P1 with typed configuration and canonical serialization. Controller code remains blocked on the child-observation contract fixture in E-019.
+- Project state: P0 is complete at public baseline commit [`5400d401467d2550334f375f324a212eae946dbf`](https://github.com/Tetraslam/tetrabench/commit/5400d401467d2550334f375f324a212eae946dbf); implementation has not started.
+- Current action: freeze the RFC 8785/JCS profile and its golden-byte contract fixture in E-013 before serializer code.
+- Next action: after E-013 passes, begin P1 with typed configuration and canonical serialization. Controller code remains blocked on the child-observation contract fixture in E-019.
 - Canonical record updated: 2026-08-27.
 
 ## Systems-Design Working Record
@@ -196,9 +196,9 @@ tetrabench/
 - [x] [P0-03] Establish append-only notes with the initial authoritative contract entry.
 - [x] [P0-04] Replace the generated empty README with verified current-status documentation.
 - [x] [P0-05] Add the relative `CLAUDE.md -> AGENTS.md` compatibility symlink.
-- [ ] [P0-06] Commit the reviewed planning surfaces as the durable baseline.
+- [x] [P0-06] Commit the reviewed planning surfaces as the durable baseline at [`5400d401467d2550334f375f324a212eae946dbf`](https://github.com/Tetraslam/tetrabench/commit/5400d401467d2550334f375f324a212eae946dbf).
 
-Acceptance: all planning surfaces exist in a committed baseline, links and symlink resolve, Markdown structure is present, diff whitespace checks pass, and no implementation is represented as complete. The checked creation items show reviewed content only; P0 remains incomplete until P0-06 and E-024 pass.
+Acceptance: complete. All planning surfaces exist in public commit [`5400d401467d2550334f375f324a212eae946dbf`](https://github.com/Tetraslam/tetrabench/commit/5400d401467d2550334f375f324a212eae946dbf), links and the `CLAUDE.md` symlink resolve, Markdown structure is present, diff whitespace checks pass, and no implementation is represented as complete. E-024 records the evidence.
 
 ### P1: Typed configuration and canonical plans
 
@@ -282,8 +282,8 @@ Acceptance: a new user can follow the README against released or pinned componen
 | E-021 | Credential boundaries prevent child publication | Policy tests for submitter/controller scopes, no-delete access, private encryption, path validation, and child environment inspection | unproven | D-034/P6 |
 | E-022 | Immutable context rejects races and unsafe files | No-follow, before/after `fstat`, mutation, symlink/special-file, path, mode, count, per-file, total-size, and materialization tests | unproven | D-036/P2 |
 | E-023 | Native sensitive bytes remain private without false sanitization claims | Security review, private-storage check, deliberate-credential serialization tests, and documented export deferral | unproven | D-035/P6 |
-| E-024 | P0 has a durable baseline | Commit containing the planning surfaces plus link/symlink, whitespace, and secret checks against committed content | unproven; blocks implementation start | P0-06 |
-| E-025 | Review findings are dispositioned consistently | Decision, supersession, unresolved, phase, and evidence cross-check covering D-023..D-037 and S-008..S-012 | complete for reviewed working tree; durability awaits E-024 | 2026-08-27 review correction |
+| E-024 | P0 has a durable baseline | Commit containing the planning surfaces plus link/symlink, whitespace, and secret checks against committed content | passed | [`5400d401467d2550334f375f324a212eae946dbf`](https://github.com/Tetraslam/tetrabench/commit/5400d401467d2550334f375f324a212eae946dbf) |
+| E-025 | Review findings are dispositioned consistently | Decision, supersession, unresolved, phase, and evidence cross-check covering D-023..D-037 and S-008..S-012 | complete; durable in E-024 | 2026-08-27 review correction |
 
 ## Deferred Capabilities
 
