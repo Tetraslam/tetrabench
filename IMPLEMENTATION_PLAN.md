@@ -2,9 +2,9 @@
 
 ## Status
 
-- Project state: P0, the E-013 canonical JSON foundation, and the E-019 Harbor child-observation design gate are complete; broader P1 implementation has not started.
-- Current action: foundation findings are resolved without adding controller code.
-- Next action: continue P1 with typed configuration and record schemas, including per-record golden bytes. Controller implementation is no longer design-blocked; live nested Modal behavior remains P4 smoke evidence.
+- Project state: P0 and the P1 planning foundation are complete: exact Harbor, Modal, Pydantic, and JCS pins, strict provider/project/profile/catalog schemas, canonical resolved plan/request skeletons, local context resolution, and the read-only CLI are implemented. Full request/event/terminal publication records remain incomplete.
+- Current action: the empty local catalog resolves deterministically to a visibly non-runnable zero-trial plan; no controller, execution, or provider mutation exists.
+- Next action: complete immutable context and S3 record publication in P2 before adding submission or live controller behavior. Live nested Modal behavior remains P4 smoke evidence.
 - Canonical record updated: 2026-08-28.
 
 ## Systems-Design Working Record
@@ -208,11 +208,13 @@ Acceptance: complete. All planning surfaces exist in public commit [`5400d401467
 
 ### P1: Typed configuration and canonical plans
 
-- [ ] [P1-01] Add exact dependency pins.
-- [ ] [P1-02] Implement strict AWS/Tigris configuration variants.
+- [x] [P1-01] Add exact Harbor and Modal dependency pins while retaining the Pydantic and JCS pins.
+- [x] [P1-02] Implement strict AWS/Tigris configuration variants.
 - [x] [P1-03] Freeze the RFC 8785/JCS profile and golden-byte contract fixture before serializer implementation.
 - [ ] [P1-04] Implement strict canonical plans, requests, events, and terminals with duplicate-key rejection, no floats, plan size limit, and two-sided SHA-256 verification.
 - [ ] [P1-05] Test unknown fields, provider separation, golden bytes, duplicate keys, float rejection, tampering, and boundary sizes.
+- [x] [P1-06] Add strict project/profile/catalog/controller/execution/context/task-selection schemas with narrow project, profile, and typed-override precedence.
+- [x] [P1-07] Add deterministic empty-section planning plus the read-only `sections`, `plan`, and `doctor` CLI surface.
 
 Acceptance: E-013 is frozen before serializer code; version-matched tests prove D-002, D-005..D-007, and D-023; malformed or oversized inputs fail closed; every plan, request, event, and terminal schema has its own golden bytes. The per-record schema golden bytes are incomplete.
 
@@ -266,9 +268,9 @@ Acceptance: a new user can follow the README against released or pinned componen
 | Evidence ID | Claim | Required evidence | State | Reference |
 | --- | --- | --- | --- | --- |
 | E-001 | Planning content was reviewed | File/symlink inspection, structure/link checks, `git diff --check`, secret scan | reviewed; does not complete P0 | Local validation on 2026-08-27; corrected by E-024 |
-| E-002 | Exact pins resolve together | Clean dependency resolution and import/version assertions | unproven | P1 |
+| E-002 | Exact Harbor, Modal, Pydantic, and JCS pins resolve together | Clean dependency resolution and import/version assertions | passed | `uv lock --check`, package build, and isolated Python 3.12 wheel install/smoke on 2026-08-28 |
 | E-003 | Plans are canonical, bounded, and checked twice | Golden bytes, round-trip, tamper, unknown-field, and 2 MiB boundary tests | superseded by E-013 | P1 |
-| E-004 | AWS and Tigris share one typed implementation safely | Provider-specific config tests plus live object round trips | unproven | P2 |
+| E-004 | AWS and Tigris share one typed implementation safely | Provider-specific config tests plus live object round trips | typed config passed; live behavior unproven | `tests/test_models.py`; live round trips remain P2/U-005 |
 | E-005 | Submission cannot silently duplicate after ambiguity | Fault injection at four submission boundaries | unproven | P3 |
 | E-006 | Docker local execution produces native Harbor artifacts | Real pinned Docker smoke and artifact inspection | unproven | P4 |
 | E-007 | Deployed Modal execution survives client disconnect | Real deployed Function spawn, disconnect, status, and publication smoke | unproven | P4 |
@@ -290,6 +292,7 @@ Acceptance: a new user can follow the README against released or pinned componen
 | E-023 | Native sensitive bytes remain private without false sanitization claims | Security review, private-storage check, deliberate-credential serialization tests, and documented export deferral | unproven | D-035/P6 |
 | E-024 | P0 has a durable baseline | Commit containing the planning surfaces plus link/symlink, whitespace, and secret checks against committed content | passed | [`5400d401467d2550334f375f324a212eae946dbf`](https://github.com/Tetraslam/tetrabench/commit/5400d401467d2550334f375f324a212eae946dbf) |
 | E-025 | Review findings are dispositioned consistently | Decision, supersession, unresolved, phase, and evidence cross-check covering D-023..D-037 and S-008..S-012 | complete; durable in E-024 | 2026-08-27 review correction |
+| E-026 | P1 planning foundation is strict, deterministic, and read-only | Full tests, Ruff check/format, ty, lock check, build, isolated wheel CLI smoke, whitespace check, and secret scan | passed | 59 tests on Python 3.12, including direct record invariants, deep immutability, typed patch precedence, provider endpoints, task selection, and doctor; wheel/sdist content inspection; installed CLI plan/doctor smoke; Ruff, ty, lock, diff, and audited secret scan on 2026-08-28 |
 
 ## Deferred Capabilities
 

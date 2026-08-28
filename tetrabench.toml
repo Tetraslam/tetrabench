@@ -1,0 +1,22 @@
+schema_version = 1
+catalog_path = "benchmarks/catalog.toml"
+
+[controller]
+kind = "modal"
+app_name = "tetrabench"
+function_name = "controller"
+secret_name = "tetrabench-controller"
+
+[execution]
+kind = "modal"
+
+[storage]
+provider = "tigris"
+bucket = "replace-with-private-bucket"
+
+[context]
+files = []
+
+[selection]
+include = []
+exclude = []
