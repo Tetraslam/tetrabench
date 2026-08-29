@@ -37,8 +37,11 @@ Harbor then collects the real Git worktree, stops `main`, exports the already-
 sealed forge sidecar, and runs a no-network verifier with hidden source baked
 from `tests/`. The verifier validates native artifact placement, forge hashes
 and transitions, Git objects, a clean clone, and product behavior before writing
-exact binary reward bytes. Detached Modal proof remains unproven because the
-retained storage credentials are expired.
+exact binary reward bytes. Its runtime evidence records whether DNS resolved and
+the returned addresses; Harbor's Docker egress control may permit that lookup.
+Direct-IP and hostname TCP connection attempts must both fail, and either
+connection succeeding forces reward `0`. Detached Modal proof remains unproven
+because the retained storage credentials are expired.
 
 Detached submission now derives every regular file under each selected
 catalog task directory and seals that complete fixture into the immutable

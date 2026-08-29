@@ -143,7 +143,9 @@ def _artifact_contract(tmp_path: Path, workspace: Path, export: Path) -> Path:
     return contract
 
 
-def test_fixture_uses_pinned_native_separate_verifier_sidecar_contract() -> None:
+def test_fixture_uses_pinned_native_separate_verifier_sidecar_contract(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     task = Task(FIXTURE)
     config = task.config
     assert config.verifier.environment_mode == VerifierEnvironmentMode.SEPARATE
@@ -169,6 +171,75 @@ def test_fixture_uses_pinned_native_separate_verifier_sidecar_contract() -> None
     assert config.verifier.environment.cpus == 1
     assert config.verifier.environment.memory_mb == 384
     assert config.verifier.environment.storage_mb == 512
+
+    def deny_connection(*_args: object, **_kwargs: object) -> None:
+        raise ConnectionRefusedError
+
+    monkeypatch.setattr(VERIFY.socket, "create_connection", deny_connection)
+    monkeypatch.setattr(
+        VERIFY.socket,
+        "getaddrinfo",
+        lambda *_args, **_kwargs: [
+            (2, 1, 6, "", ("93.184.216.34", 443)),
+            (10, 1, 6, "", ("2606:2800:220:1:248:1893:25c8:1946", 443, 0, 0)),
+            (2, 1, 6, "", ("93.184.216.34", 443)),
+        ],
+    )
+    resolved = [
+        VERIFY._network_probe("dns", "example.com"),
+        VERIFY._network_probe("direct-ip-tcp", "1.1.1.1"),
+        VERIFY._network_probe("hostname-tcp", "example.com"),
+    ]
+    assert resolved[0] == {
+        "addresses": ["2606:2800:220:1:248:1893:25c8:1946", "93.184.216.34"],
+        "kind": "dns",
+        "resolved": True,
+    }
+    assert all(probe["blocked"] is True for probe in resolved[1:])
+
+    def deny_resolution(*_args: object, **_kwargs: object) -> None:
+        raise OSError
+
+    monkeypatch.setattr(VERIFY.socket, "getaddrinfo", deny_resolution)
+    failed = [
+        VERIFY._network_probe("dns", "example.com"),
+        VERIFY._network_probe("direct-ip-tcp", "1.1.1.1"),
+        VERIFY._network_probe("hostname-tcp", "example.com"),
+    ]
+    assert failed[0] == {
+        "addresses": [],
+        "error": "OSError",
+        "kind": "dns",
+        "resolved": False,
+    }
+    assert all(probe["blocked"] is True for probe in failed[1:])
+
+    class Connected:
+        def __enter__(self) -> Connected:
+            return self
+
+        def __exit__(self, *_args: object) -> None:
+            return None
+
+        def recv(self, _size: int) -> bytes:
+            return b"\x16"
+
+        def sendall(self, _data: bytes) -> None:
+            return None
+
+    monkeypatch.setattr(
+        VERIFY.socket,
+        "create_connection",
+        lambda *_args, **_kwargs: Connected(),
+    )
+    for kind, host in (
+        ("direct-ip-tcp", "1.1.1.1"),
+        ("hostname-tcp", "example.com"),
+    ):
+        with pytest.raises(
+            ValueError, match=f"verifier network probe unexpectedly succeeded: {kind}"
+        ):
+            VERIFY._network_probe(kind, host)
 
 
 def test_clean_verifier_accepts_only_canonical_git_and_forge_artifacts(
@@ -611,7 +682,11 @@ def test_real_harbor_clean_verifier_forge_sidecar_end_to_end(
         "memory_max": str(384 * 1024 * 1024),
         "pid_guarantee": "none",
     }
-    assert all(probe["blocked"] is True for probe in runtime["network_probes"])
+    probes = {probe["kind"]: probe for probe in runtime["network_probes"]}
+    assert probes["dns"]["resolved"] in {True, False}
+    assert isinstance(probes["dns"]["addresses"], list)
+    assert probes["direct-ip-tcp"]["blocked"] is True
+    assert probes["hostname-tcp"]["blocked"] is True
     assert runtime["mounts"]["docker_socket"] is False
     assert runtime["mounts"]["task_side_volumes"] is False
     manifest_data = json.loads((trial / "artifacts/manifest.json").read_text())

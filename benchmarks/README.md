@@ -140,6 +140,10 @@ The agent phase uses public network access because the agent may need model APIs
 The separate verifier environment uses Harbor's `no-network` baseline; Harbor
 rejects a trial when the selected environment cannot enforce the requested
 [network policy](https://www.harborframework.com/docs/tasks/network-policy#capabilities).
+Harbor's Docker egress control may still resolve DNS through its control path.
+The verifier records that outcome and returned addresses without requiring DNS
+failure. Direct-IP and hostname TCP connection attempts must fail; either
+connection succeeding fails reward closed.
 Evaluator correctness has no remote dependency. Admission must prove both phase
 policies locally and in detached Modal.
 
@@ -207,7 +211,7 @@ alone writes exact binary reward bytes and diagnostics. Adversarial tests reject
 agent-owned event files, post-seal API writes, recomputed snapshot tampering,
 missing artifacts, and shared-environment verifier assumptions.
 
-The full Python 3.12 suite passes 591 tests, including three real-Docker tests.
+The full Python 3.12 suite passes 607 tests, including three real-Docker tests.
 Wheels contain neither catalog nor source-only fixture files; source
 distributions retain both fixtures. Detached Modal runs of E-064 and automatic
 catalog sealing remain unproven because the retained storage credentials are

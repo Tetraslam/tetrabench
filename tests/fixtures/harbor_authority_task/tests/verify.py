@@ -523,14 +523,28 @@ def validate_repository(workspace: Path, transition: dict[str, Any]) -> dict[str
 
 
 def _network_probe(kind: str, host: str) -> dict[str, Any]:
+    if kind == "dns":
+        try:
+            answers = socket.getaddrinfo(host, 443, type=socket.SOCK_STREAM)
+        except OSError as exc:
+            return {
+                "addresses": [],
+                "error": type(exc).__name__,
+                "kind": kind,
+                "resolved": False,
+            }
+        return {
+            "addresses": sorted({str(answer[4][0]) for answer in answers}),
+            "kind": kind,
+            "resolved": True,
+        }
+    if kind not in {"direct-ip-tcp", "hostname-tcp"}:
+        raise ValueError(f"unknown verifier network probe: {kind}")
     try:
-        if kind == "dns":
-            socket.getaddrinfo(host, 443, type=socket.SOCK_STREAM)
-        else:
-            with socket.create_connection((host, 443), timeout=1) as stream:
-                stream.sendall(b"\x16\x03\x01\x00\x00")
-                if not stream.recv(1):
-                    raise ConnectionError("egress closed")
+        with socket.create_connection((host, 443), timeout=1) as stream:
+            stream.sendall(b"\x16\x03\x01\x00\x00")
+            if not stream.recv(1):
+                raise ConnectionError("egress closed")
     except OSError as exc:
         return {"blocked": True, "error": type(exc).__name__, "kind": kind}
     raise ValueError(f"verifier network probe unexpectedly succeeded: {kind}")

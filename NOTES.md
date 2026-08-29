@@ -594,3 +594,11 @@ Native artifact validation now rejects a persisted trial whose task path is abse
 The native manifest parser now rejects invalid UTF-8, trailing data, duplicate object keys, nonfinite constants, invalid root and field types, and schema changes. Accepted bytes must exactly equal Harbor 0.22's `json.dumps(manifest.to_json_data(), indent=2)` output. This deliberately rejects whitespace, member-order, and trailing-byte changes without applying tetrabench's RFC 8785 record serializer to a Harbor-owned file.
 
 All 607 tests passed, including all three Docker tests separately and again in the full suite. `uv lock --check`, locked all-group sync, Ruff check and format, ty, Bandit, actionlint, wheel/sdist build, isolated locked-runtime wheel installation and metadata/content smoke, all-groups pip-audit, `git diff --check`, and redacted Gitleaks over all 20 commits passed.
+
+## 2026-08-29T13:05:46-07:00: E-067 no-network DNS correction
+
+Provenance: user-provided Harbor 0.22 Docker egress-control correction, the retained hosted GitHub Actions failure, focused network-probe regressions, repeated real local Docker execution, and complete local CI/security/package parity. This entry corrects the DNS requirement recorded in the 11:59 E-065 evidence without altering it.
+
+Harbor's Docker `no-network` control may permit `getaddrinfo` through its control path while denying outbound traffic. The clean verifier now records DNS success or failure and the unique returned addresses as runtime evidence without requiring DNS failure. Direct-IP and hostname TCP probes still must fail; successful response-bearing connections fail reward closed. Tests cover DNS-resolves/TCP-denied, DNS-fails/TCP-denied, and successful direct-IP or hostname TCP probes.
+
+All 607 tests passed, including all three Docker tests separately and again in the full suite. `uv lock --check`, locked all-group sync, Ruff check and format, ty, Bandit, actionlint, wheel/sdist build, isolated locked-runtime wheel installation and metadata/content smoke, all-groups pip-audit, `git diff --check`, and a redacted worktree Gitleaks scan passed. Hosted GitHub Actions validation remains pending.
