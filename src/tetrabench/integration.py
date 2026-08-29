@@ -45,7 +45,7 @@ from tetrabench.records import (
 )
 from tetrabench.s3 import AdmissionRead
 from tetrabench.storage import content_object_key
-from tetrabench.submission import PreparedSubmission
+from tetrabench.submission import PreparedSubmission, resolve_controller_launch
 
 FIXTURE_DESTINATION = "fixture-task"
 
@@ -202,6 +202,7 @@ def prepare_fixture_submission(
     config: ProjectConfig,
     *,
     run_id: str,
+    profile: str | None = None,
 ) -> PreparedSubmission:
     """Seal the fixture without placing it in a benchmark catalog."""
     task_directory = task_directory.resolve()
@@ -254,7 +255,12 @@ def prepare_fixture_submission(
         context_manifest_sha256=sha256_hex(canonical_model_bytes(sealed.manifest)),
         context_manifest=sealed.manifest,
     )
-    return PreparedSubmission(plan=plan, sealed_context=sealed, request=request)
+    return PreparedSubmission(
+        plan=plan,
+        sealed_context=sealed,
+        request=request,
+        controller_launch=resolve_controller_launch(config, profile),
+    )
 
 
 def _materialize(sealed: SealedContext, destination: Path) -> None:

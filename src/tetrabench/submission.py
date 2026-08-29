@@ -9,12 +9,28 @@ from pathlib import Path
 from typing import Protocol
 
 from tetrabench.canonical_json import sha256_hex
-from tetrabench.catalog import SectionName
-from tetrabench.config import load_project_config
-from tetrabench.context import SealedContext, seal_context
+from tetrabench.catalog import SectionName, get_section, load_catalog, select_tasks
+from tetrabench.config import PROJECT_CONFIG_NAME, load_project_config
+from tetrabench.context import (
+    ProjectRootAuthority,
+    SealedContext,
+    open_project_root,
+    read_project_file,
+    seal_context,
+)
 from tetrabench.controller import ControllerInvocation, DetachedControllerClient
-from tetrabench.models import ResolvedPlan
-from tetrabench.plan import canonical_model_bytes, plan_digest, resolve_plan
+from tetrabench.modal_app import controller_deployment_spec
+from tetrabench.models import (
+    CatalogTask,
+    ProjectConfig,
+    ResolvedContextFile,
+    ResolvedPlan,
+)
+from tetrabench.plan import (
+    canonical_model_bytes,
+    plan_digest,
+    resolved_plan_from_selection,
+)
 from tetrabench.receipts import (
     ControllerCallReceipt,
     PhysicalSubmissionAttempt,
@@ -59,10 +75,37 @@ class SubmissionRefusedError(RuntimeError):
 
 
 @dataclass(frozen=True, slots=True)
+class ControllerLaunchConfiguration:
+    """In-memory authority for the exact deployed controller endpoint."""
+
+    app_name: str
+    function_name: str
+    environment_name: str
+
+
+@dataclass(frozen=True, slots=True)
 class PreparedSubmission:
+    """One config/catalog snapshot and its complete post-prepare authority."""
+
     plan: ResolvedPlan
     sealed_context: SealedContext
     request: RequestRecord
+    controller_launch: ControllerLaunchConfiguration | None
+
+
+def resolve_controller_launch(
+    config: ProjectConfig,
+    profile: str | None,
+) -> ControllerLaunchConfiguration | None:
+    """Resolve the non-durable Modal endpoint selected by this config snapshot."""
+    if config.controller.kind != "modal" or config.execution.kind != "modal":
+        return None
+    spec = controller_deployment_spec(config, profile)
+    return ControllerLaunchConfiguration(
+        app_name=spec.app_name,
+        function_name=spec.function_name,
+        environment_name=spec.environment_name,
+    )
 
 
 def prepare_submission(
@@ -73,28 +116,87 @@ def prepare_submission(
     run_id: str | None = None,
 ) -> PreparedSubmission:
     """Resolve and seal locally, refusing empty plans before cloud access."""
-    plan = resolve_plan(root, section, profile)
+    root = root.absolute()
+    authority = open_project_root(root)
+    try:
+        project_data = read_project_file(
+            authority,
+            PROJECT_CONFIG_NAME,
+            max_bytes=2 * 1024 * 1024,
+        )
+        config = load_project_config(
+            root,
+            profile=profile,
+            project_data=project_data,
+        )
+        catalog_data = read_project_file(
+            authority,
+            config.catalog_path,
+            max_bytes=2 * 1024 * 1024,
+        )
+        catalog = load_catalog(
+            root,
+            config.catalog_path,
+            catalog_data=catalog_data,
+        )
+        tasks = select_tasks(get_section(catalog, section), config.selection)
+        return _prepare_submission_from_authority(
+            root,
+            authority,
+            config,
+            tasks,
+            section,
+            profile=profile,
+            run_id=run_id,
+        )
+    finally:
+        authority.close()
+
+
+def _prepare_submission_from_authority(
+    root: Path,
+    authority: ProjectRootAuthority,
+    config: ProjectConfig,
+    tasks: tuple[CatalogTask, ...],
+    section: SectionName,
+    *,
+    profile: str | None,
+    run_id: str | None,
+) -> PreparedSubmission:
+    empty_reason = f"section {section!r} contains no selected tasks"
+    if not tasks:
+        raise SubmissionRefusedError(f"plan is not runnable: {empty_reason}")
+
+    if config.storage is None:
+        raise SubmissionRefusedError("submission requires storage configuration")
+    if config.controller.kind != "modal" or config.execution.kind != "modal":
+        raise SubmissionRefusedError("submit supports detached Modal execution only")
+
+    sealed = seal_context(
+        root,
+        config.context,
+        key_prefix=config.storage.prefix,
+        fixture_roots=tuple(task.harbor_task for task in tasks),
+        authority=authority,
+    )
+    resolved_context = tuple(
+        ResolvedContextFile(
+            destination=item.destination,
+            mode=item.mode,
+            size=item.content.size,
+            sha256=item.content.sha256,
+        )
+        for item in sealed.manifest.files
+    )
+    plan = resolved_plan_from_selection(
+        config,
+        section,
+        tasks,
+        context=resolved_context,
+    )
     if not plan.runnable or not plan.trials:
         reasons = "; ".join(plan.not_runnable_reasons)
         raise SubmissionRefusedError(f"plan is not runnable: {reasons}")
-    if plan.storage is None:
-        raise SubmissionRefusedError("submission requires storage configuration")
-    if plan.controller.kind != "modal" or plan.execution.kind != "modal":
-        raise SubmissionRefusedError("submit supports detached Modal execution only")
-
-    config = load_project_config(root, profile=profile)
-    sealed = seal_context(root, config.context, key_prefix=plan.storage.prefix)
-    manifest_plan_context = tuple(
-        (item.destination, item.mode, item.content.size, item.content.sha256)
-        for item in sealed.manifest.files
-    )
-    plan_context = tuple(
-        (item.destination, item.mode, item.size, item.sha256) for item in plan.context
-    )
-    if manifest_plan_context != plan_context:
-        raise SubmissionRefusedError(
-            "selected context changed while preparing submission"
-        )
 
     selected_run_id = validate_run_id(run_id or f"run-{uuid.uuid4().hex}")
     manifest_bytes = canonical_model_bytes(sealed.manifest)
@@ -106,7 +208,12 @@ def prepare_submission(
         context_manifest_sha256=sha256_hex(manifest_bytes),
         context_manifest=sealed.manifest,
     )
-    return PreparedSubmission(plan=plan, sealed_context=sealed, request=request)
+    return PreparedSubmission(
+        plan=plan,
+        sealed_context=sealed,
+        request=request,
+        controller_launch=resolve_controller_launch(config, profile),
+    )
 
 
 class SubmissionService:
@@ -177,6 +284,18 @@ class SubmissionService:
         ):
             raise SubmissionRefusedError(
                 "submission requires detached Modal execution and storage"
+            )
+        launch = prepared.controller_launch
+        if launch is None:
+            raise SubmissionRefusedError(
+                "submission requires a prepared Modal controller endpoint"
+            )
+        if (
+            launch.app_name != prepared.plan.controller.app_name
+            or launch.function_name != prepared.plan.controller.function_name
+        ):
+            raise SubmissionRefusedError(
+                "prepared controller endpoint and resolved plan disagree"
             )
 
     @staticmethod

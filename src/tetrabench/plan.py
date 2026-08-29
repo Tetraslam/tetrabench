@@ -14,7 +14,14 @@ from tetrabench.canonical_json import (
 from tetrabench.catalog import SectionName, get_section, load_catalog, select_tasks
 from tetrabench.config import load_project_config
 from tetrabench.context import resolve_context
-from tetrabench.models import ResolvedPlan, ResolvedTaskSelection, ResolvedTrial
+from tetrabench.models import (
+    CatalogTask,
+    ProjectConfig,
+    ResolvedContextFile,
+    ResolvedPlan,
+    ResolvedTaskSelection,
+    ResolvedTrial,
+)
 
 
 def canonical_model_bytes(model: BaseModel) -> bytes:
@@ -34,10 +41,28 @@ def resolve_plan(
     root: Path,
     section_name: SectionName,
     profile: str | None = None,
+    *,
+    context: tuple[ResolvedContextFile, ...] | None = None,
 ) -> ResolvedPlan:
     config = load_project_config(root, profile=profile)
     catalog = load_catalog(root, config.catalog_path)
     tasks = select_tasks(get_section(catalog, section_name), config.selection)
+    return resolved_plan_from_selection(
+        config,
+        section_name,
+        tasks,
+        context=(resolve_context(root, config.context) if context is None else context),
+    )
+
+
+def resolved_plan_from_selection(
+    config: ProjectConfig,
+    section_name: SectionName,
+    tasks: tuple[CatalogTask, ...],
+    *,
+    context: tuple[ResolvedContextFile, ...],
+) -> ResolvedPlan:
+    """Build one plan from an already selected catalog and sealed context snapshot."""
     trials = tuple(
         ResolvedTrial(task_id=task.id, harbor_task=task.harbor_task) for task in tasks
     )
@@ -58,7 +83,7 @@ def resolve_plan(
             exclude=tuple(config.selection.exclude),
         ),
         harbor=config.harbor.model_dump(mode="python"),
-        context=resolve_context(root, config.context),
+        context=context,
         trials=trials,
         runnable=bool(trials),
         not_runnable_reasons=reasons,

@@ -16,6 +16,12 @@ bucket = "replace-with-private-bucket"
 
 [context]
 files = []
+max_files = 256
+max_entries = 10000
+max_directories = 10000
+max_depth = 64
+max_file_bytes = 16777216
+max_total_bytes = 134217728
 
 [selection]
 include = []

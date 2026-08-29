@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import unicodedata
+from collections.abc import Iterable
 from typing import Annotated, Literal
 
 from pydantic import (
@@ -17,6 +19,9 @@ SchemaVersion = Literal[1]
 MAX_HARBOR_ATTEMPTS = 32
 MAX_HARBOR_CONCURRENCY = 64
 MAX_HARBOR_TASKS = 256
+MAX_CONTEXT_ENTRIES = 10_000
+MAX_CONTEXT_DIRECTORIES = 10_000
+MAX_CONTEXT_DEPTH = 64
 
 
 def _reject_surrounding_whitespace(value: str) -> str:
@@ -136,6 +141,13 @@ class ContextFileSpec(StrictModel):
 class ContextConfig(StrictModel):
     files: list[ContextFileSpec] = Field(default_factory=list)
     max_files: Annotated[int, Field(ge=0, le=256)] = 256
+    max_entries: Annotated[int, Field(ge=0, le=MAX_CONTEXT_ENTRIES)] = (
+        MAX_CONTEXT_ENTRIES
+    )
+    max_directories: Annotated[int, Field(ge=0, le=MAX_CONTEXT_DIRECTORIES)] = (
+        MAX_CONTEXT_DIRECTORIES
+    )
+    max_depth: Annotated[int, Field(ge=0, le=MAX_CONTEXT_DEPTH)] = MAX_CONTEXT_DEPTH
     max_file_bytes: Annotated[int, Field(ge=1, le=16 * 1024 * 1024)] = 16 * 1024 * 1024
     max_total_bytes: Annotated[
         int,
@@ -146,9 +158,9 @@ class ContextConfig(StrictModel):
     def validate_files(self) -> ContextConfig:
         if len(self.files) > self.max_files:
             raise ValueError("context contains more than max_files")
-        destinations = [item.destination for item in self.files]
-        if len(destinations) != len(set(destinations)):
-            raise ValueError("context destinations must be unique")
+        if self.max_entries < self.max_files:
+            raise ValueError("max_entries cannot be lower than max_files")
+        validate_context_destinations(item.destination for item in self.files)
         return self
 
 
@@ -273,6 +285,7 @@ class ProjectConfig(StrictModel):
 
     @model_validator(mode="after")
     def validate_controller_execution(self) -> ProjectConfig:
+        _validate_destination(self.catalog_path)
         if self.execution.kind == "docker" and self.controller.kind != "local":
             raise ValueError("Docker execution requires an explicit local controller")
         if self.execution.kind == "modal" and self.controller.kind != "modal":
@@ -283,6 +296,11 @@ class ProjectConfig(StrictModel):
 class ContextPatch(StrictModel):
     files: list[ContextFileSpec] | None = None
     max_files: Annotated[int, Field(ge=0, le=256)] | None = None
+    max_entries: Annotated[int, Field(ge=0, le=MAX_CONTEXT_ENTRIES)] | None = None
+    max_directories: Annotated[int, Field(ge=0, le=MAX_CONTEXT_DIRECTORIES)] | None = (
+        None
+    )
+    max_depth: Annotated[int, Field(ge=0, le=MAX_CONTEXT_DEPTH)] | None = None
     max_file_bytes: Annotated[int, Field(ge=1, le=16 * 1024 * 1024)] | None = None
     max_total_bytes: Annotated[int, Field(ge=1, le=128 * 1024 * 1024)] | None = None
 
@@ -306,6 +324,41 @@ def _validate_destination(value: str) -> None:
         raise ValueError(
             "destination must be a normalized relative POSIX path"
         ) from error
+
+
+def validate_context_destinations(destinations: Iterable[str]) -> None:
+    """Validate one complete portable context destination namespace."""
+    exact: set[str] = set()
+    portable: dict[tuple[str, ...], str] = {}
+    for destination in destinations:
+        if not isinstance(destination, str):
+            raise ValueError("context destination must be a string")
+        _validate_destination(destination)
+        if destination in exact:
+            raise ValueError(
+                "context destinations must be unique; duplicate context "
+                f"destination: {destination}"
+            )
+        exact.add(destination)
+        if unicodedata.normalize("NFC", destination) != destination:
+            raise ValueError(
+                f"context destination is not NFC-normalized: {destination}"
+            )
+        key = tuple(component.casefold() for component in destination.split("/"))
+        prior = portable.get(key)
+        if prior is not None:
+            raise ValueError(
+                "context destinations collide under Unicode casefold: "
+                f"{prior}, {destination}"
+            )
+        for prior_key, prior_destination in portable.items():
+            shorter = min(len(key), len(prior_key))
+            if key[:shorter] == prior_key[:shorter]:
+                raise ValueError(
+                    "context destinations have a file/directory prefix conflict: "
+                    f"{prior_destination}, {destination}"
+                )
+        portable[key] = destination
 
 
 class ResolvedAwsStorageConfig(FrozenRecord):
@@ -439,11 +492,9 @@ class ResolvedPlan(FrozenRecord):
         }
         if not compatible:
             raise ValueError("controller and execution are incompatible")
-        destinations = [item.destination for item in self.context]
         if len(self.context) > 256:
             raise ValueError("context contains more than 256 files")
-        if len(destinations) != len(set(destinations)):
-            raise ValueError("context destinations must be unique")
+        validate_context_destinations(item.destination for item in self.context)
         if any(item.size > 16 * 1024 * 1024 for item in self.context):
             raise ValueError("context file exceeds 16 MiB")
         if sum(item.size for item in self.context) > 128 * 1024 * 1024:

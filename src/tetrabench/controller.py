@@ -322,12 +322,18 @@ class ControllerAdmissionService:
     def _validate_invocation(
         self, invocation: ControllerInvocation
     ) -> tuple[ControllerInvocation, RequestRecord]:
-        invocation = ControllerInvocation.model_validate(invocation.model_dump())
-        request = self._store.read_request(
-            invocation.run_id,
-            invocation.request_sha256,
-            invocation.request_key,
-        )
+        try:
+            invocation = ControllerInvocation.model_validate(invocation.model_dump())
+            request = self._store.read_request(
+                invocation.run_id,
+                invocation.request_sha256,
+                invocation.request_key,
+            )
+            request = RequestRecord.model_validate(request.model_dump(mode="python"))
+        except (TypeError, ValueError) as error:
+            raise ControllerIdentityError(
+                "controller request, plan, or manifest validation failed"
+            ) from error
         if sha256_hex(canonical_model_bytes(request)) != invocation.request_sha256:
             raise ControllerIdentityError(
                 "immutable request digest does not match the controller invocation"
@@ -341,6 +347,11 @@ class ControllerAdmissionService:
                 "immutable request does not match the controller invocation"
             )
         return invocation, request
+
+    def validate_invocation(self, invocation: ControllerInvocation) -> RequestRecord:
+        """Revalidate a complete direct request record without durable mutation."""
+        _invocation, request = self._validate_invocation(invocation)
+        return request
 
     @staticmethod
     def _validate_bindings(

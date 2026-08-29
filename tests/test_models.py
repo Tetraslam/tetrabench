@@ -8,6 +8,7 @@ from tetrabench.models import (
     MAX_HARBOR_CONCURRENCY,
     MAX_HARBOR_TASKS,
     AwsStorageConfig,
+    ContextConfig,
     ContextFileSpec,
     ProjectConfig,
     ResolvedPlan,
@@ -192,6 +193,40 @@ def test_resolved_plan_enforces_direct_deserialization_invariants() -> None:
         )
     with pytest.raises(ValidationError, match="less than or equal"):
         _resolved_plan(context=(context_file(0, 1 << 53),))
+
+
+@pytest.mark.parametrize(
+    ("first", "second"),
+    [
+        ("a", "a"),
+        ("a", "a/b"),
+        ("café", "cafe\N{COMBINING ACUTE ACCENT}"),
+        ("Straße", "STRASSE"),
+    ],
+)
+def test_complete_destination_contract_rejects_portable_collisions(
+    first: str, second: str
+) -> None:
+    context = tuple(
+        {
+            "destination": destination,
+            "mode": 420,
+            "size": 0,
+            "sha256": "0" * 64,
+        }
+        for destination in (first, second)
+    )
+    with pytest.raises(ValidationError, match=r"unique|prefix|NFC|casefold"):
+        _resolved_plan(context=context)
+
+
+def test_context_discovery_defaults_and_entry_relation() -> None:
+    config = ContextConfig()
+    assert config.max_entries == 10_000
+    assert config.max_directories == 10_000
+    assert config.max_depth == 64
+    with pytest.raises(ValidationError, match="max_entries cannot be lower"):
+        ContextConfig(max_files=2, max_entries=1)
 
 
 @pytest.mark.parametrize("task_id", ["", " task", "task ", "bad/id"])

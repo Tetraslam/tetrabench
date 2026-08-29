@@ -440,6 +440,7 @@ class ControllerRuntime:
                         )
                     ),
                 )
+            request = self._admission.validate_invocation(invocation)
             self._check_cancellation(invocation.run_id, function_call_id)
             phase = "interrupted-volume-commit"
             self._volume.commit()
@@ -489,7 +490,7 @@ class ControllerRuntime:
                 next_event_sequence += 1
 
             phase = "materialization"
-            request = self._materialize(invocation, attempt_id, paths)
+            request = self._materialize(request, attempt_id, paths)
             self._volume.commit()
             self._volume.reload()
             self._check_cancellation(invocation.run_id, function_call_id)
@@ -665,15 +666,10 @@ class ControllerRuntime:
 
     def _materialize(
         self,
-        invocation: ControllerInvocation,
+        request: RequestRecord,
         attempt_id: str,
         paths: AttemptPaths,
     ) -> RequestRecord:
-        request = self._store.read_request(
-            invocation.run_id,
-            invocation.request_sha256,
-            invocation.request_key,
-        )
         _write_new(paths.request, canonical_model_bytes(request))
         for item in request.context_manifest.files:
             data = self._store.read_content(item.content)
@@ -688,7 +684,7 @@ class ControllerRuntime:
             _write_new(paths.context / item.destination, data, mode=item.mode)
         _write_new(
             paths.controller_plan,
-            _package_metadata(invocation.run_id, attempt_id, invocation.plan_sha256),
+            _package_metadata(request.run_id, attempt_id, request.plan_sha256),
         )
         paths.jobs.mkdir()
         return request

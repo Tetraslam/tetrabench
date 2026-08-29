@@ -321,6 +321,53 @@ def test_unsafe_topology_stops_controller_before_any_run_side_effect(
     assert store.admission.record.state == "prepared"
 
 
+def test_malformed_direct_prefix_record_causes_zero_durable_attempt_mutation(
+    tmp_path: Path,
+) -> None:
+    request = _request(context=b"context bytes")
+    original_file = request.context_manifest.files[0]
+    files = (
+        original_file.model_copy(update={"destination": "a"}),
+        original_file.model_copy(update={"destination": "a/b"}),
+    )
+    plan_files = tuple(
+        request.plan.context[0].model_copy(update={"destination": destination})
+        for destination in ("a", "a/b")
+    )
+    malformed_manifest = ContextManifest.model_construct(
+        schema_version=1,
+        files=files,
+    )
+    malformed_plan = request.plan.model_copy(update={"context": plan_files})
+    malformed = RequestRecord.model_construct(
+        schema_version=1,
+        run_id=request.run_id,
+        plan_sha256=plan_digest(malformed_plan),
+        plan=malformed_plan,
+        context_manifest_sha256=sha256_hex(canonical_model_bytes(malformed_manifest)),
+        context_manifest=malformed_manifest,
+    )
+    operations: list[str] = []
+    store = _Store(malformed, operations)
+    runtime = ControllerRuntime(
+        store,
+        _Volume(operations),
+        _FakeHarborRunner(operations),
+        _Observer(operations),
+        controller_root=tmp_path,
+        attempt_id=lambda: "attempt-one",
+    )
+
+    result = runtime.run(_invocation(malformed), function_call_id="fc-1")
+
+    assert result.state == "failed"
+    assert store.admission.record.state == "prepared"
+    assert store.events == []
+    assert store.terminals == []
+    assert not (tmp_path / "runs").exists()
+    assert not any(operation.startswith("volume:") for operation in operations)
+
+
 def test_duplicate_loser_performs_no_volume_or_runner_work(tmp_path: Path) -> None:
     runtime, store, operations, invocation = _runtime(tmp_path)
     store.admission = AdmissionRead(

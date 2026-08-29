@@ -11,16 +11,22 @@ from tetrabench.models import Catalog, CatalogSection, TaskSelection
 SectionName = Literal["systems-design", "github-workflow"]
 
 
-def load_catalog(root: Path, catalog_path: str) -> Catalog:
+def load_catalog(
+    root: Path, catalog_path: str, *, catalog_data: bytes | None = None
+) -> Catalog:
     configured_path = Path(catalog_path)
     path = configured_path if configured_path.is_absolute() else root / configured_path
     try:
+        if catalog_data is not None:
+            return Catalog.model_validate(tomllib.loads(catalog_data.decode("utf-8")))
         with path.open("rb") as stream:
             return Catalog.model_validate(tomllib.load(stream))
     except FileNotFoundError as error:
         raise ValueError(f"catalog does not exist: {path}") from error
     except tomllib.TOMLDecodeError as error:
         raise ValueError(f"invalid catalog TOML in {path}: {error}") from error
+    except UnicodeDecodeError as error:
+        raise ValueError(f"invalid UTF-8 in catalog {path}") from error
 
 
 def get_section(catalog: Catalog, name: SectionName) -> CatalogSection:

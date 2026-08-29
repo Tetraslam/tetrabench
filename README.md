@@ -30,8 +30,11 @@ successor retained distinct old and new named-Volume attempts, published a
 call running. The Single-region cutover smoke likewise published 14 artifacts
 terminal-last, retained its named-Volume attempt, and left no active controller
 or nested Harbor child. AWS and true provider preemption remain unproven. The
-checked-in benchmark sections still contain no tasks, so `submit` refuses them; the
-source-only fixture helper is the only exercised cloud submission path.
+checked-in benchmark sections still contain no tasks, so `submit` refuses
+them. Detached submission now derives every regular file under each selected
+catalog task directory and seals that complete fixture into the immutable
+context before it constructs an S3 or Modal service. The source-only fixture
+helper remains the only exercised live cloud submission path.
 
 Explicit detached-controller recovery is locally and live verified. It refuses
 running or inspection-unknown owners and cancellation admission states.
@@ -84,8 +87,9 @@ terminal proof.
 contract. It is not a substitute for the deterministic manifests that each
 fixture must eventually own. Its two catalog task lists remain empty; fixture
 work is blocked on the local and detached separate-verifier handoff,
-forge-sidecar, selected-fixture sealing, and native binary-reward admission
-prerequisites.
+forge-sidecar, and native binary-reward admission prerequisites. Automatic
+selected-fixture sealing is locally complete; its first live Modal catalog run
+remains unproven.
 
 The accepted v1 design targets Harbor v0.22.0 evaluations through:
 
@@ -171,10 +175,33 @@ canonical receipt appends physical spawn attempts and returned Modal call IDs
 using atomic replacement plus receipt-root-parent, file, and receipt-root
 `fsync`. Receipts are recovery caches, not a run database or owner record.
 
-For a runnable Modal plan, submission seals and uploads selected context,
+For a runnable Modal plan, submission anchors the project root before reading
+the project configuration or catalog. It reads both through retained
+root-relative no-follow descriptors, then traverses each `harbor_task` directory
+from that same root authority. It seals every regular file at its
+project-relative path and composes those files with explicit context whose
+destinations do not overlap. File content,
+normalized execution mode, size, digest, and destination bind the plan and
+request. Discovery uses incremental descriptor-based `scandir`, retaining at
+most 10,000 discovered entries and 10,000 directories at depth 64 by default;
+configuration may lower those bounds but cannot set the entry bound below the
+file bound. Every opened fixture descriptor must remain on the anchored Linux
+mount and device, and regular files must have one link. A second complete
+descriptor-anchored traversal compares names, types, identity, mode, mount,
+size, and every file digest against the staged bytes. Missing or replaced
+directories, links, special files, mutation, unavailable mount evidence,
+portable path ambiguity, collisions, and context limits stop submission before
+it constructs an S3 or Modal service. Preparation also resolves the exact Modal
+App, Function, and environment into its in-memory result. Provider construction
+uses only that result and immutable resolved storage; it does not reread project
+configuration or the catalog. This launch selector is absent from plans,
+requests, receipts, and other durable records. Submission then uploads the
+staged context,
 publishes the immutable request, creates or observes the prepared admission,
-then calls the deployed `Function.from_name(...).spawn()` and persists its
-FunctionCall ID as local evidence. The CLI never claims admission ownership.
+calls the deployed `Function.from_name(...).spawn()`, and persists its
+FunctionCall ID as local evidence. The controller resolves task paths only
+beneath its materialized context; it never falls back to the submitter's
+checkout. The CLI never claims admission ownership.
 Every spawned controller must CAS prepared to running with its actual call ID;
 before that CAS it must validate the full run/request/plan invocation against
 the immutable request and admission. Only the winner may enter Harbor. `recover`
@@ -429,9 +456,19 @@ concurrency = 1
 ```
 
 Plans admit at most 256 tasks, 32 attempts per task, and concurrency 64.
+Context fixture discovery defaults to 10,000 total entries, 10,000 directories
+(including selected roots), and depth 64. These are fail-closed Linux limits;
+filesystems without `/proc` fd mount evidence are unsupported.
 Controller artifact collection defaults to at most 10,000 regular files, 64
 MiB per file, and 1 GiB total. It preflights these limits before publishing any
 artifact from an attempt.
+
+Fixture sealing detects mutation across two complete reads under a trusted
+same-UID checkout; it does not claim an atomic single-instant filesystem
+snapshot. A malicious same-UID process that changes and restores state between
+observations is outside this boundary. Inode identity detects replacement, while
+the second digest comparison owns file-byte equality; inode reuse is not treated
+as cryptographic proof.
 
 `harbor.agent_name` and optional `harbor.model_name` pass through to Harbor as
 opaque strings. Tetrabench does not interpret or validate them and does not

@@ -23,6 +23,7 @@ from tetrabench.models import (
     ResolvedPlan,
     SchemaVersion,
     Sha256,
+    validate_context_destinations,
 )
 from tetrabench.storage import validate_content_object_key, validate_logical_path
 
@@ -108,9 +109,7 @@ class ContextManifest(FrozenRecord):
     def validate_files(self) -> ContextManifest:
         if len(self.files) > 256:
             raise ValueError("context manifest contains more than 256 files")
-        destinations = [item.destination for item in self.files]
-        if len(destinations) != len(set(destinations)):
-            raise ValueError("context manifest destinations must be unique")
+        validate_context_destinations(item.destination for item in self.files)
         if any(item.content.size > 16 * 1024 * 1024 for item in self.files):
             raise ValueError("context manifest file exceeds 16 MiB")
         if sum(item.content.size for item in self.files) > 128 * 1024 * 1024:

@@ -72,6 +72,16 @@ def _content(data: bytes, name: str = "") -> ContentObject:
     )
 
 
+def test_context_manifest_rejects_file_directory_prefix_conflict() -> None:
+    content = _content(b"")
+    files = tuple(
+        ContextManifestFile(destination=destination, mode=420, content=content)
+        for destination in ("a", "a/b")
+    )
+    with pytest.raises(ValidationError, match="prefix conflict"):
+        ContextManifest(schema_version=1, files=files)
+
+
 def _terminal() -> TerminalRecord:
     config = _content(b"config", "bench")
     lock = _content(b"lock", "bench")

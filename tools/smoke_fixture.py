@@ -16,7 +16,6 @@ from pathlib import Path
 from tetrabench.config import load_project_config
 from tetrabench.controller import ModalControllerClient
 from tetrabench.integration import prepare_fixture_submission
-from tetrabench.modal_app import controller_deployment_spec
 from tetrabench.receipts import ReceiptStore
 from tetrabench.s3 import create_s3_store
 from tetrabench.submission import SubmissionService
@@ -78,17 +77,22 @@ def main() -> None:
         parser.error("fixture smoke requires a Modal controller and execution profile")
     if config.storage is None:
         parser.error("fixture smoke requires storage")
-    spec = controller_deployment_spec(config, args.profile)
     with fixture_with_hold(fixture, args.hold_seconds) as selected_fixture:
         prepared = prepare_fixture_submission(
-            selected_fixture, config, run_id=args.run_id
+            selected_fixture, config, run_id=args.run_id, profile=args.profile
         )
+        launch = prepared.controller_launch
+        if launch is None:
+            parser.error("fixture smoke requires a prepared Modal endpoint")
+        storage = prepared.plan.storage
+        if storage is None:
+            parser.error("fixture smoke requires prepared storage")
         receipt = SubmissionService(
-            create_s3_store(config.storage),
+            create_s3_store(storage),
             ModalControllerClient(
-                spec.app_name,
-                spec.function_name,
-                environment_name=spec.environment_name,
+                launch.app_name,
+                launch.function_name,
+                environment_name=launch.environment_name,
             ),
             ReceiptStore(),
         ).submit(prepared)

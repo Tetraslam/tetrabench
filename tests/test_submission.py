@@ -25,6 +25,7 @@ from tetrabench.s3 import (
 )
 from tetrabench.storage import content_object_key
 from tetrabench.submission import (
+    ControllerLaunchConfiguration,
     PreparedSubmission,
     SubmissionRefusedError,
     SubmissionService,
@@ -117,6 +118,11 @@ def _prepared() -> PreparedSubmission:
         plan=plan,
         sealed_context=SealedContext(manifest=manifest, files=()),
         request=request,
+        controller_launch=ControllerLaunchConfiguration(
+            app_name="tetrabench",
+            function_name="controller",
+            environment_name="tetrabench-default",
+        ),
     )
 
 
@@ -271,6 +277,7 @@ def test_service_rejects_empty_plan_before_receipt_s3_or_modal(tmp_path: Path) -
                 plan=empty_plan,
                 sealed_context=base.sealed_context,
                 request=empty_request,
+                controller_launch=base.controller_launch,
             )
         )
     assert store.operations == []

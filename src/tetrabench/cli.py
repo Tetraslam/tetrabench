@@ -52,9 +52,11 @@ from tetrabench.s3 import (
     create_s3_store,
 )
 from tetrabench.submission import (
+    ControllerLaunchConfiguration,
     SubmissionRefusedError,
     SubmissionService,
     prepare_submission,
+    resolve_controller_launch,
 )
 
 app = typer.Typer(
@@ -111,12 +113,13 @@ def _deployment_spec(profile: str | None):
     return controller_deployment_spec(config, profile)
 
 
-def _modal_client(config, profile: str | None) -> ModalControllerClient:
-    spec = controller_deployment_spec(config, profile)
+def _modal_client(
+    launch: ControllerLaunchConfiguration,
+) -> ModalControllerClient:
     return ModalControllerClient(
-        spec.app_name,
-        spec.function_name,
-        environment_name=spec.environment_name,
+        launch.app_name,
+        launch.function_name,
+        environment_name=launch.environment_name,
     )
 
 
@@ -468,13 +471,14 @@ def submit(
         )
         storage = prepared.plan.storage
         controller_config = prepared.plan.controller
-        if storage is None or controller_config.kind != "modal":
+        launch = prepared.controller_launch
+        if storage is None or controller_config.kind != "modal" or launch is None:
             raise SubmissionRefusedError(
                 "cloud submission requires resolved storage and a Modal controller"
             )
         service = SubmissionService(
             create_s3_store(storage),
-            _modal_client(load_project_config(Path.cwd(), profile=profile), profile),
+            _modal_client(launch),
             ReceiptStore(),
         )
         receipt = service.submit(prepared)
@@ -506,16 +510,18 @@ def _recovery_service(profile: str | None) -> RecoveryService:
         raise ValueError("recover requires storage configuration")
     if config.controller.kind != "modal":
         raise ValueError("recover currently supports the Modal controller only")
+    launch = resolve_controller_launch(config, profile)
+    if launch is None:
+        raise ValueError("recover requires Modal execution")
     store = create_s3_store(config.storage)
-    controller = _modal_client(config, profile)
+    controller = _modal_client(launch)
     receipts = ReceiptStore()
-    spec = controller_deployment_spec(config, profile)
     return RecoveryService(
         store,
         controller,
         ModalChildObserver(
             S3ChildIdentitySource(store),
-            environment_name=spec.environment_name,
+            environment_name=launch.environment_name,
         ),
         SubmissionService(store, controller, receipts),
     )
@@ -584,10 +590,13 @@ def _status_service(profile: str | None) -> StatusService:
         raise ValueError("status requires storage configuration")
     if config.controller.kind != "modal":
         raise ValueError("status currently supports the Modal controller only")
+    launch = resolve_controller_launch(config, profile)
+    if launch is None:
+        raise ValueError("status requires Modal execution")
     return StatusService(
         create_s3_store(config.storage),
         ReceiptStore(),
-        _modal_client(config, profile),
+        _modal_client(launch),
     )
 
 
@@ -631,13 +640,15 @@ def _cancellation_service(profile: str | None) -> CancellationService:
     if config.controller.kind != "modal":
         raise ValueError("cancel currently supports the Modal controller only")
     store = create_s3_store(config.storage)
-    spec = controller_deployment_spec(config, profile)
+    launch = resolve_controller_launch(config, profile)
+    if launch is None:
+        raise ValueError("cancel requires Modal execution")
     return CancellationService(
         store,
-        _modal_client(config, profile),
+        _modal_client(launch),
         ModalChildObserver(
             S3ChildIdentitySource(store),
-            environment_name=spec.environment_name,
+            environment_name=launch.environment_name,
         ),
     )
 

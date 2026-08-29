@@ -23,14 +23,18 @@ def default_user_config_path() -> Path:
     return user_config_path("tetrabench") / "config.toml"
 
 
-def _read_toml(path: Path) -> dict[str, object]:
+def _read_toml(path: Path, *, data: bytes | None = None) -> dict[str, object]:
     try:
+        if data is not None:
+            return tomllib.loads(data.decode("utf-8"))
         with path.open("rb") as stream:
             return tomllib.load(stream)
     except FileNotFoundError as error:
         raise ValueError(f"configuration file does not exist: {path}") from error
     except tomllib.TOMLDecodeError as error:
         raise ValueError(f"invalid TOML in {path}: {error}") from error
+    except UnicodeDecodeError as error:
+        raise ValueError(f"invalid UTF-8 in {path}") from error
 
 
 def load_user_config(path: Path | None = None) -> UserConfig:
@@ -124,9 +128,12 @@ def load_project_config(
     profile: str | None = None,
     overrides: ConfigOverrides | None = None,
     user_path: Path | None = None,
+    project_data: bytes | None = None,
 ) -> ProjectConfig:
     """Validate and merge typed patches, then validate one complete profile."""
-    project = ProjectConfigPatch.model_validate(_read_toml(root / PROJECT_CONFIG_NAME))
+    project = ProjectConfigPatch.model_validate(
+        _read_toml(root / PROJECT_CONFIG_NAME, data=project_data)
+    )
     values = ProjectConfig(schema_version=1).model_dump(mode="python")
     values["schema_version"] = project.schema_version
     if project.catalog_path is not None:
@@ -138,7 +145,15 @@ def load_project_config(
         values["context"] = _merge_fields(
             context_values,
             project.context.model_dump(exclude_none=True),
-            ("files", "max_files", "max_file_bytes", "max_total_bytes"),
+            (
+                "files",
+                "max_files",
+                "max_entries",
+                "max_directories",
+                "max_depth",
+                "max_file_bytes",
+                "max_total_bytes",
+            ),
         )
     if profile is not None:
         profiles = load_user_config(user_path).profiles

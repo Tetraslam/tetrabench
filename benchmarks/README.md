@@ -185,6 +185,20 @@ prototypes both locally and in detached Modal:
 
 They gate the admission system before task fixture work starts.
 
+E-061 locally proves the first boundary. Detached request preparation
+automatically seals the complete selected fixture set, and the
+controller resolves each plan task only from the materialized context. The
+tests cover deterministic ordering, every file identity input, multi-task
+composition, explicit-context collisions, path and type rejection, limits, and
+file and directory mutation races before provider construction. A materialized
+fixture matches the stable checkout tree by relative path, bytes, and normalized
+mode. The full Python 3.12 suite passes 536 tests, including both real-Docker
+tests, and isolated-wheel inspection confirms that wheels still contain neither
+catalogs nor source-only fixtures while source distributions retain them. A live
+Modal run of automatic catalog sealing remains unproven. The separate-verifier,
+network-policy, artifact-handoff, and forge-sidecar boundary remains entirely
+unimplemented, so the admission gate still blocks fixture work.
+
 ## Systems design through implementation
 
 Each systems task declares one bounded workspace artifact containing source and,
@@ -460,9 +474,11 @@ most 8 distinct fault schedules.
 
 ## Implementation order
 
-1. Implement and prove automatic selected-fixture sealing, separate-verifier
-   handoff, and the forge-sidecar snapshot prototype locally and in detached
-   Modal. Do not create a task fixture before these prerequisites pass.
+1. Complete the separate-verifier handoff and forge-sidecar snapshot prototype
+   locally and in detached Modal, then run automatic selected-fixture sealing
+   through live Modal. Automatic sealing already passes local and controller
+   materialization tests. Do not create a task fixture before these
+   prerequisites pass.
 2. Implement binary native-reward validation and section pass-rate summaries.
    Freeze the pinned agent and verifier images, manifest schemas, fault
    scheduler, exploit-audit checks, budgets, and admission evidence format.

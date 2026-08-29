@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import stat
 import time
 from pathlib import Path
 from types import SimpleNamespace
@@ -155,7 +156,8 @@ def test_context_detects_fstat_mutation(
     def changing_fstat(descriptor: int) -> object:
         nonlocal calls
         result = original_fstat(descriptor)
-        calls += 1
+        if stat.S_ISREG(result.st_mode):
+            calls += 1
         values = {
             name: getattr(result, name)
             for name in (
@@ -167,7 +169,7 @@ def test_context_detects_fstat_mutation(
                 "st_mtime_ns",
             )
         }
-        if calls == 2:
+        if stat.S_ISREG(result.st_mode) and calls == 2:
             values["st_ctime_ns"] += 1
         return SimpleNamespace(**values)
 
