@@ -1067,6 +1067,7 @@ def test_over_5_gib_stat_selects_managed_upload_without_allocating(
     fake_stat = SimpleNamespace(
         st_dev=1,
         st_ino=2,
+        st_mode=0o100644,
         st_size=huge_size,
         st_ctime_ns=3,
         st_mtime_ns=4,

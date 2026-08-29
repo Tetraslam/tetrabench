@@ -331,8 +331,8 @@ def test_modal_adapter_only_spawns_deployed_function(
 
             class Deployed:
                 @staticmethod
-                def spawn(payload: bytes):
-                    calls.append(("spawn", payload))
+                def spawn(payload: bytes, digest: str):
+                    calls.append(("spawn", (payload, digest)))
                     return SimpleNamespace(object_id="fc-deployed")
 
             return Deployed()
@@ -341,8 +341,11 @@ def test_modal_adapter_only_spawns_deployed_function(
     adapter = ModalControllerClient("app", "controller")
     assert adapter.spawn(_invocation()) == "fc-deployed"
     assert calls[0] == ("from_name", ("app", "controller"))
-    payload = calls[1][1]
+    spawn_args = calls[1][1]
+    assert isinstance(spawn_args, tuple)
+    payload, digest = spawn_args
     assert isinstance(payload, bytes)
+    assert sha256_hex(payload) == digest
     assert parse_canonical_model(payload, ControllerInvocation) == _invocation()
 
 

@@ -67,7 +67,7 @@ class DetachedControllerClient(Protocol):
 
 class ControllerAdmissionStore(Protocol):
     def read_request(
-        self, run_id: str, request_sha256: str, request_key: str
+        self, run_id: str, request_sha256: str, request_key: str, /
     ) -> RequestRecord: ...
 
     def read_admission(self, run_id: str) -> AdmissionRead | None: ...
@@ -98,6 +98,22 @@ class ControllerStartDecision(FrozenRecord):
 
 class ControllerIdentityError(RuntimeError):
     """A controller invocation is not bound to current durable authority."""
+
+
+class TerminalAcknowledgementPending(RuntimeError):
+    """Terminal proof is committed, but admission acknowledgement is pending."""
+
+    def __init__(self, terminal_sha256: str) -> None:
+        super().__init__("terminal proof is durable; admission acknowledgement pending")
+        self.terminal_sha256 = terminal_sha256
+
+
+class TerminalPublicationUncertain(RuntimeError):
+    """Terminal publication may have crossed the provider mutation boundary."""
+
+    def __init__(self, terminal_sha256: str) -> None:
+        super().__init__("terminal publication outcome is uncertain")
+        self.terminal_sha256 = terminal_sha256
 
 
 class ControllerAdmissionService:
@@ -204,27 +220,71 @@ class ControllerAdmissionService:
             function_call_id=function_call_id,
         )
         expected_digest = sha256_hex(canonical_model_bytes(terminal))
-        digest = self._store.publish_terminal(terminal)
+        try:
+            digest = self._store.publish_terminal(terminal)
+        except Exception as error:
+            raise TerminalPublicationUncertain(expected_digest) from error
         if digest != expected_digest:
             raise ControllerIdentityError(
                 "published terminal digest does not match the authorized terminal"
             )
+        try:
+            acknowledged = self._acknowledge_terminal(
+                invocation,
+                request,
+                digest,
+            )
+        except Exception as error:
+            raise TerminalAcknowledgementPending(digest) from error
+        if not acknowledged:
+            raise TerminalAcknowledgementPending(digest)
+        return digest
+
+    def reconcile_terminal(
+        self,
+        invocation: ControllerInvocation,
+        terminal: TerminalRecord,
+    ) -> tuple[str, bool]:
+        """Acknowledge already-validated terminal proof without republishing it."""
+        invocation, request = self._validate_invocation(invocation)
+        if (
+            terminal.run_id != invocation.run_id
+            or terminal.request_sha256 != invocation.request_sha256
+        ):
+            raise ControllerIdentityError(
+                "terminal does not match the reconciled run and request"
+            )
+        digest = sha256_hex(canonical_model_bytes(terminal))
+        try:
+            acknowledged = self._acknowledge_terminal(invocation, request, digest)
+        except ControllerIdentityError:
+            raise
+        except Exception:
+            acknowledged = False
+        return digest, acknowledged
+
+    def _acknowledge_terminal(
+        self,
+        invocation: ControllerInvocation,
+        request: RequestRecord,
+        digest: str,
+    ) -> bool:
+        observed = self._store.read_admission(invocation.run_id)
+        if observed is None:
+            return False
         for _attempt in range(3):
             record = observed.record
             self._validate_bindings(invocation, request, record)
-            if record.owner_function_call_id != function_call_id:
-                raise ControllerIdentityError("FunctionCall does not own the admission")
             if record.state == "terminal":
                 if record.terminal_sha256 != digest:
                     raise ControllerIdentityError(
                         "admission terminal digest conflicts with terminal proof"
                     )
-                return digest
+                return True
             if record.state not in {"running", "cancelling", "cancelled", "failed"}:
-                raise ControllerIdentityError(
-                    "admission state "
-                    f"{record.state!r} cannot acknowledge terminal proof"
-                )
+                return False
+            if record.owner_function_call_id is None:
+                return False
             replacement = transition_admission(
                 record,
                 "terminal",
@@ -236,15 +296,11 @@ class ControllerAdmissionService:
             except S3CasConflictError:
                 refreshed = self._store.read_admission(invocation.run_id)
                 if refreshed is None:
-                    raise ControllerIdentityError(
-                        "admission disappeared after terminal publication"
-                    ) from None
+                    return False
                 observed = refreshed
                 continue
-            return digest
-        raise S3CasConflictError(
-            "admission kept changing after terminal publication; proof is durable"
-        )
+            return True
+        return False
 
     def _validate_invocation(
         self, invocation: ControllerInvocation
@@ -310,31 +366,53 @@ class ControllerAdmissionService:
 
     def mark_failed(self, run_id: str, *, function_call_id: str) -> None:
         """Record controller failure only when no terminal proof was published."""
-        observed = self._store.read_admission(run_id)
-        if observed is None:
+        for _attempt in range(3):
+            observed = self._store.read_admission(run_id)
+            if observed is None:
+                return
+            record = observed.record
+            owns_active = (
+                record.owner_function_call_id == function_call_id
+                and record.state in {"running", "cancelling"}
+            )
+            if not owns_active:
+                return
+            try:
+                self._store.update_admission(
+                    observed,
+                    transition_admission(record, "failed", timestamp=self._timestamp()),
+                )
+            except S3CasConflictError:
+                continue
             return
-        record = observed.record
-        if record.owner_function_call_id != function_call_id or record.state not in {
-            "running",
-            "cancelling",
-        }:
-            return
-        self._store.update_admission(
-            observed,
-            transition_admission(record, "failed", timestamp=self._timestamp()),
-        )
 
 
 class ModalControllerClient:
     """Adapter for one deployed Modal Function. It has no foreground call path."""
 
-    def __init__(self, app_name: str, function_name: str) -> None:
+    def __init__(
+        self,
+        app_name: str,
+        function_name: str,
+        *,
+        environment_name: str | None = None,
+    ) -> None:
         self._app_name = app_name
         self._function_name = function_name
+        self._environment_name = environment_name
 
     def spawn(self, invocation: ControllerInvocation) -> str:
-        function = modal.Function.from_name(self._app_name, self._function_name)
-        call = function.spawn(canonical_model_bytes(invocation))
+        from tetrabench.modal_app import invocation_arguments
+
+        if self._environment_name is None:
+            function = modal.Function.from_name(self._app_name, self._function_name)
+        else:
+            function = modal.Function.from_name(
+                self._app_name,
+                self._function_name,
+                environment_name=self._environment_name,
+            )
+        call = function.spawn(*invocation_arguments(invocation))
         return call.object_id
 
     def inspect(self, call_id: str) -> ControllerCallState:

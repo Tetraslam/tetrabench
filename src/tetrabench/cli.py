@@ -18,11 +18,16 @@ from tetrabench.catalog import SectionName, get_section, load_catalog, select_ta
 from tetrabench.config import load_project_config
 from tetrabench.context import resolve_context
 from tetrabench.controller import ModalControllerClient
+from tetrabench.harbor import ModalChildObserver, S3ChildIdentitySource
 from tetrabench.lifecycle import (
     CancellationConflictError,
     CancellationService,
     CancellationUnavailableError,
     StatusService,
+)
+from tetrabench.modal_app import (
+    controller_deployment_spec,
+    deploy_controller,
 )
 from tetrabench.plan import canonical_model_bytes, plan_digest, resolve_plan
 from tetrabench.receipts import ReceiptConflictError, ReceiptStore
@@ -38,6 +43,8 @@ app = typer.Typer(
     invoke_without_command=True,
     no_args_is_help=True,
 )
+controller_app = typer.Typer(no_args_is_help=True)
+app.add_typer(controller_app, name="controller")
 out = Console()
 err = Console(stderr=True)
 
@@ -68,6 +75,20 @@ def _canonical_echo(value: object, *, stderr: bool = False) -> None:
 
 def _provider_display(provider: str) -> str:
     return "AWS" if provider == "aws" else "Tigris"
+
+
+def _deployment_spec(profile: str | None):
+    config = load_project_config(Path.cwd(), profile=profile)
+    return controller_deployment_spec(config, profile)
+
+
+def _modal_client(config, profile: str | None) -> ModalControllerClient:
+    spec = controller_deployment_spec(config, profile)
+    return ModalControllerClient(
+        spec.app_name,
+        spec.function_name,
+        environment_name=spec.environment_name,
+    )
 
 
 def _storage_error(error: ClientError, *, provider: str, bucket: str) -> str:
@@ -263,6 +284,69 @@ def doctor(
     out.print("[yellow]unproven[/yellow] storage writes (not attempted)")
 
 
+@controller_app.command("info")
+def controller_info(
+    profile: Annotated[str | None, typer.Option(help="User profile name.")] = None,
+    json_output: Annotated[
+        bool,
+        typer.Option("--json", help="Emit canonical JSON to stdout."),
+    ] = False,
+) -> None:
+    """Show the exact profile-specific controller deployment contract."""
+    try:
+        spec = _deployment_spec(profile)
+    except (ValueError, ValidationError) as error:
+        _fail_command(error, json_output=json_output)
+    if json_output:
+        _canonical_echo(spec.as_dict())
+        return
+    out.print(f"[bold]App:[/bold] {spec.app_name}")
+    out.print(f"[bold]Function:[/bold] {spec.function_name}")
+    out.print(f"[bold]Environment:[/bold] {spec.environment_name}")
+    out.print(f"[bold]Volume:[/bold] {spec.volume_name}")
+    out.print(f"[bold]Secret:[/bold] {spec.secret_name}")
+    out.print(f"[bold]Controller root:[/bold] {spec.controller_root}")
+
+
+@controller_app.command("deploy")
+def controller_deploy(
+    profile: Annotated[str | None, typer.Option(help="User profile name.")] = None,
+    yes: Annotated[
+        bool,
+        typer.Option("--yes", help="Deploy without an interactive confirmation."),
+    ] = False,
+    json_output: Annotated[
+        bool,
+        typer.Option("--json", help="Emit canonical JSON to stdout."),
+    ] = False,
+) -> None:
+    """Deploy the selected profile's named controller resources and Function."""
+    try:
+        spec = _deployment_spec(profile)
+    except (ValueError, ValidationError) as error:
+        _fail_command(error, json_output=json_output)
+    if not yes:
+        if json_output:
+            _fail_command(
+                ValueError("controller deploy --json requires --yes"),
+                json_output=True,
+            )
+        controller_info(profile=profile, json_output=False)
+        if not typer.confirm("Deploy these Modal resources?", default=False):
+            err.print("deployment cancelled; no cloud mutation attempted")
+            raise typer.Exit(1)
+    try:
+        deploy_controller(spec)
+    except (ModalError, OSError, ValueError) as error:
+        _fail_command(error, json_output=json_output)
+    report = spec.as_dict() | {"deployed": True}
+    if json_output:
+        _canonical_echo(report)
+    else:
+        out.print(f"[green]deployed[/green] {spec.app_name}")
+        out.print(f"[bold]Environment:[/bold] {spec.environment_name}")
+
+
 @app.command()
 def submit(
     section: SectionName,
@@ -286,10 +370,7 @@ def submit(
         assert storage is not None and controller_config.kind == "modal"
         service = SubmissionService(
             create_s3_store(storage),
-            ModalControllerClient(
-                controller_config.app_name,
-                controller_config.function_name,
-            ),
+            _modal_client(load_project_config(Path.cwd(), profile=profile), profile),
             ReceiptStore(),
         )
         receipt = service.submit(prepared)
@@ -332,10 +413,7 @@ def recover(
         assert storage is not None and controller_config.kind == "modal"
         receipt = SubmissionService(
             create_s3_store(storage),
-            ModalControllerClient(
-                controller_config.app_name,
-                controller_config.function_name,
-            ),
+            _modal_client(load_project_config(Path.cwd(), profile=profile), profile),
             ReceiptStore(),
         ).recover(prepared)
     except (
@@ -367,9 +445,7 @@ def _status_service(profile: str | None) -> StatusService:
     return StatusService(
         create_s3_store(config.storage),
         ReceiptStore(),
-        ModalControllerClient(
-            config.controller.app_name, config.controller.function_name
-        ),
+        _modal_client(config, profile),
     )
 
 
@@ -412,12 +488,15 @@ def _cancellation_service(profile: str | None) -> CancellationService:
         raise ValueError("cancel requires storage configuration")
     if config.controller.kind != "modal":
         raise ValueError("cancel currently supports the Modal controller only")
+    store = create_s3_store(config.storage)
+    spec = controller_deployment_spec(config, profile)
     return CancellationService(
-        create_s3_store(config.storage),
-        ModalControllerClient(
-            config.controller.app_name, config.controller.function_name
+        store,
+        _modal_client(config, profile),
+        ModalChildObserver(
+            S3ChildIdentitySource(store),
+            environment_name=spec.environment_name,
         ),
-        None,
     )
 
 
@@ -430,7 +509,7 @@ def cancel(
         typer.Option("--json", help="Emit canonical JSON to stdout."),
     ] = False,
 ) -> None:
-    """CAS-cancel prepared runs; running cleanup needs the deployed observer."""
+    """CAS-cancel runs and clean profile-scoped Harbor Modal children."""
     try:
         result = _cancellation_service(profile).cancel(run_id)
     except (

@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import os
+import stat
 import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
@@ -288,37 +289,54 @@ class S3Store:
         chunk_size: int = _READ_CHUNK_SIZE,
     ) -> ContentObject:
         """Hash and upload a file with bounded reads and managed multipart."""
+        with path.open("rb") as stream:
+            return self.publish_content_stream(
+                stream,
+                media_type=media_type,
+                chunk_size=chunk_size,
+            )
+
+    def publish_content_stream(
+        self,
+        stream: BinaryIO,
+        *,
+        media_type: str = "application/octet-stream",
+        chunk_size: int = _READ_CHUNK_SIZE,
+    ) -> ContentObject:
+        """Publish a held regular-file descriptor without reopening its path."""
         if chunk_size <= 0:
             raise ValueError("chunk_size must be positive")
-        with path.open("rb") as stream:
-            before = os.fstat(stream.fileno())
-            sha256, size = _hash_stream(stream, chunk_size)
-            after_hash = os.fstat(stream.fileno())
-            if (
-                _file_identity(before) != _file_identity(after_hash)
-                or size != before.st_size
-            ):
-                raise ValueError("content file changed while hashing")
-            descriptor = ContentObject(
-                sha256=sha256,
-                key=content_object_key(sha256, prefix=self._prefix),
-                size=size,
-                media_type=media_type,
+        before = os.fstat(stream.fileno())
+        if not stat.S_ISREG(before.st_mode):
+            raise ValueError("content descriptor is not a regular file")
+        stream.seek(0)
+        sha256, size = _hash_stream(stream, chunk_size)
+        after_hash = os.fstat(stream.fileno())
+        if (
+            _file_identity(before) != _file_identity(after_hash)
+            or size != before.st_size
+        ):
+            raise ValueError("content file changed while hashing")
+        descriptor = ContentObject(
+            sha256=sha256,
+            key=content_object_key(sha256, prefix=self._prefix),
+            size=size,
+            media_type=media_type,
+        )
+        stream.seek(0)
+        if size >= self._multipart_threshold:
+            self._publish_managed_file(stream, descriptor)
+        else:
+            self._publish_stream(
+                descriptor.key,
+                stream,
+                sha256=descriptor.sha256,
+                size=descriptor.size,
+                media_type=descriptor.media_type,
             )
-            stream.seek(0)
-            if size >= self._multipart_threshold:
-                self._publish_managed_file(stream, descriptor)
-            else:
-                self._publish_stream(
-                    descriptor.key,
-                    stream,
-                    sha256=descriptor.sha256,
-                    size=descriptor.size,
-                    media_type=descriptor.media_type,
-                )
-            after_upload = os.fstat(stream.fileno())
-            if _file_identity(after_hash) != _file_identity(after_upload):
-                raise ValueError("content file changed while uploading")
+        after_upload = os.fstat(stream.fileno())
+        if _file_identity(after_hash) != _file_identity(after_upload):
+            raise ValueError("content file changed while uploading")
         return descriptor
 
     def verify_content(self, descriptor: ContentObject) -> None:
@@ -334,6 +352,22 @@ class S3Store:
             exact_service_checksum=False,
             collect=False,
         )
+
+    def read_content(self, descriptor: ContentObject) -> bytes:
+        """Return verified content bytes for bounded controller materialization."""
+        expected_key = content_object_key(descriptor.sha256, prefix=self._prefix)
+        if descriptor.key != expected_key:
+            raise S3IntegrityError("content object is outside the configured namespace")
+        data = self._read_verified_object(
+            descriptor.key,
+            sha256=descriptor.sha256,
+            size=descriptor.size,
+            media_type=descriptor.media_type,
+            max_size=descriptor.size,
+            exact_service_checksum=False,
+        )
+        assert isinstance(data, bytes)
+        return data
 
     def publish_request(self, request: RequestRecord) -> str:
         """Publish first, then discover visible request conflicts boundedly."""
@@ -564,6 +598,24 @@ class S3Store:
         return interpret_terminal_records(
             run_id, tuple(sorted(observation.terminals.items()))
         )
+
+    def read_attempt_events(self, run_id: str) -> tuple[AttemptEvent, ...]:
+        """Return all visible, valid attempt events or fail on any conflict."""
+        run_id = validate_run_id(run_id)
+        observation = self._observe_run(
+            run_id,
+            attempts=self._verification_attempts,
+            delay_seconds=self._verification_delay_seconds,
+        )
+        reasons = observation.conflict_reasons()
+        if reasons:
+            raise S3ConflictError("; ".join(reasons))
+        events = [
+            event
+            for by_digest in observation.events.values()
+            for event in by_digest.values()
+        ]
+        return tuple(sorted(events, key=lambda item: (item.attempt_id, item.sequence)))
 
     def _publish_managed_file(
         self, stream: BinaryIO, descriptor: ContentObject

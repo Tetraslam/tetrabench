@@ -2,14 +2,18 @@
 
 tetrabench is in early implementation. Its verified local surface includes
 strict RFC 8785 records, immutable S3 transport, a fixed-key CAS admission
-record, atomic submission receipts, a detached Modal client adapter, and local
-submission, status, and cancellation services. Tigris conditional create,
-stale-ETag rejection, update, and concurrent single-winner behavior have been
-proven live on a private copy-on-write fork. It has not deployed a controller or
-run Harbor, AWS, or Modal smokes. The checked-in benchmark sections contain no tasks, so
-`submit` refuses them before constructing S3 or Modal clients. `cancel` also
-refuses a running admission before mutation until the real Harbor child
-observer is installed; it can CAS a prepared admission directly to cancelled.
+record, atomic submission receipts, a profile-specific Modal App builder, and a
+decorator-independent controller runtime. The runtime locally proves admission,
+attempt isolation, Volume boundaries, context verification, terminal-last
+publication, no-follow artifact collection, bounded failure evidence, and real
+child-observer orchestration with fakes. Modal 1.5.4 App construction and the
+installed distribution metadata are exercised against the real local SDK.
+Tigris conditional create, stale-ETag rejection, update, and concurrent
+single-winner behavior have been proven live on a private copy-on-write fork.
+No controller has been deployed and no Harbor, AWS, or Modal smoke has run. The
+checked-in benchmark sections contain no tasks, so `submit` refuses them before
+constructing S3 or Modal clients. The deployed controller intentionally has no
+real Harbor runner until P5.
 
 Python 3.12 or newer is required.
 
@@ -55,6 +59,10 @@ uv run tetrabench plan systems-design --json
 uv run tetrabench doctor
 uv run tetrabench doctor --json
 uv run tetrabench doctor --profile local --online
+uv run tetrabench controller info
+uv run tetrabench controller info --profile PROFILE --json
+uv run tetrabench controller deploy --profile PROFILE
+uv run tetrabench controller deploy --profile PROFILE --yes --json
 uv run tetrabench submit systems-design
 uv run tetrabench recover systems-design --run-id RUN_ID
 uv run tetrabench status RUN_ID
@@ -100,14 +108,34 @@ Cancellation uses admission CAS and needs no event-write permission. Prepared
 runs advance directly to cancelled. Running runs advance to cancelling while
 preserving the owner call ID; the service then cancels and polls that call,
 sweeps children, and advances to cancelled only after the call is terminal and
-two consecutive sweeps are empty. The deployed child observer is absent, so
-the installed command refuses running cancellation before changing admission.
+two consecutive sweeps are empty. The profile-scoped observer combines child
+IDs from immutable attempt events with run-tagged `Sandbox.list` results under
+Harbor's `__harbor__` App, terminates with wait, and repeats bounded sweeps.
 Modal API, authentication, and other inspection failures do not prove that the
 owner call stopped. Terminal proof can be published only by the exact owner
 while admission is running or cancelling, after revalidating the immutable
 request and all run/request/plan bindings.
-The deployed controller, Volume handling, Harbor execution, real child observer,
-and live cleanup remain unimplemented.
+
+## Controller deployment
+
+`controller info` is local and read-only. It prints the exact App, Function,
+Modal environment, Volume, Secret, timeout, and fixed controller-root names for
+the selected profile. `controller deploy` prints the same contract and asks for
+confirmation before calling Modal; `--yes` skips the prompt, and JSON deployment
+requires `--yes`. Secret values are never read or printed.
+
+The image copies the local project into a build layer and installs it with pip
+as the `tetrabench` distribution, including its metadata and exact Harbor and
+Modal pins. Deployment creates or resolves the profile-specific Modal
+Environment before deploying. The serialized Function has zero retries, a
+24-hour timeout, the named Volume at `/tetrabench/controller`, and the named S3
+credential Secret. Submission invokes it through
+`Function.from_name(...).spawn()` with canonical invocation bytes and their
+digest. This deployment path is structurally tested only. Package/API behavior,
+Volume semantics, nested Harbor Modal execution, and live cleanup remain
+`unproven` until paid smokes run. Artifact publication accepts only regular
+files reached through no-follow directory descriptors beneath the attempt root;
+links, special files, mutation, and escaped bindings fail closed.
 
 ## Project configuration
 

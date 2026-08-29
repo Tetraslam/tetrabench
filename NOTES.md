@@ -152,3 +152,25 @@ The 221-test suite, Ruff check/format, ty, lock check, package build, isolated w
 Provenance: local follow-up validation after adding explicit resolved-storage identity coverage.
 
 The preceding entry's 221-test count is superseded by 222 passing tests. The added regression proves that an invocation whose resolved storage differs from the immutable request cannot claim admission.
+
+## 2026-08-28T18:08:10-07:00: P4 detached controller foundation
+
+Provenance: user contract, pinned Modal 1.5.4 and Harbor 0.22.0 APIs, the retained E-019 proof, and local Python 3.12 implementation tests.
+
+Profile deployments retain configured App, Function, and Secret names and isolate the Modal environment and named controller Volume with a deterministic profile key. The deployed Function receives canonical invocation bytes plus their SHA-256 digest, obtains its current FunctionCall ID, and enters a decorator-independent runtime that claims admission before attempt work. Attempts use exclusive directories under `/tetrabench/controller`, explicit Volume commit/reload boundaries, verified S3 request/context materialization, native job-directory publication, terminal-last CAS acknowledgement, and failure evidence without fabricated terminal completeness. Controller plan/result artifacts record the deployed tetrabench, Harbor, and Modal versions.
+
+The supported `TetrabenchModalEnvironment` import path preserves Harbor's session ID, adds run/attempt/plan labels, rejects sandbox v2, and records public `Sandbox.from_name` identity after start and on failure. Cleanup combines persisted immutable child events with run-tagged public `Sandbox.list` under Harbor's `__harbor__` App, terminate-wait, and repeated empty sweeps. The HarborRunner remains an injected protocol, and the deployed foundation uses an explicit unavailable sentinel until P5. No paid Modal call, deployment, real Harbor run, or real Volume smoke occurred; package/API and live behavior remain `unproven`.
+
+## 2026-08-28T19:10:00-07:00: P4 controller review correction
+
+Provenance: user-provided P4 review findings, Modal 1.5.4 SDK inspection, and local Python 3.12 implementation and validation.
+
+Dynamic profile Apps now use Modal's supported serialized nested-function contract. The controller image copies the local project into a build layer and pip-installs it as a distribution with metadata and exact Harbor/Modal pins; deployment hydrates the configured Environment with `create_if_missing=True` before App deployment. Real Modal 1.5.4 object construction passes without deployment.
+
+Harbor output is treated as untrusted. Artifact collection is rooted at a descriptor-opened attempt directory, traverses every component with no-follow directory FDs, rejects links and special files, streams through held regular-file descriptors, and checks identity before and after upload. Startup checks terminal proof before claim or attempt creation and reconciles owned failed, cancelling, or cancelled admission. A published terminal remains the committed result when its admission CAS cannot be acknowledged, and no later immutable artifacts or events are emitted. Missing `__harbor__` means no children. Failure evidence records bounded type, phase, and code fields without provider messages.
+
+The 261-test suite, Ruff, ty, lock check, wheel/sdist build, isolated wheel install and CLI/metadata smoke, real Modal App-construction smoke, diff check, and audited secret scan passed. No cloud deployment or paid Modal/Harbor execution occurred; nested authentication, real Volume behavior, and live cleanup remain `unproven`.
+
+## 2026-08-28T18:32:00-07:00: P4 correction timestamp
+
+Provenance: local clock check. The preceding entry's `19:10:00-07:00` heading was recorded incorrectly; its actual creation time was approximately `18:31:00-07:00`. File order preserves append order.
