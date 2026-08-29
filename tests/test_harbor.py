@@ -14,6 +14,8 @@ from tetrabench.harbor import (
     ModalChildObserver,
     S3ChildIdentitySource,
     TetrabenchModalEnvironment,
+    _registered_event_sink,
+    child_event_sink,
 )
 from tetrabench.records import AttemptEvent
 
@@ -146,6 +148,14 @@ def test_required_child_labels_are_distinct() -> None:
     assert all(label.startswith("tetrabench.") for label in labels)
 
 
+def test_controller_event_sink_registry_is_invocation_scoped_and_cleared() -> None:
+    events = []
+    with child_event_sink(events.append) as key:
+        assert _registered_event_sink(key) is not None
+    with pytest.raises(RuntimeError, match="unavailable or expired"):
+        _registered_event_sink(key)
+
+
 def test_custom_environment_is_the_pinned_public_import_path_subclass() -> None:
     assert issubclass(TetrabenchModalEnvironment, ModalEnvironment)
     assert TetrabenchModalEnvironment.start is not ModalEnvironment.start
@@ -165,6 +175,7 @@ def test_custom_environment_rejects_modal_sandbox_v2_before_harbor_start(
             run_id="run-1",
             attempt_id="attempt-1",
             plan_sha256="f" * 64,
+            event_sink_key="test-sink",
             observation_path=str(tmp_path / "children.jsonl"),
             modal_sandbox_v2=True,
         )

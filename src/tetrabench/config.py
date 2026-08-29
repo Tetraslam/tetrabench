@@ -108,6 +108,14 @@ def _apply_profile_patch(
             layer.selection.model_dump(exclude_none=True),
             ("include", "exclude"),
         )
+    if layer.harbor is not None:
+        harbor = values.get("harbor")
+        harbor_values = harbor if isinstance(harbor, dict) else {}
+        values["harbor"] = _merge_fields(
+            harbor_values,
+            layer.harbor.model_dump(exclude_none=True),
+            ("agent_name", "model_name", "attempts", "concurrency"),
+        )
 
 
 def load_project_config(

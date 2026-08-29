@@ -4,13 +4,18 @@ from __future__ import annotations
 
 import mimetypes
 import os
+import posixpath
 import stat
+import threading
 import uuid
 from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from importlib.metadata import version
 from pathlib import Path
 from typing import BinaryIO, Literal, Protocol
+
+from harbor.models.trajectories import Trajectory
 
 from tetrabench.canonical_json import dumps_canonical_json, sha256_hex
 from tetrabench.controller import (
@@ -39,6 +44,57 @@ from tetrabench.records import (
 CONTROLLER_ROOT = Path("/tetrabench/controller")
 HARBOR_VERSION = "0.22.0"
 MODAL_VERSION = "1.5.4"
+DEFAULT_MAX_ARTIFACT_FILES = 10_000
+DEFAULT_MAX_ARTIFACT_FILE_BYTES = 64 * 1024 * 1024
+DEFAULT_MAX_ARTIFACT_TOTAL_BYTES = 1024 * 1024 * 1024
+
+_CREDENTIAL_ENVIRONMENT_NAMES = frozenset(
+    {
+        "AWS_ACCESS_KEY_ID",
+        "AWS_SECRET_ACCESS_KEY",
+        "AWS_SESSION_TOKEN",
+        "AWS_SECURITY_TOKEN",
+        "AWS_PROFILE",
+        "AWS_DEFAULT_PROFILE",
+        "AWS_SHARED_CREDENTIALS_FILE",
+        "AWS_CONFIG_FILE",
+        "AWS_WEB_IDENTITY_TOKEN_FILE",
+        "AWS_ROLE_ARN",
+        "AWS_ROLE_SESSION_NAME",
+        "AWS_CONTAINER_CREDENTIALS_RELATIVE_URI",
+        "AWS_CONTAINER_CREDENTIALS_FULL_URI",
+        "AWS_CONTAINER_AUTHORIZATION_TOKEN",
+        "AWS_CONTAINER_AUTHORIZATION_TOKEN_FILE",
+        "AWS_CREDENTIAL_EXPIRATION",
+        "AWS_BEARER_TOKEN_BEDROCK",
+        "AWS_SDK_LOAD_CONFIG",
+        "BOTO_CONFIG",
+        "TIGRIS_ACCESS_KEY_ID",
+        "TIGRIS_SECRET_ACCESS_KEY",
+        "TIGRIS_STORAGE_ACCESS_KEY_ID",
+        "TIGRIS_STORAGE_SECRET_ACCESS_KEY",
+    }
+)
+_credential_environment_lock = threading.RLock()
+
+
+@contextmanager
+def credential_free_harbor_environment() -> Iterator[None]:
+    """Hide provider credential sources until one controller run fully returns."""
+    with _credential_environment_lock:
+        saved = {
+            name: os.environ[name]
+            for name in _CREDENTIAL_ENVIRONMENT_NAMES
+            if name in os.environ
+        }
+        for name in _CREDENTIAL_ENVIRONMENT_NAMES:
+            os.environ.pop(name, None)
+        try:
+            yield
+        finally:
+            for name in _CREDENTIAL_ENVIRONMENT_NAMES:
+                os.environ.pop(name, None)
+            os.environ.update(saved)
 
 
 class ControllerVolume(Protocol):
@@ -92,9 +148,10 @@ class HarborRunResult:
     result_path: Path | None = None
     evidence: tuple[str, ...] = ()
     warnings: tuple[str, ...] = ()
+    atif_paths: tuple[Path, ...] = ()
 
 
-class HarborRunner(Protocol):
+class HarborRunnerProtocol(Protocol):
     def run(
         self,
         request: RequestRecord,
@@ -102,22 +159,19 @@ class HarborRunner(Protocol):
         *,
         environment_import_path: str,
         labels: dict[str, str],
+        event_sink_key: str,
     ) -> HarborRunResult: ...
 
 
-class HarborRunnerUnavailable:
-    """Deployment sentinel until P5 supplies a real Harbor runner."""
+@dataclass(frozen=True, slots=True)
+class ArtifactCollectionLimits:
+    max_files: int = DEFAULT_MAX_ARTIFACT_FILES
+    max_file_bytes: int = DEFAULT_MAX_ARTIFACT_FILE_BYTES
+    max_total_bytes: int = DEFAULT_MAX_ARTIFACT_TOTAL_BYTES
 
-    def run(
-        self,
-        request: RequestRecord,
-        paths: AttemptPaths,
-        *,
-        environment_import_path: str,
-        labels: dict[str, str],
-    ) -> HarborRunResult:
-        del request, paths, environment_import_path, labels
-        raise RuntimeError("Harbor execution is not implemented until P5")
+    def __post_init__(self) -> None:
+        if min(self.max_files, self.max_file_bytes, self.max_total_bytes) <= 0:
+            raise ValueError("artifact collection limits must be positive")
 
 
 @dataclass(frozen=True, slots=True)
@@ -142,7 +196,7 @@ def parse_controller_invocation(payload: bytes, digest: str) -> ControllerInvoca
     return parse_canonical_model(payload, ControllerInvocation)
 
 
-def _attempt_paths(root: Path, run_id: str, attempt_id: str) -> AttemptPaths:
+def attempt_paths(root: Path, run_id: str, attempt_id: str) -> AttemptPaths:
     attempt = root / "runs" / run_id / "attempts" / attempt_id
     return AttemptPaths(
         root=attempt,
@@ -260,7 +314,7 @@ def _open_relative_no_follow(root_fd: int, parts: tuple[str, ...]) -> int:
 def _walk_regular_files(
     directory_fd: int,
     relative: tuple[str, ...],
-) -> Iterator[tuple[tuple[str, ...], int]]:
+) -> Iterator[tuple[tuple[str, ...], tuple[int, int, int, int, int]]]:
     for name in sorted(os.listdir(directory_fd)):
         try:
             child_fd = os.open(
@@ -278,7 +332,7 @@ def _walk_regular_files(
             if stat.S_ISDIR(metadata.st_mode):
                 yield from _walk_regular_files(child_fd, child_relative)
             elif stat.S_ISREG(metadata.st_mode):
-                yield child_relative, child_fd
+                yield child_relative, _file_identity(metadata)
             else:
                 raise ValueError("artifact path is not a regular file or directory")
         finally:
@@ -292,12 +346,13 @@ class ControllerRuntime:
         self,
         store: ControllerRuntimeStore,
         volume: ControllerVolume,
-        runner: HarborRunner,
+        runner: HarborRunnerProtocol,
         observer: ChildCleanupObserver,
         *,
         controller_root: Path = CONTROLLER_ROOT,
         attempt_id: Callable[[], str] | None = None,
         cleanup_sweeps: int = 5,
+        artifact_limits: ArtifactCollectionLimits | None = None,
     ) -> None:
         if cleanup_sweeps < 2:
             raise ValueError("replay cleanup requires at least two sweeps")
@@ -308,9 +363,22 @@ class ControllerRuntime:
         self._root = controller_root
         self._attempt_id = attempt_id or (lambda: f"attempt-{uuid.uuid4().hex}")
         self._cleanup_sweeps = cleanup_sweeps
+        self._artifact_limits = artifact_limits or ArtifactCollectionLimits()
         self._admission = ControllerAdmissionService(store)
 
     def run(
+        self,
+        invocation: ControllerInvocation,
+        *,
+        function_call_id: str,
+    ) -> ControllerRuntimeResult:
+        with credential_free_harbor_environment():
+            return self._run_credential_free(
+                invocation,
+                function_call_id=function_call_id,
+            )
+
+    def _run_credential_free(
         self,
         invocation: ControllerInvocation,
         *,
@@ -392,7 +460,7 @@ class ControllerRuntime:
                 self._check_cancellation(invocation.run_id, function_call_id)
 
             attempt_id = validate_attempt_id(self._attempt_id())
-            paths = _attempt_paths(self._root, invocation.run_id, attempt_id)
+            paths = attempt_paths(self._root, invocation.run_id, attempt_id)
             paths.root.mkdir(parents=True, exist_ok=False)
             self._volume.commit()
             self._store.publish_event(
@@ -443,12 +511,13 @@ class ControllerRuntime:
                 self._store.publish_event(sequenced)
 
             phase = "harbor-execution"
-            with child_event_sink(publish_child_event):
+            with child_event_sink(publish_child_event) as event_sink_key:
                 result = self._runner.run(
                     request,
                     paths,
                     environment_import_path=ENVIRONMENT_IMPORT_PATH,
                     labels=labels,
+                    event_sink_key=event_sink_key,
                 )
             self._volume.commit()
             self._volume.reload()
@@ -465,6 +534,7 @@ class ControllerRuntime:
                         "cancellation observed after Harbor return",
                     ),
                     warnings=result.warnings,
+                    atif_paths=result.atif_paths,
                 )
             phase = "artifact-validation"
             self._validate_runner_result(paths, result)
@@ -628,6 +698,59 @@ class ControllerRuntime:
                     raise ValueError(
                         "Harbor artifact binding escaped the job directory"
                     )
+        for path in result.atif_paths:
+            atif_parts = _relative_parts(paths.root, path)
+            if atif_parts[: len(job_parts)] != job_parts or atif_parts == job_parts:
+                raise ValueError("Harbor ATIF path escaped the job directory")
+
+    def _atif_evidence(
+        self,
+        paths: AttemptPaths,
+        inventory: tuple[ArtifactInventoryEntry, ...],
+        atif_paths: tuple[Path, ...],
+    ) -> tuple[tuple[str, ...], tuple[str, ...]]:
+        by_path = {item.logical_path: item for item in inventory}
+        expected = tuple(
+            f"attempts/{paths.root.name}/{path.relative_to(paths.root).as_posix()}"
+            for path in atif_paths
+        )
+        warnings = tuple(
+            f"ATIF missing: {path.removeprefix(f'attempts/{paths.root.name}/')} "
+            "was not emitted"
+            for path in expected
+            if path not in by_path
+        )
+        discovered: set[str] = set()
+        pending = [path for path in expected if path in by_path]
+        while pending:
+            logical_path = pending.pop()
+            if logical_path in discovered:
+                continue
+            item = by_path[logical_path]
+            trajectory = Trajectory.model_validate_json(
+                self._store.read_content(item.content)
+            )
+            discovered.add(logical_path)
+            reference = trajectory.continued_trajectory_ref
+            if reference is None:
+                continue
+            if reference.startswith("/"):
+                raise ValueError("ATIF continuation reference must be relative")
+            joined = posixpath.normpath(
+                posixpath.join(posixpath.dirname(logical_path), reference)
+            )
+            job_prefix = (
+                f"attempts/{paths.root.name}/"
+                f"{paths.jobs.relative_to(paths.root).as_posix()}/"
+            )
+            if not joined.startswith(job_prefix) or joined not in by_path:
+                raise ValueError("ATIF continuation reference is absent or escaped")
+            pending.append(joined)
+        evidence = (
+            f"Secure artifact inventory contains {len(discovered)} ATIF trajectory "
+            "file(s)",
+        )
+        return evidence, warnings
 
     def _publish_open_file(
         self,
@@ -660,13 +783,48 @@ class ControllerRuntime:
         inventory: list[ArtifactInventoryEntry] = []
         attempt_fd = _open_directory_no_follow(paths.root)
         try:
-            pending: list[tuple[tuple[str, ...], int]] = []
+            pending: list[tuple[tuple[str, ...], tuple[int, int, int, int, int]]] = []
             for path in individual_files:
                 parts = _relative_parts(paths.root, path)
                 descriptor = _open_relative_no_follow(attempt_fd, parts)
-                pending.append((parts, descriptor))
-            try:
-                for parts, descriptor in pending:
+                try:
+                    metadata = os.fstat(descriptor)
+                    if not stat.S_ISREG(metadata.st_mode):
+                        raise ValueError("artifact binding is not a regular file")
+                    pending.append((parts, _file_identity(metadata)))
+                finally:
+                    os.close(descriptor)
+
+            if directory is not None:
+                directory_parts = _relative_parts(paths.root, directory)
+                directory_fd = _open_relative_no_follow(attempt_fd, directory_parts)
+                try:
+                    if not stat.S_ISDIR(os.fstat(directory_fd).st_mode):
+                        raise ValueError("Harbor runner did not return a directory")
+                    pending.extend(_walk_regular_files(directory_fd, directory_parts))
+                finally:
+                    os.close(directory_fd)
+
+            if len({parts for parts, _identity in pending}) != len(pending):
+                raise ValueError("artifact collection contains duplicate logical paths")
+            if len(pending) > self._artifact_limits.max_files:
+                raise ValueError("artifact collection exceeds max_files")
+            total_bytes = 0
+            for _parts, identity in pending:
+                size = identity[2]
+                if size > self._artifact_limits.max_file_bytes:
+                    raise ValueError("artifact collection file exceeds max_file_bytes")
+                total_bytes += size
+                if total_bytes > self._artifact_limits.max_total_bytes:
+                    raise ValueError("artifact collection exceeds max_total_bytes")
+
+            for parts, expected_identity in pending:
+                descriptor = _open_relative_no_follow(attempt_fd, parts)
+                try:
+                    if _file_identity(os.fstat(descriptor)) != expected_identity:
+                        raise ValueError(
+                            "artifact file changed after collection preflight"
+                        )
                     logical_path = f"attempts/{paths.root.name}/{'/'.join(parts)}"
                     content = self._publish_open_file(
                         descriptor,
@@ -678,33 +836,8 @@ class ControllerRuntime:
                             content=content,
                         )
                     )
-            finally:
-                for _parts, descriptor in pending:
-                    os.close(descriptor)
-
-            if directory is not None:
-                directory_parts = _relative_parts(paths.root, directory)
-                directory_fd = _open_relative_no_follow(attempt_fd, directory_parts)
-                try:
-                    if not stat.S_ISDIR(os.fstat(directory_fd).st_mode):
-                        raise ValueError("Harbor runner did not return a directory")
-                    for parts, descriptor in _walk_regular_files(
-                        directory_fd,
-                        directory_parts,
-                    ):
-                        logical_path = f"attempts/{paths.root.name}/{'/'.join(parts)}"
-                        content = self._publish_open_file(
-                            descriptor,
-                            paths.root.joinpath(*parts),
-                        )
-                        inventory.append(
-                            ArtifactInventoryEntry(
-                                logical_path=logical_path,
-                                content=content,
-                            )
-                        )
                 finally:
-                    os.close(directory_fd)
+                    os.close(descriptor)
         finally:
             os.close(attempt_fd)
         return tuple(sorted(inventory, key=lambda item: item.logical_path))
@@ -720,6 +853,11 @@ class ControllerRuntime:
             paths,
             individual_files=(paths.controller_plan, paths.controller_result),
             directory=result.job_directory,
+        )
+        atif_evidence, atif_warnings = self._atif_evidence(
+            paths,
+            inventory,
+            result.atif_paths,
         )
         by_path = {item.logical_path: item for item in inventory}
 
@@ -743,9 +881,9 @@ class ControllerRuntime:
             harbor_result=binding(result.result_path),
             evidence=tuple(
                 TerminalEvidence(type="harbor-runner", message=message)
-                for message in result.evidence
+                for message in (*result.evidence, *atif_evidence)
             ),
-            warnings=result.warnings,
+            warnings=(*result.warnings, *atif_warnings),
         )
 
     def _publish_failure_evidence(

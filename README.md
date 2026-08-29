@@ -3,17 +3,23 @@
 tetrabench is in early implementation. Its verified local surface includes
 strict RFC 8785 records, immutable S3 transport, a fixed-key CAS admission
 record, atomic submission receipts, a profile-specific Modal App builder, and a
-decorator-independent controller runtime. The runtime locally proves admission,
-attempt isolation, Volume boundaries, context verification, terminal-last
-publication, no-follow artifact collection, bounded failure evidence, and real
+decorator-independent controller runtime. A real Harbor 0.22 runner now compiles
+strict plans through Harbor's supported configuration models and executes with
+`Job.create` and `job.run`. Its integration fixture passes through attached local
+Docker with the oracle agent and a verifier reward of `1.0`, with no model call.
+The real Docker fixture also passes through `ControllerRuntime` with in-memory
+S3 and Volume implementations, producing a validated immutable terminal after
+secure artifact collection. The runtime locally proves admission, attempt
+isolation, Volume boundaries, context verification, terminal-last publication,
+no-follow bounded artifact collection, bounded failure evidence, and real
 child-observer orchestration with fakes. Modal 1.5.4 App construction and the
 installed distribution metadata are exercised against the real local SDK.
 Tigris conditional create, stale-ETag rejection, update, and concurrent
 single-winner behavior have been proven live on a private copy-on-write fork.
-No controller has been deployed and no Harbor, AWS, or Modal smoke has run. The
+No controller has been deployed and no AWS or Modal smoke has run. The
 checked-in benchmark sections contain no tasks, so `submit` refuses them before
-constructing S3 or Modal clients. The deployed controller intentionally has no
-real Harbor runner until P5.
+constructing S3 or Modal clients. The fixture remains under `tests/fixtures` and
+is not a benchmark task or installed wheel payload.
 
 Python 3.12 or newer is required.
 
@@ -116,6 +122,41 @@ owner call stopped. Terminal proof can be published only by the exact owner
 while admission is running or cancelling, after revalidating the immutable
 request and all run/request/plan bindings.
 
+## Verified local Harbor fixture
+
+The integration-only fixture runs attached through local Docker and returns the
+native Harbor job directory and bindings:
+
+```console
+uv run python - <<'PY'
+from pathlib import Path
+from tetrabench.integration import run_local_composition
+
+result = run_local_composition(
+    Path("tests/fixtures/harbor_task"),
+    Path("/tmp/tetrabench-harbor-fixture"),
+)
+print(result.terminal.outcome, result.controller.terminal_sha256)
+print(result.invocation_root / "jobs/harbor-job")
+PY
+```
+
+The native directory is retained unchanged. Tetrabench validates job and
+per-trial config, lock, and result files with Harbor 0.22's Pydantic models.
+Persisted files own outcomes, rewards, exceptions, evidence, and artifact
+bindings; the value returned by `job.run` is checked only for agreement. ATIF
+is discovered from the securely collected inventory at normal and multi-step
+agent paths, following continuation references. The oracle fixture does not
+emit ATIF, so the terminal records that absence instead of creating a trace.
+
+The controller constructs its S3 client before removing AWS and Tigris
+credential, profile, and credential-file environment variables for the entire
+Harbor run. Harbor child configuration receives only an invocation-scoped
+registry key; the trusted controller process publishes lifecycle events through
+the already-created store. The Docker fixture asks Harbor to interpolate the
+standard AWS variables and verifies that the child receives only its explicit
+unavailable defaults while terminal publication still succeeds.
+
 ## Controller deployment
 
 `controller info` is local and read-only. It prints the exact App, Function,
@@ -170,7 +211,21 @@ kind = "local"
 
 [execution]
 kind = "docker"
+
+[harbor]
+agent_name = "oracle"
+attempts = 1
+concurrency = 1
 ```
+
+Plans admit at most 256 tasks, 32 attempts per task, and concurrency 64.
+Controller artifact collection defaults to at most 10,000 regular files, 64
+MiB per file, and 1 GiB total. It preflights these limits before publishing any
+artifact from an attempt.
+
+`harbor.agent_name` and optional `harbor.model_name` pass through to Harbor as
+opaque strings. Tetrabench does not interpret or validate them and does not
+guarantee that Harbor, an agent, or a model provider will accept them.
 
 ## User profiles
 

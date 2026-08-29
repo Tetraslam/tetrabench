@@ -54,6 +54,7 @@ def _request(*, region: str = "us-west-2") -> RequestRecord:
                 "region": region,
             },
             "selection": {},
+            "harbor": {},
             "context": (),
             "trials": ({"task_id": "task", "harbor_task": "task.module"},),
             "runnable": True,

@@ -281,6 +281,7 @@ def _plan(section: str = "systems-design") -> ResolvedPlan:
             "execution": {"kind": "docker"},
             "storage": None,
             "selection": {},
+            "harbor": {},
             "context": (),
             "trials": (),
             "runnable": False,

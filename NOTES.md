@@ -174,3 +174,17 @@ The 261-test suite, Ruff, ty, lock check, wheel/sdist build, isolated wheel inst
 ## 2026-08-28T18:32:00-07:00: P4 correction timestamp
 
 Provenance: local clock check. The preceding entry's `19:10:00-07:00` heading was recorded incorrectly; its actual creation time was approximately `18:31:00-07:00`. File order preserves append order.
+
+## 2026-08-28T18:55:07-07:00: Real Harbor 0.22 runner boundary
+
+Provenance: user contract, pinned Harbor 0.22.0 source/API inspection, local Python 3.12 implementation, and a real attached Docker fixture run.
+
+The production controller now uses a narrow adapter over `JobConfig`, `TaskConfig`, `AgentConfig`, `EnvironmentConfig`, `Job.create`, and `job.run`. Resolved plans carry opaque Harbor agent/model strings plus positive attempts and concurrency. Task identities resolve only below the materialized context root. Docker uses Harbor's Docker environment; Modal compiles the E-019 `TetrabenchModalEnvironment` import path with run, attempt, and plan labels plus the child-event observation path. Tetrabench does not add a provider registry.
+
+Harbor's complete native job directory remains unchanged. The runner validates job and per-trial config, lock, and result files and validates `agent/trajectory.json` with Harbor's ATIF model when present. Missing ATIF is warning evidence rather than a synthesized trace. The integration-only oracle fixture lives under `tests/fixtures`, is absent from benchmark catalogs and installed wheels, and completed through local Docker with one verifier reward of `1.0`. No Modal resource was deployed or invoked; nested Modal authentication, Volume behavior, and live child cleanup remain `unproven`.
+
+## 2026-08-28T19:30:00-07:00: Harbor composition boundary correction
+
+Provenance: user-provided composition findings, Harbor 0.22 model/source inspection, focused regressions, and a real attached-Docker run through `ControllerRuntime`.
+
+The controller now constructs its S3 store before hiding AWS/Tigris credential, token, profile, and credential-file environment sources for the entire runtime. Child lifecycle publication uses a random invocation-scoped controller-process registry key and the already-created store, with reliable cleanup. Persisted Harbor job/trial config, lock, and result models own semantic outcomes; transport objects must agree. Plans and artifact collection are bounded, and ATIF roots plus continuation files are discovered from the secure inventory. The real fixture requested standard AWS interpolation variables, received only unavailable defaults in the child, published a succeeded 14-artifact terminal with reward `1.0`, and recorded missing ATIF without fabrication. Deployed Modal, real Volume, live IAM, and nested authentication remain `unproven`.

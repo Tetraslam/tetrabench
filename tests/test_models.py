@@ -4,6 +4,9 @@ import pytest
 from pydantic import ValidationError
 
 from tetrabench.models import (
+    MAX_HARBOR_ATTEMPTS,
+    MAX_HARBOR_CONCURRENCY,
+    MAX_HARBOR_TASKS,
     AwsStorageConfig,
     ContextFileSpec,
     ProjectConfig,
@@ -23,6 +26,7 @@ def _resolved_plan(**changes: object) -> ResolvedPlan:
         "execution": {"kind": "modal"},
         "storage": None,
         "selection": {},
+        "harbor": {},
         "context": (),
         "trials": (),
         "runnable": False,
@@ -98,6 +102,40 @@ def test_docker_requires_explicit_local_controller() -> None:
         }
     )
     assert config.controller.kind == "local"
+
+
+def test_harbor_model_and_agent_are_opaque_and_limits_are_positive() -> None:
+    config = ProjectConfig.model_validate(
+        {
+            "schema_version": 1,
+            "harbor": {
+                "agent_name": "custom.agent:Agent",
+                "model_name": "opaque/provider/model",
+                "attempts": 2,
+                "concurrency": 4,
+            },
+        }
+    )
+    assert config.harbor.model_name == "opaque/provider/model"
+    with pytest.raises(ValidationError, match="greater than or equal to 1"):
+        ProjectConfig.model_validate({"schema_version": 1, "harbor": {"attempts": 0}})
+    for field, value in (
+        ("attempts", MAX_HARBOR_ATTEMPTS + 1),
+        ("concurrency", MAX_HARBOR_CONCURRENCY + 1),
+    ):
+        with pytest.raises(ValidationError, match="less than or equal"):
+            ProjectConfig.model_validate(
+                {"schema_version": 1, "harbor": {field: value}}
+            )
+
+
+def test_resolved_plan_rejects_unbounded_task_expansion() -> None:
+    trials = tuple(
+        {"task_id": f"task-{index}", "harbor_task": f"task-{index}"}
+        for index in range(MAX_HARBOR_TASKS + 1)
+    )
+    with pytest.raises(ValidationError, match="more than 256 trials"):
+        _resolved_plan(trials=trials, runnable=True, not_runnable_reasons=())
 
 
 def test_resolved_records_are_frozen() -> None:

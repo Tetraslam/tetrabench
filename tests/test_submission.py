@@ -86,6 +86,7 @@ def _prepared() -> PreparedSubmission:
                 "prefix": "tenant",
             },
             "selection": {},
+            "harbor": {},
             "context": (),
             "trials": ({"task_id": "task", "harbor_task": "task.module"},),
             "runnable": True,

@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import contextlib
-import contextvars
+import secrets
+import threading
 from collections.abc import Callable, Iterator, Mapping
 from pathlib import Path
 from typing import Any, Protocol
@@ -22,22 +23,32 @@ PLAN_LABEL = "tetrabench.plan_sha256"
 
 
 class ChildEventSink(Protocol):
-    def __call__(self, event: AttemptEvent) -> None: ...
+    def __call__(self, event: AttemptEvent, /) -> None: ...
 
 
-_event_sink: contextvars.ContextVar[ChildEventSink | None] = contextvars.ContextVar(
-    "tetrabench_child_event_sink", default=None
-)
+_event_sinks: dict[str, ChildEventSink] = {}
+_event_sinks_lock = threading.Lock()
 
 
 @contextlib.contextmanager
-def child_event_sink(sink: ChildEventSink) -> Iterator[None]:
-    """Install the controller-owned durable event sink for one Harbor run."""
-    token = _event_sink.set(sink)
+def child_event_sink(sink: ChildEventSink) -> Iterator[str]:
+    """Register one invocation-scoped, controller-process-only event sink."""
+    key = secrets.token_urlsafe(32)
+    with _event_sinks_lock:
+        _event_sinks[key] = sink
     try:
-        yield
+        yield key
     finally:
-        _event_sink.reset(token)
+        with _event_sinks_lock:
+            _event_sinks.pop(key, None)
+
+
+def _registered_event_sink(key: str) -> ChildEventSink:
+    with _event_sinks_lock:
+        sink = _event_sinks.get(key)
+    if sink is None:
+        raise RuntimeError("Harbor child event sink is unavailable or expired")
+    return sink
 
 
 def _sandbox_v2_requested(value: object) -> bool:
@@ -61,6 +72,7 @@ class TetrabenchModalEnvironment(ModalEnvironment):
         run_id: str,
         attempt_id: str,
         plan_sha256: str,
+        event_sink_key: str,
         observation_path: str,
         app_name: str = HARBOR_APP_NAME,
         labels: dict[str, str] | None = None,
@@ -83,6 +95,7 @@ class TetrabenchModalEnvironment(ModalEnvironment):
         self._run_id = run_id
         self._attempt_id = attempt_id
         self._plan_sha256 = plan_sha256
+        self._event_sink_key = event_sink_key
         self._sequence = 0
         self._tetrabench_labels = supplied
         super().__init__(
@@ -127,9 +140,7 @@ class TetrabenchModalEnvironment(ModalEnvironment):
         with self._observation_path.open("ab") as stream:
             stream.write(data + b"\n")
             stream.flush()
-        sink = _event_sink.get()
-        if sink is not None:
-            sink(event)
+        _registered_event_sink(self._event_sink_key)(event)
 
     async def _lookup(self) -> modal.Sandbox:
         return await modal.Sandbox.from_name.aio(

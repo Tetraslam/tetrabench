@@ -14,6 +14,9 @@ from pydantic import (
 )
 
 SchemaVersion = Literal[1]
+MAX_HARBOR_ATTEMPTS = 32
+MAX_HARBOR_CONCURRENCY = 64
+MAX_HARBOR_TASKS = 256
 
 
 def _reject_surrounding_whitespace(value: str) -> str:
@@ -164,9 +167,21 @@ class TaskSelection(StrictModel):
         return self
 
 
+class HarborConfig(StrictModel):
+    agent_name: NonEmptyString = "oracle"
+    model_name: NonEmptyString | None = None
+    attempts: Annotated[int, Field(ge=1, le=MAX_HARBOR_ATTEMPTS)] = 1
+    concurrency: Annotated[int, Field(ge=1, le=MAX_HARBOR_CONCURRENCY)] = 1
+
+
 class CatalogTask(StrictModel):
     id: TaskId
     harbor_task: NonEmptyString
+
+    @model_validator(mode="after")
+    def validate_harbor_task(self) -> CatalogTask:
+        _validate_destination(self.harbor_task)
+        return self
 
 
 class CatalogSection(StrictModel):
@@ -175,6 +190,10 @@ class CatalogSection(StrictModel):
 
     @model_validator(mode="after")
     def validate_task_ids(self) -> CatalogSection:
+        if len(self.tasks) > MAX_HARBOR_TASKS:
+            raise ValueError(
+                f"catalog section contains more than {MAX_HARBOR_TASKS} tasks"
+            )
         ids = [task.id for task in self.tasks]
         if len(ids) != len(set(ids)):
             raise ValueError("catalog task IDs must be unique within a section")
@@ -220,12 +239,20 @@ class TaskSelectionPatch(StrictModel):
     exclude: list[TaskId] | None = None
 
 
+class HarborPatch(StrictModel):
+    agent_name: NonEmptyString | None = None
+    model_name: NonEmptyString | None = None
+    attempts: Annotated[int, Field(ge=1, le=MAX_HARBOR_ATTEMPTS)] | None = None
+    concurrency: Annotated[int, Field(ge=1, le=MAX_HARBOR_CONCURRENCY)] | None = None
+
+
 class ProfilePatch(StrictModel):
     controller: ControllerPatch | None = None
     execution: ExecutionPatch | None = None
     storage: StoragePatch | None = None
     context_files: list[ContextFileSpec] | None = None
     selection: TaskSelectionPatch | None = None
+    harbor: HarborPatch | None = None
 
 
 class UserConfig(StrictModel):
@@ -241,6 +268,7 @@ class ProjectConfig(StrictModel):
     storage: StorageConfig | None = None
     context: ContextConfig = Field(default_factory=ContextConfig)
     selection: TaskSelection = Field(default_factory=TaskSelection)
+    harbor: HarborConfig = Field(default_factory=HarborConfig)
 
     @model_validator(mode="after")
     def validate_controller_execution(self) -> ProjectConfig:
@@ -360,6 +388,13 @@ class ResolvedTaskSelection(FrozenRecord):
         return self
 
 
+class ResolvedHarborConfig(FrozenRecord):
+    agent_name: NonEmptyString = "oracle"
+    model_name: NonEmptyString | None = None
+    attempts: Annotated[int, Field(ge=1, le=MAX_HARBOR_ATTEMPTS)] = 1
+    concurrency: Annotated[int, Field(ge=1, le=MAX_HARBOR_CONCURRENCY)] = 1
+
+
 class ResolvedContextFile(FrozenRecord):
     destination: NonEmptyString
     mode: Literal[420, 493]
@@ -376,14 +411,20 @@ class ResolvedTrial(FrozenRecord):
     task_id: TaskId
     harbor_task: NonEmptyString
 
+    @model_validator(mode="after")
+    def validate_harbor_task(self) -> ResolvedTrial:
+        _validate_destination(self.harbor_task)
+        return self
+
 
 class ResolvedPlan(FrozenRecord):
     schema_version: SchemaVersion
-    section: Literal["systems-design", "github-workflow"]
+    section: Literal["systems-design", "github-workflow", "integration"]
     controller: ResolvedControllerConfig
     execution: ResolvedExecutionConfig
     storage: ResolvedStorageConfig | None
     selection: ResolvedTaskSelection
+    harbor: ResolvedHarborConfig
     context: tuple[ResolvedContextFile, ...]
     trials: tuple[ResolvedTrial, ...]
     runnable: bool
@@ -407,6 +448,8 @@ class ResolvedPlan(FrozenRecord):
         if sum(item.size for item in self.context) > 128 * 1024 * 1024:
             raise ValueError("context exceeds 128 MiB")
         task_ids = [trial.task_id for trial in self.trials]
+        if len(self.trials) > MAX_HARBOR_TASKS:
+            raise ValueError(f"plan contains more than {MAX_HARBOR_TASKS} trials")
         if len(task_ids) != len(set(task_ids)):
             raise ValueError("trial task IDs must be unique")
         if not self.trials and self.runnable:

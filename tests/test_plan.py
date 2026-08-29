@@ -46,7 +46,8 @@ def test_plan_and_request_golden_bytes() -> None:
     assert plan_bytes == (
         b'{"context":[],"controller":{"app_name":"tetrabench","function_name":'
         b'"controller","kind":"modal","secret_name":"tetrabench-controller"},'
-        b'"execution":{"kind":"modal"},"not_runnable_reasons":["section '
+        b'"execution":{"kind":"modal"},"harbor":{"agent_name":"oracle","attempts"'
+        b':1,"concurrency":1,"model_name":null},"not_runnable_reasons":["section '
         b"'systems-design' contains no selected tasks"
         b'"],"runnable":false,'
         b'"schema_version":1,"section":"systems-design","selection":{"exclude":'
@@ -55,7 +56,7 @@ def test_plan_and_request_golden_bytes() -> None:
         b'"tigris","region":"auto"},"trials":[]}'
     )
     assert plan_digest(plan) == (
-        "421a4d777f1bba9531402b0c56b4802747ad09e0f470e9b15ee9c56fea1d61c9"
+        "af01aa14492dd6680423979437a0bb628e08cda7c2635d1d66fb867e7460f1a6"
     )
     request_bytes = canonical_model_bytes(request)
     assert parse_canonical_model(request_bytes, RequestRecord) == request

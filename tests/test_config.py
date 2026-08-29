@@ -17,6 +17,10 @@ kind = "modal"
 [storage]
 provider = "tigris"
 bucket = "project-bucket"
+[harbor]
+agent_name = "oracle"
+attempts = 1
+concurrency = 1
 """
 
 
@@ -44,6 +48,11 @@ kind = "docker"
 provider = "aws"
 bucket = "profile-bucket"
 region = "us-east-1"
+[profiles.local.harbor]
+agent_name = "opencode"
+model_name = "opaque/provider-model"
+attempts = 2
+concurrency = 3
 """,
         encoding="utf-8",
     )
@@ -69,6 +78,10 @@ region = "us-east-1"
     assert config.storage is not None
     assert config.storage.bucket == "cli-bucket"
     assert config.storage.region == "eu-west-1"
+    assert config.harbor.agent_name == "opencode"
+    assert config.harbor.model_name == "opaque/provider-model"
+    assert config.harbor.attempts == 2
+    assert config.harbor.concurrency == 3
 
 
 def test_unknown_profile_fails(tmp_path: Path) -> None:

@@ -57,6 +57,7 @@ def resolve_plan(
             include=tuple(config.selection.include),
             exclude=tuple(config.selection.exclude),
         ),
+        harbor=config.harbor.model_dump(mode="python"),
         context=resolve_context(root, config.context),
         trials=trials,
         runnable=bool(trials),

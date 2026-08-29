@@ -14,10 +14,10 @@ from tetrabench.canonical_json import sha256_hex
 from tetrabench.controller_runtime import (
     CONTROLLER_ROOT,
     ControllerRuntime,
-    HarborRunnerUnavailable,
     parse_controller_invocation,
 )
 from tetrabench.harbor import ModalChildObserver, S3ChildIdentitySource
+from tetrabench.harbor_runner import HarborRunner
 from tetrabench.models import ProjectConfig
 from tetrabench.s3 import create_s3_store
 
@@ -144,7 +144,7 @@ def build_modal_controller(
         result = ControllerRuntime(
             store,
             volume,
-            HarborRunnerUnavailable(),
+            HarborRunner(),
             observer,
             controller_root=Path(spec.controller_root),
         ).run(invocation, function_call_id=function_call_id)

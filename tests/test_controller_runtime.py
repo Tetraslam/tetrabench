@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import threading
 from pathlib import Path
 
@@ -8,14 +9,17 @@ import pytest
 from tetrabench.canonical_json import sha256_hex
 from tetrabench.controller import ControllerInvocation
 from tetrabench.controller_runtime import (
+    ArtifactCollectionLimits,
     ControllerRuntime,
     HarborRunResult,
+    attempt_paths,
     parse_controller_invocation,
 )
 from tetrabench.lifecycle import ChildSweepResult
 from tetrabench.models import ResolvedPlan
 from tetrabench.plan import canonical_model_bytes, plan_digest
 from tetrabench.records import (
+    ArtifactInventoryEntry,
     ContentObject,
     ContextManifest,
     ContextManifestFile,
@@ -73,6 +77,7 @@ def _request(*, context: bytes | None = None) -> RequestRecord:
                 "region": "us-west-2",
             },
             "selection": {},
+            "harbor": {},
             "context": plan_context,
             "trials": ({"task_id": "task", "harbor_task": "task.module"},),
             "runnable": True,
@@ -217,8 +222,9 @@ class _FakeHarborRunner:
         self.operations = operations
         self.fail = fail
 
-    def run(self, request, paths, *, environment_import_path, labels):
+    def run(self, request, paths, *, environment_import_path, labels, event_sink_key):
         self.operations.append("runner")
+        assert event_sink_key
         assert environment_import_path.endswith(":TetrabenchModalEnvironment")
         assert labels["tetrabench.run_id"] == request.run_id
         job = paths.jobs / "native-job"
@@ -420,6 +426,81 @@ def test_artifact_mutation_during_stream_is_rejected(tmp_path: Path) -> None:
 
     assert result.state == "failed"
     assert store.terminals == []
+
+
+@pytest.mark.parametrize(
+    "limits",
+    [
+        ArtifactCollectionLimits(max_files=5),
+        ArtifactCollectionLimits(max_file_bytes=1),
+        ArtifactCollectionLimits(max_total_bytes=5),
+    ],
+)
+def test_artifact_limits_fail_before_any_artifact_publication(
+    tmp_path: Path, limits: ArtifactCollectionLimits
+) -> None:
+    operations: list[str] = []
+    request = _request()
+    store = _Store(request, operations)
+    runtime = ControllerRuntime(
+        store,
+        _Volume(operations),
+        _FakeHarborRunner(operations),
+        _Observer(operations),
+        controller_root=tmp_path,
+        attempt_id=lambda: "attempt-one",
+        artifact_limits=limits,
+    )
+
+    result = runtime.run(_invocation(request), function_call_id="fc-1")
+
+    assert result.state == "failed"
+    assert not any(item.startswith("s3:artifact:") for item in operations)
+
+
+def test_atif_discovery_uses_inventory_for_multistep_and_continuation(
+    tmp_path: Path,
+) -> None:
+    runtime, store, _operations, _invocation_value = _runtime(tmp_path)
+    paths = attempt_paths(tmp_path, "run-1", "attempt-one")
+    root = paths.jobs / "native-job/trial-one/steps/step-one/agent/trajectory.json"
+    continuation = root.with_name("trajectory-continued.json")
+
+    def trajectory(reference: str | None) -> bytes:
+        value = {
+            "schema_version": "ATIF-v1.7",
+            "agent": {"name": "fixture", "version": "1"},
+            "steps": [{"step_id": 1, "source": "agent", "message": "done"}],
+        }
+        if reference is not None:
+            value["continued_trajectory_ref"] = reference
+        return json.dumps(value).encode()
+
+    inventory = []
+    for path, data in (
+        (root, trajectory(continuation.name)),
+        (continuation, trajectory(None)),
+    ):
+        digest = sha256_hex(data)
+        store.content[digest] = data
+        inventory.append(
+            ArtifactInventoryEntry(
+                logical_path=(
+                    f"attempts/attempt-one/{path.relative_to(paths.root).as_posix()}"
+                ),
+                content=ContentObject(
+                    sha256=digest,
+                    key=content_object_key(digest),
+                    size=len(data),
+                    media_type="application/json",
+                ),
+            )
+        )
+
+    evidence, warnings = runtime._atif_evidence(paths, tuple(inventory), (root,))
+
+    assert evidence == ("Secure artifact inventory contains 2 ATIF trajectory file(s)",)
+    assert warnings == ()
 
 
 def test_terminal_cas_failure_emits_no_later_immutable_writes(tmp_path: Path) -> None:

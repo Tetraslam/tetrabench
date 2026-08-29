@@ -1,0 +1,19 @@
+schema_version = "1.4"
+
+[environment]
+build_timeout_sec = 120
+network_mode = "no-network"
+
+[environment.env]
+AWS_ACCESS_KEY_ID = "${AWS_ACCESS_KEY_ID:-unavailable}"
+AWS_SECRET_ACCESS_KEY = "${AWS_SECRET_ACCESS_KEY:-unavailable}"
+AWS_SESSION_TOKEN = "${AWS_SESSION_TOKEN:-unavailable}"
+AWS_PROFILE = "${AWS_PROFILE:-unavailable}"
+AWS_SHARED_CREDENTIALS_FILE = "${AWS_SHARED_CREDENTIALS_FILE:-unavailable}"
+AWS_CONFIG_FILE = "${AWS_CONFIG_FILE:-unavailable}"
+
+[agent]
+timeout_sec = 30
+
+[verifier]
+timeout_sec = 30

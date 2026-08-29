@@ -53,6 +53,7 @@ def _plan(*, context: tuple[dict[str, object], ...] = ()) -> ResolvedPlan:
             "execution": {"kind": "docker"},
             "storage": None,
             "selection": {},
+            "harbor": {},
             "context": context,
             "trials": (),
             "runnable": False,
@@ -328,13 +329,14 @@ def test_request_golden_bytes_digest_and_direct_deserialization() -> None:
         b'{"context_manifest":{"files":[],"schema_version":1},"context_manifest_sha256"'
         b':"5446897477634347b30b8a2357fe5306f398dbd42bca89ce4971d2a90164140e","p'
         b'lan":{"context":[],"controller":{"kind":"local"},"execution":{"kind":"docker"'
-        b'},"not_runnable_reasons":["empty"],"runnable":false,"schema_version":1,"se'
+        b'},"harbor":{"agent_name":"oracle","attempts":1,"concurrency":1,"model_name"'
+        b':null},"not_runnable_reasons":["empty"],"runnable":false,"schema_version":1,"se'
         b'ction":"systems-design","selection":{"exclude":[],"include":[]},"storage":null'
-        b',"trials":[]},"plan_sha256":"5114a9001dc36a6fb367836d1fa10b979b5655a63a6c'
-        b'1b17ee4f9c70efb56c02","run_id":"run-1","schema_version":1}'
+        b',"trials":[]},"plan_sha256":"83a27422bf5a7c90b5e3dede14a6644912a81b449e5'
+        b'3424a23b0c5dcfb316e28","run_id":"run-1","schema_version":1}'
     )
     assert sha256_hex(encoded) == (
-        "ee62e948d3efa13e8b648cdb2e7b1c17197abe549e81a8d2d15af3b75c9f0c2c"
+        "d272e9fd8d2e840dc2f7244430814ca90ee5389695616026387dcb7e6d79f7ba"
     )
     assert parse_canonical_model(encoded, RequestRecord) == request
     with pytest.raises(ValidationError, match="plan_sha256"):
