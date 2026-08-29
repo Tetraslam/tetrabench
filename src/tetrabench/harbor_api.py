@@ -9,6 +9,7 @@ from importlib.metadata import version
 from pathlib import Path
 from typing import Any
 
+from harbor import Task
 from harbor.job import Job
 from harbor.models.environment_type import EnvironmentType
 from harbor.models.job.config import JobConfig
@@ -122,6 +123,10 @@ class Harbor022Api:
     @staticmethod
     def task_config(*, path: Path) -> TaskConfig:
         return TaskConfig(path=path)
+
+    @staticmethod
+    def validate_task(*, path: Path) -> None:
+        Task(task_dir=path)
 
     @staticmethod
     def agent_config(*, name: str, model_name: str | None) -> AgentConfig:

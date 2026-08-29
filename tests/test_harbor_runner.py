@@ -47,6 +47,10 @@ class _FakeApi:
         return {"path": path}
 
     @staticmethod
+    def validate_task(*, path):
+        del path
+
+    @staticmethod
     def agent_config(*, name, model_name):
         return {"name": name, "model_name": model_name}
 
@@ -215,6 +219,7 @@ def test_zero_verifier_reward_is_a_successful_runner_outcome(tmp_path: Path) -> 
         labels=labels,
     )
     assert result.outcome == "succeeded"
+    assert result.reward == "0"
     assert result.config_path == paths.jobs / "harbor-job/config.json"
     assert result.atif_paths == (
         paths.jobs / "harbor-job/trial-one/agent/trajectory.json",
@@ -294,10 +299,10 @@ def _docker_available() -> bool:
         return False
 
 
-@pytest.mark.skipif(not _docker_available(), reason="Docker daemon unavailable")
 def test_real_harbor_local_docker_fixture_end_to_end(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    assert _docker_available(), "Docker daemon is required for the test suite"
     credential_names = (
         "AWS_ACCESS_KEY_ID",
         "AWS_SECRET_ACCESS_KEY",

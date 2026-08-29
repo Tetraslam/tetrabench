@@ -304,3 +304,39 @@ Provenance: user-provided final findings, local Python 3.12 validation, package 
 Terminal-state recovery now applies the same terminal/admission/request/plan binding checks as status before any child sweep. A mismatch raises conflict without cleanup mutation. The provider probe cleans up only after a successful create or an ambiguous transport outcome; a definitive create precondition rejection leaves the pre-existing object untouched. Public current-state evidence no longer carries raw execution identifiers, while retained private evidence paths preserve the full records. Recovery wording now names the implemented terminal owner proof, one bounded settling window, and repeated child sweeps. P6 remains incomplete because the broader security review has not been performed.
 
 All 363 tests passed, including the real attached-Docker Harbor fixture. Ruff check and format, ty, `uv lock --check`, wheel/sdist build, isolated-wheel CLI/version/metadata/content checks, and `git diff --check` passed. No detect-secrets or gitleaks executable was available, so no dependency was installed solely for scanning. A bounded standard-library scanner read all 27 changed and untracked files (about 1.05 MB) and checked common provider/token/private-key/credential-URL patterns, generic secret assignments, and high-entropy literals. Its sole initial match was the deliberate synthetic provider-secret fixture used to prove exception redaction; after auditing that exact value, the allowlisted scan reported zero findings. The scan did not inspect Git history, ignored files, binary content, or provider-side secret stores.
+
+## 2026-08-29T05:20:51-07:00: Production attached local execution CLI
+
+Provenance: user contract, local Python 3.12 implementation, temporary catalog built from the existing source-only Harbor fixture, real Docker daemon runs, isolated wheel installation, and a real subprocess SIGINT.
+
+`tetrabench run SECTION --profile PROFILE --output DIR [--json]` now accepts only an effective local-controller/Docker profile before mutation, validates selected task directories beneath the project root, exclusively creates a previously absent output path, and calls the production `HarborRunner` without constructing S3, Modal, admission, receipt, or other cloud clients. Harbor's native directory remains under the output path. Results expose native outcome, standard mean reward as a decimal string, and path; failed or cancelled outcomes exit 1. SIGINT after native job creation exits 130 with canonical interrupted evidence and retains the partial job without claiming terminal success.
+
+All 370 tests passed, including the pre-existing real Docker composition and the new temporary-catalog CLI Docker run. Ruff check/format, ty, lock check, wheel/sdist build, and diff whitespace checks passed. An isolated installed wheel completed the temporary catalog with reward `1.0`; a separate installed-CLI process was interrupted after native job creation and retained its reported evidence path. The checked-in benchmark catalogs remain empty.
+
+## 2026-08-29T05:35:39-07:00: Local validation and privacy correction
+
+Provenance: user-provided review findings, Harbor 0.22's exported `Task` model, local Python 3.12 regressions, real Docker runs, and isolated installed-wheel execution.
+
+Every selected local task now passes through Harbor's non-mutating public `Task` constructor before tetrabench creates the requested output. Invalid fixture structure or native task configuration therefore leaves no destination. The output reservation is exclusive and is chmoded to exact `0700` after creation, so the result is owner-only under both permissive and fully restrictive process umasks. A failure before Harbor creates `harbor-job` removes the reservation; failures and interrupts after native job creation retain evidence.
+
+All 374 tests passed, including both real Docker suite paths. Ruff check and format, ty, `uv lock --check`, wheel/sdist build, and `git diff --check` passed. An isolated installed wheel completed the real fixture with reward `1.0` and exact `0700` output. A second installed-CLI process received SIGINT after native config creation, exited 130, emitted canonical interruption evidence, retained that path, and kept the destination at `0700`.
+
+## 2026-08-29T05:41:30-07:00: Local reservation cleanup ownership correction
+
+Provenance: user-provided cleanup-race contract and local implementation review.
+
+Pre-job local execution cleanup may remove only a truly empty reserved output directory with a non-recursive directory-removal primitive. If concurrent or injected content appears, or cleanup otherwise races or fails, tetrabench retains the path and preserves the original execution exception. This correction is D-056; E-050 tracks final validation and installed-wheel Docker/SIGINT evidence.
+
+## 2026-08-29T05:46:55-07:00: E-050 validation
+
+Provenance: full local Python 3.12 validation, fresh isolated-wheel installation, real Docker execution, and direct subprocess SIGINT.
+
+All 375 tests passed, including both real Docker suite paths and regressions proving that injected pre-job content is retained with the original exception while a truly empty reservation is removed. Ruff check and format, ty, `uv lock --check`, wheel/sdist build, and `git diff --check` passed. A fresh installed wheel completed the fixture with reward `1.0` and exact `0700` output. A separate installed-wheel process received SIGINT after native Harbor config creation, exited 130, emitted canonical interruption evidence, and retained the native directory at exact `0700`.
+
+## 2026-08-29T05:53:43-07:00: Permanent local reservation evidence correction
+
+Provenance: user-provided lifecycle contract, local Python 3.12 regressions, full validation, fresh isolated-wheel installation, real Docker execution, and direct subprocess SIGINT.
+
+This entry corrects the cleanup behavior recorded at 05:35 and 05:41 without altering those historical entries. Harbor-native task validation still completes before output creation and leaves no destination on failure. Once tetrabench creates the output reservation, it never deletes it. After exact `0700` is established, empty and populated failures remain private owned evidence; replacement races retain both the moved private reservation and replacement content without deletion. D-057 supersedes D-055 and D-056 where more specific.
+
+All 376 tests passed, including both real Docker suite paths and regressions for pre-validation absence plus empty, content, and replacement-race retention. Ruff check and format, ty, `uv lock --check`, wheel/sdist build, and `git diff --check` passed. A fresh installed wheel completed the fixture with reward `1.0` and exact `0700` output. A separate installed-wheel process received SIGINT after native config creation, exited 130 with canonical interruption evidence, and retained the native directory at exact `0700`.

@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+import os
+import shutil
+import stat
+import subprocess
 from importlib.metadata import entry_points, version
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal, cast
 
 import pytest
 from botocore.exceptions import ClientError
@@ -10,11 +14,60 @@ from typer.testing import CliRunner
 
 from tetrabench.canonical_json import loads_canonical_json
 from tetrabench.cli import app
+from tetrabench.controller_runtime import HarborRunResult
 from tetrabench.lifecycle import RecoveryResult, RunStatus
 from tetrabench.s3 import S3Store
 
 ROOT = Path(__file__).parents[1]
 runner = CliRunner()
+
+
+def _local_project(tmp_path: Path) -> tuple[Path, Path]:
+    project = tmp_path / "project"
+    task = project / "tasks/fixture"
+    task.parent.mkdir(parents=True)
+    shutil.copytree(ROOT / "tests/fixtures/harbor_task", task)
+    (project / "benchmarks").mkdir()
+    (project / "benchmarks/catalog.toml").write_text(
+        """\
+schema_version = 1
+[sections.systems-design]
+readme = "systems.md"
+tasks = [{ id = "fixture", harbor_task = "tasks/fixture" }]
+[sections.github-workflow]
+readme = "github.md"
+tasks = []
+""",
+        encoding="utf-8",
+    )
+    (project / "benchmarks/systems.md").write_text("systems", encoding="utf-8")
+    (project / "benchmarks/github.md").write_text("github", encoding="utf-8")
+    (project / "tetrabench.toml").write_text(
+        """\
+schema_version = 1
+catalog_path = "benchmarks/catalog.toml"
+[controller]
+kind = "modal"
+[execution]
+kind = "modal"
+""",
+        encoding="utf-8",
+    )
+    user_path = tmp_path / "config.toml"
+    user_path.write_text(
+        """\
+schema_version = 1
+[profiles.local.controller]
+kind = "local"
+[profiles.local.execution]
+kind = "docker"
+[profiles.cloud]
+[profiles.mixed.execution]
+kind = "docker"
+""",
+        encoding="utf-8",
+    )
+    return project, user_path
 
 
 class _DoctorClient:
@@ -123,6 +176,370 @@ def test_plan_human_output_calls_empty_section_not_runnable(monkeypatch) -> None
     assert result.exit_code == 0
     assert "Trials: 0" in result.stdout
     assert "Not runnable:" in result.stdout
+
+
+@pytest.mark.parametrize("profile", ["cloud", "mixed"])
+def test_run_rejects_nonlocal_profile_before_side_effects(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    profile: str,
+) -> None:
+    project, user_path = _local_project(tmp_path)
+    output = tmp_path / "output"
+    monkeypatch.chdir(project)
+    monkeypatch.setattr("tetrabench.config.default_user_config_path", lambda: user_path)
+    monkeypatch.setattr(
+        "tetrabench.local_execution.HarborRunner",
+        lambda: pytest.fail("rejected profile constructed HarborRunner"),
+    )
+    monkeypatch.setattr(
+        "tetrabench.cli.create_s3_store",
+        lambda _config: pytest.fail("run constructed an S3 client"),
+    )
+
+    result = runner.invoke(
+        app,
+        ["run", "systems-design", "--profile", profile, "--output", str(output)],
+    )
+
+    assert result.exit_code == 2
+    assert not output.exists()
+    assert result.stdout == ""
+
+
+def test_run_never_overwrites_existing_output(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    project, user_path = _local_project(tmp_path)
+    output = tmp_path / "output"
+    output.mkdir()
+    sentinel = output / "prior-run"
+    sentinel.write_text("preserve", encoding="utf-8")
+    monkeypatch.chdir(project)
+    monkeypatch.setattr("tetrabench.config.default_user_config_path", lambda: user_path)
+    monkeypatch.setattr(
+        "tetrabench.local_execution.HarborRunner",
+        lambda: pytest.fail("existing output constructed HarborRunner"),
+    )
+
+    result = runner.invoke(
+        app,
+        ["run", "systems-design", "--profile", "local", "--output", str(output)],
+    )
+
+    assert result.exit_code == 2
+    assert sentinel.read_text(encoding="utf-8") == "preserve"
+
+
+def test_run_invalid_task_leaves_no_output(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    project, user_path = _local_project(tmp_path)
+    output = tmp_path / "output"
+    (project / "tasks/fixture/instruction.md").unlink()
+    monkeypatch.chdir(project)
+    monkeypatch.setattr("tetrabench.config.default_user_config_path", lambda: user_path)
+
+    result = runner.invoke(
+        app,
+        ["run", "systems-design", "--profile", "local", "--output", str(output)],
+    )
+
+    assert result.exit_code == 2
+    assert "missing instruction.md" in result.stderr
+    assert not output.exists()
+
+
+@pytest.mark.parametrize("process_umask", [0o000, 0o777])
+def test_run_retained_output_has_exact_private_mode(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    process_umask: int,
+) -> None:
+    project, user_path = _local_project(tmp_path)
+    output = tmp_path / "output"
+
+    class Runner:
+        @staticmethod
+        def validate_tasks(_request, _root) -> None:
+            return None
+
+        @staticmethod
+        def run(_request, paths, **_kwargs) -> HarborRunResult:
+            job = paths.jobs / "harbor-job"
+            job.mkdir()
+            job.chmod(0o700)
+            return HarborRunResult(
+                outcome="succeeded",
+                reward="1",
+                job_directory=job,
+            )
+
+    monkeypatch.chdir(project)
+    monkeypatch.setattr("tetrabench.config.default_user_config_path", lambda: user_path)
+    monkeypatch.setattr("tetrabench.local_execution.HarborRunner", Runner)
+    previous_umask = os.umask(process_umask)
+    try:
+        result = runner.invoke(
+            app,
+            ["run", "systems-design", "--profile", "local", "--output", str(output)],
+        )
+    finally:
+        os.umask(previous_umask)
+
+    assert result.exit_code == 0, result.stderr
+    assert stat.S_IMODE(output.stat().st_mode) == 0o700
+
+
+def test_run_failure_after_reservation_retains_private_empty_evidence(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    project, user_path = _local_project(tmp_path)
+    output = tmp_path / "output"
+
+    class Runner:
+        @staticmethod
+        def validate_tasks(_request, _root) -> None:
+            return None
+
+        @staticmethod
+        def run(_request, _paths, **_kwargs):
+            raise ValueError("failed before Harbor execution")
+
+    monkeypatch.chdir(project)
+    monkeypatch.setattr("tetrabench.config.default_user_config_path", lambda: user_path)
+    monkeypatch.setattr("tetrabench.local_execution.HarborRunner", Runner)
+
+    result = runner.invoke(
+        app,
+        ["run", "systems-design", "--profile", "local", "--output", str(output)],
+    )
+
+    assert result.exit_code == 2
+    assert "failed before Harbor execution" in result.stderr
+    assert output.is_dir()
+    assert list(output.iterdir()) == []
+    assert stat.S_IMODE(output.stat().st_mode) == 0o700
+
+
+def test_run_failure_after_reservation_retains_private_content(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    project, user_path = _local_project(tmp_path)
+    output = tmp_path / "output"
+
+    class Runner:
+        @staticmethod
+        def validate_tasks(_request, _root) -> None:
+            return None
+
+        @staticmethod
+        def run(_request, paths, **_kwargs):
+            injected = paths.root / "concurrent-content"
+            injected.write_text("preserve", encoding="utf-8")
+            raise ValueError("original pre-job failure")
+
+    monkeypatch.chdir(project)
+    monkeypatch.setattr("tetrabench.config.default_user_config_path", lambda: user_path)
+    monkeypatch.setattr("tetrabench.local_execution.HarborRunner", Runner)
+
+    result = runner.invoke(
+        app,
+        ["run", "systems-design", "--profile", "local", "--output", str(output)],
+    )
+
+    assert result.exit_code == 2
+    assert "original pre-job failure" in result.stderr
+    assert (output / "concurrent-content").read_text(encoding="utf-8") == "preserve"
+    assert stat.S_IMODE(output.stat().st_mode) == 0o700
+
+
+def test_run_failure_never_deletes_replacement_race(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    project, user_path = _local_project(tmp_path)
+    output = tmp_path / "output"
+    moved_reservation = tmp_path / "moved-reservation"
+
+    class Runner:
+        @staticmethod
+        def validate_tasks(_request, _root) -> None:
+            return None
+
+        @staticmethod
+        def run(_request, paths, **_kwargs):
+            paths.root.rename(moved_reservation)
+            paths.root.mkdir(mode=0o750)
+            (paths.root / "replacement-content").write_text(
+                "preserve replacement", encoding="utf-8"
+            )
+            raise ValueError("failure after replacement race")
+
+    monkeypatch.chdir(project)
+    monkeypatch.setattr("tetrabench.config.default_user_config_path", lambda: user_path)
+    monkeypatch.setattr("tetrabench.local_execution.HarborRunner", Runner)
+
+    result = runner.invoke(
+        app,
+        ["run", "systems-design", "--profile", "local", "--output", str(output)],
+    )
+
+    assert result.exit_code == 2
+    assert "failure after replacement race" in result.stderr
+    assert stat.S_IMODE(moved_reservation.stat().st_mode) == 0o700
+    assert (output / "replacement-content").read_text(encoding="utf-8") == (
+        "preserve replacement"
+    )
+
+
+@pytest.mark.parametrize("outcome", ["failed", "cancelled"])
+def test_run_propagates_unsuccessful_harbor_outcome(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    outcome: str,
+) -> None:
+    project, user_path = _local_project(tmp_path)
+    output = tmp_path / "output"
+
+    class Runner:
+        @staticmethod
+        def validate_tasks(_request, _root) -> None:
+            return None
+
+        @staticmethod
+        def run(_request, paths, **_kwargs) -> HarborRunResult:
+            job = paths.jobs / "harbor-job"
+            job.mkdir()
+            return HarborRunResult(
+                outcome=cast(Literal["failed", "cancelled"], outcome),
+                reward="0.25",
+                job_directory=job,
+            )
+
+    monkeypatch.chdir(project)
+    monkeypatch.setattr("tetrabench.config.default_user_config_path", lambda: user_path)
+    monkeypatch.setattr("tetrabench.local_execution.HarborRunner", Runner)
+
+    result = runner.invoke(
+        app,
+        [
+            "run",
+            "systems-design",
+            "--profile",
+            "local",
+            "--output",
+            str(output),
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert result.stderr == ""
+    report = loads_canonical_json(result.stdout.removesuffix("\n").encode())
+    assert isinstance(report, dict)
+    assert report["outcome"] == outcome
+    assert report["reward"] == "0.25"
+    assert report["job_directory"] == str(output / "harbor-job")
+
+
+def test_run_interrupt_preserves_visible_native_evidence(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    project, user_path = _local_project(tmp_path)
+    output = tmp_path / "output"
+
+    class Runner:
+        @staticmethod
+        def validate_tasks(_request, _root) -> None:
+            return None
+
+        @staticmethod
+        def run(_request, paths, **_kwargs):
+            job = paths.jobs / "harbor-job"
+            job.mkdir()
+            (job / "config.json").write_text("partial", encoding="utf-8")
+            raise KeyboardInterrupt
+
+    monkeypatch.chdir(project)
+    monkeypatch.setattr("tetrabench.config.default_user_config_path", lambda: user_path)
+    monkeypatch.setattr("tetrabench.local_execution.HarborRunner", Runner)
+
+    result = runner.invoke(
+        app,
+        [
+            "run",
+            "systems-design",
+            "--profile",
+            "local",
+            "--output",
+            str(output),
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 130
+    assert result.stdout == ""
+    report = loads_canonical_json(result.stderr.removesuffix("\n").encode())
+    assert isinstance(report, dict)
+    assert report == {
+        "evidence_path": str(output / "harbor-job"),
+        "schema_version": 1,
+        "status": "interrupted",
+    }
+    assert (output / "harbor-job/config.json").read_text() == "partial"
+
+
+def test_run_real_harbor_docker_from_temporary_catalog(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    docker = subprocess.run(
+        ["docker", "info"],
+        check=False,
+        capture_output=True,
+        timeout=10,
+    )
+    assert docker.returncode == 0, "Docker daemon is required for the test suite"
+    project, user_path = _local_project(tmp_path)
+    output = tmp_path / "output"
+    monkeypatch.chdir(project)
+    monkeypatch.setattr("tetrabench.config.default_user_config_path", lambda: user_path)
+    monkeypatch.setattr(
+        "tetrabench.cli.create_s3_store",
+        lambda _config: pytest.fail("local run constructed an S3 client"),
+    )
+
+    class ForbiddenModal:
+        def __init__(self, *_args, **_kwargs) -> None:
+            pytest.fail("local run constructed a Modal client")
+
+    monkeypatch.setattr("tetrabench.cli.ModalControllerClient", ForbiddenModal)
+
+    result = runner.invoke(
+        app,
+        [
+            "run",
+            "systems-design",
+            "--profile",
+            "local",
+            "--output",
+            str(output),
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stderr
+    assert result.stderr == ""
+    report = loads_canonical_json(result.stdout.removesuffix("\n").encode())
+    assert isinstance(report, dict)
+    assert report == {
+        "job_directory": str(output / "harbor-job"),
+        "outcome": "succeeded",
+        "reward": "1.0",
+        "schema_version": 1,
+    }
+    assert (output / "harbor-job/config.json").is_file()
+    assert (output / "harbor-job/lock.json").is_file()
+    assert (output / "harbor-job/result.json").is_file()
 
 
 def test_error_is_on_stderr(tmp_path: Path, monkeypatch) -> None:

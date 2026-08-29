@@ -149,6 +149,7 @@ class HarborRunResult:
     config_path: Path | None = None
     lock_path: Path | None = None
     result_path: Path | None = None
+    reward: str | None = None
     evidence: tuple[str, ...] = ()
     warnings: tuple[str, ...] = ()
     atif_paths: tuple[Path, ...] = ()

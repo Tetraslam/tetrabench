@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from decimal import Decimal
 from pathlib import Path
 from typing import Any, Literal, Protocol
 
@@ -14,6 +15,7 @@ from tetrabench.records import RequestRecord
 class HarborApi(Protocol):
     def job_config(self, **kwargs: Any) -> Any: ...
     def task_config(self, *, path: Path) -> Any: ...
+    def validate_task(self, *, path: Path) -> None: ...
     def agent_config(self, *, name: str, model_name: str | None) -> Any: ...
     def docker_environment(self) -> Any: ...
     def import_path_environment(
@@ -127,11 +129,33 @@ def _native_evidence(artifacts: NativeJobArtifacts) -> tuple[str, ...]:
     )
 
 
+def _standard_reward(artifacts: NativeJobArtifacts) -> str | None:
+    values: list[Decimal] = []
+    for trial in artifacts.trials:
+        verifier = trial.result.verifier_result
+        if verifier is None or verifier.rewards is None:
+            continue
+        value = verifier.rewards.get("reward")
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            continue
+        values.append(Decimal(str(value)))
+    if not values:
+        return None
+    return str(sum(values) / len(values))
+
+
 class HarborRunner:
     """Synchronous controller adapter for Harbor's asynchronous public API."""
 
     def __init__(self, api: HarborApi | None = None) -> None:
         self._api = api or Harbor022Api()
+
+    def validate_tasks(self, request: RequestRecord, context_root: Path) -> None:
+        """Validate selected fixtures through Harbor's public Task model."""
+        for trial in request.plan.trials:
+            self._api.validate_task(
+                path=_task_path(context_root, trial.harbor_task),
+            )
 
     def run(
         self,
@@ -159,6 +183,7 @@ class HarborRunner:
             config_path=artifacts.config_path,
             lock_path=artifacts.lock_path,
             result_path=artifacts.result_path,
+            reward=_standard_reward(artifacts),
             evidence=_native_evidence(artifacts),
             atif_paths=tuple(
                 path for trial in artifacts.trials for path in trial.atif_paths

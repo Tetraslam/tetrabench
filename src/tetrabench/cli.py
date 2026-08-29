@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import os
+from contextlib import redirect_stdout
 from pathlib import Path
 from typing import Annotated, Protocol
 
@@ -28,6 +30,7 @@ from tetrabench.lifecycle import (
     RecoveryService,
     StatusService,
 )
+from tetrabench.local_execution import LocalOutputExistsError, run_local
 from tetrabench.modal_app import (
     controller_deployment_spec,
     deploy_controller,
@@ -190,6 +193,80 @@ def plan(
     if not resolved.runnable:
         reasons = "; ".join(resolved.not_runnable_reasons)
         out.print(f"[yellow]Not runnable:[/yellow] {reasons}")
+
+
+@app.command()
+def run(
+    section: SectionName,
+    profile: Annotated[str, typer.Option(help="Local Docker profile name.")],
+    output: Annotated[Path, typer.Option(help="New output directory.")],
+    json_output: Annotated[
+        bool,
+        typer.Option("--json", help="Emit canonical JSON to stdout."),
+    ] = False,
+) -> None:
+    """Run selected catalog tasks attached through local Docker."""
+    output_path = output.expanduser().absolute()
+    try:
+        if json_output:
+            with open(os.devnull, "w", encoding="utf-8") as sink, redirect_stdout(sink):
+                result = run_local(Path.cwd(), section, profile, output_path)
+        else:
+            result = run_local(Path.cwd(), section, profile, output_path)
+    except KeyboardInterrupt:
+        evidence_path = output_path / "harbor-job"
+        if not evidence_path.exists():
+            evidence_path = output_path
+        if json_output:
+            _canonical_echo(
+                {
+                    "evidence_path": str(evidence_path),
+                    "schema_version": 1,
+                    "status": "interrupted",
+                },
+                stderr=True,
+            )
+        else:
+            err.print("[yellow]interrupted[/yellow] local Harbor execution")
+            if output_path.exists():
+                err.print(f"[bold]Evidence:[/bold] {evidence_path}")
+        raise typer.Exit(130) from None
+    except LocalOutputExistsError as error:
+        _fail_command(error, json_output=json_output)
+    except (OSError, RuntimeError, ValueError, ValidationError) as error:
+        if output_path.exists():
+            evidence_path = output_path / "harbor-job"
+            if not evidence_path.exists():
+                evidence_path = output_path
+            if json_output:
+                _canonical_echo(
+                    {
+                        "error": str(error),
+                        "evidence_path": str(evidence_path),
+                        "schema_version": 1,
+                    },
+                    stderr=True,
+                )
+            else:
+                err.print(f"[red]error:[/red] {error}")
+                err.print(f"[bold]Evidence:[/bold] {evidence_path}")
+            raise typer.Exit(2) from None
+        _fail_command(error, json_output=json_output)
+
+    report = {
+        "job_directory": str(result.job_directory),
+        "outcome": result.outcome,
+        "reward": result.reward,
+        "schema_version": 1,
+    }
+    if json_output:
+        _canonical_echo(report)
+    else:
+        out.print(f"[bold]Outcome:[/bold] {result.outcome}")
+        out.print(f"[bold]Reward:[/bold] {result.reward or 'unavailable'}")
+        out.print(f"[bold]Harbor job:[/bold] {result.job_directory}")
+    if result.outcome != "succeeded":
+        raise typer.Exit(1)
 
 
 @app.command()

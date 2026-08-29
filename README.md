@@ -93,6 +93,7 @@ uv run tetrabench --version
 uv run tetrabench sections
 uv run tetrabench plan systems-design
 uv run tetrabench plan systems-design --json
+uv run tetrabench run systems-design --profile local --output ./runs/systems-design
 uv run tetrabench doctor
 uv run tetrabench doctor --json
 uv run tetrabench doctor --profile local --online
@@ -113,6 +114,20 @@ uv run tetrabench runs --json
 Human output uses Rich. `--json` writes one RFC 8785 canonical JSON document,
 followed by a newline, to stdout. Errors go to stderr; doctor errors are
 canonical JSON on stderr when `--json` is set.
+
+`run` accepts only a profile that resolves to an explicit local controller and
+Docker execution. It resolves the selected checked-in catalog tasks and runs
+them attached through Harbor. Harbor 0.22's public `Task` model validates every
+selected fixture before `--output` is created. `--output` must name a path that
+does not exist; tetrabench creates it with mode `0700` and leaves the native
+`harbor-job` directory there. Once that private reservation succeeds,
+tetrabench never removes it on failure or interruption. Empty, partial, or
+concurrently changed output remains owned evidence.
+The final report contains Harbor's outcome, standard mean `reward` as a decimal
+string, and native job path. Failed or cancelled outcomes exit nonzero. Ctrl-C
+exits 130 and retains the output directory as partial native evidence. The
+checked-in catalogs are empty, so they continue to refuse execution until tasks
+are deliberately added.
 
 `doctor` validates the project config, catalog, selected profile's task
 selection, section READMEs, and selected context files. This default mode is
