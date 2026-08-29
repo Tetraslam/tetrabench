@@ -157,16 +157,22 @@ class ReceiptStore:
                 pass
 
     def _ensure_root(self) -> None:
-        existed = self.root.exists()
-        self.root.mkdir(mode=0o700, parents=True, exist_ok=True)
+        missing: list[Path] = []
+        current = self.root
+        while not current.exists():
+            missing.append(current)
+            current = current.parent
+        for directory in reversed(missing):
+            try:
+                directory.mkdir(mode=0o700)
+            except FileExistsError:
+                pass
+            parent = os.open(directory.parent, os.O_RDONLY | os.O_DIRECTORY)
+            try:
+                os.fsync(parent)
+            finally:
+                os.close(parent)
         os.chmod(self.root, 0o700)
-        if existed:
-            return
-        parent = os.open(self.root.parent, os.O_RDONLY | os.O_DIRECTORY)
-        try:
-            os.fsync(parent)
-        finally:
-            os.close(parent)
 
     @staticmethod
     def _validate_append_only(

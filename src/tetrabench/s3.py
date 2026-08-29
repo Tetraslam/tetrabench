@@ -20,6 +20,7 @@ from tetrabench.canonical_json import MAX_CANONICAL_JSON_BYTES, sha256_hex
 from tetrabench.models import (
     AwsStorageConfig,
     ResolvedAwsStorageConfig,
+    ResolvedStorageConfig,
     ResolvedTigrisStorageConfig,
     TigrisStorageConfig,
 )
@@ -219,6 +220,14 @@ class S3Store:
         self._client = client
         self._bucket = config.bucket
         self._prefix = config.prefix
+        if config.provider == "aws":
+            self._storage = ResolvedAwsStorageConfig.model_validate(
+                config.model_dump(mode="python")
+            )
+        else:
+            self._storage = ResolvedTigrisStorageConfig.model_validate(
+                config.model_dump(mode="python")
+            )
         self._sleep = sleep
         self._backoff = backoff
         self._verification_attempts = verification_attempts
@@ -230,6 +239,11 @@ class S3Store:
             max_concurrency=4,
             use_threads=True,
         )
+
+    @property
+    def storage(self) -> ResolvedStorageConfig:
+        """Return the resolved storage identity used for all object keys."""
+        return self._storage
 
     def check_read_access(self) -> None:
         """Check bucket and namespace access without mutating provider state."""

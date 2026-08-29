@@ -6,12 +6,15 @@ import time
 from collections.abc import Callable
 from typing import Literal, Protocol
 
+from tetrabench.canonical_json import sha256_hex
 from tetrabench.controller import ControllerCallState, DetachedControllerClient
-from tetrabench.models import FrozenRecord, NonEmptyString
+from tetrabench.models import FrozenRecord, NonEmptyString, ResolvedStorageConfig
+from tetrabench.plan import canonical_model_bytes
 from tetrabench.receipts import ReceiptStore
 from tetrabench.records import (
     AdmissionRecord,
     ConflictRunState,
+    RequestRecord,
     RunId,
     RunReadState,
     TerminalRunState,
@@ -20,16 +23,57 @@ from tetrabench.records import (
     validate_run_id,
 )
 from tetrabench.s3 import AdmissionRead, S3CasConflictError, S3IntegrityError
+from tetrabench.storage import request_key
 
 
 class LifecycleStore(Protocol):
+    @property
+    def storage(self) -> ResolvedStorageConfig: ...
+
     def read_run_state(self, run_id: str) -> RunReadState: ...
+
+    def read_request(
+        self, run_id: str, request_sha256: str, request_object_key: str
+    ) -> RequestRecord: ...
 
     def read_admission(self, run_id: str) -> AdmissionRead | None: ...
 
     def update_admission(
         self, expected: AdmissionRead, replacement: AdmissionRecord
     ) -> AdmissionRead: ...
+
+
+class ActiveAdmissionBindingError(RuntimeError):
+    """An active admission is not bound to its immutable request and storage."""
+
+
+def validate_active_admission(
+    store: LifecycleStore,
+    admission: AdmissionRecord,
+) -> RequestRecord:
+    """Read and validate the immutable authority behind an active admission."""
+    if admission.state not in {"prepared", "running", "cancelling"}:
+        raise ValueError("active admission validation requires an active state")
+    storage = store.storage
+    request = store.read_request(
+        admission.run_id,
+        admission.request_sha256,
+        request_key(
+            admission.run_id,
+            admission.request_sha256,
+            prefix=storage.prefix,
+        ),
+    )
+    if (
+        sha256_hex(canonical_model_bytes(request)) != admission.request_sha256
+        or request.run_id != admission.run_id
+        or request.plan_sha256 != admission.plan_sha256
+        or request.plan.storage != storage
+    ):
+        raise ActiveAdmissionBindingError(
+            "active admission does not match its immutable request, plan, and storage"
+        )
+    return request
 
 
 class RunStatus(FrozenRecord):
@@ -43,6 +87,7 @@ class RunStatus(FrozenRecord):
         "cancelling",
         "cancelled",
         "failed",
+        "attention",
         "pending_or_unknown",
     ]
     outcome: Literal["succeeded", "failed", "cancelled"] | None = None
@@ -98,6 +143,21 @@ class StatusService:
         if admission_error is not None:
             conflict_reasons.append(admission_error)
         admission = admission_read.record if admission_read is not None else None
+        if admission is not None and admission.state in {
+            "prepared",
+            "running",
+            "cancelling",
+        }:
+            try:
+                validate_active_admission(self._store, admission)
+            except (
+                ActiveAdmissionBindingError,
+                OSError,
+                S3IntegrityError,
+                TypeError,
+                ValueError,
+            ) as error:
+                conflict_reasons.append(f"invalid active admission binding: {error}")
         if isinstance(durable, TerminalRunState) and admission is not None:
             if admission.request_sha256 != durable.terminal.request_sha256:
                 conflict_reasons.append(
@@ -155,6 +215,21 @@ class StatusService:
         call_state = None
         if admission.owner_function_call_id is not None:
             call_state = self._controller.inspect(admission.owner_function_call_id)
+        if call_state is not None and call_state.state in {
+            "succeeded",
+            "failed",
+            "expired",
+        }:
+            detail = (
+                f"controller call is {call_state.state} but no terminal proof "
+                "is visible"
+            )
+            warnings.append(detail)
+            state = "attention"
+        else:
+            detail = (
+                f"durable admission is {admission.state}; no terminal proof is visible"
+            )
         return RunStatus(
             run_id=run_id,
             state=state,
@@ -164,9 +239,7 @@ class StatusService:
             receipt_evidence=receipt_evidence,
             controller=call_state,
             warnings=tuple(warnings),
-            detail=(
-                f"durable admission is {admission.state}; no terminal proof is visible"
-            ),
+            detail=detail,
         )
 
 
@@ -245,6 +318,19 @@ class CancellationService:
             if observed is None:
                 raise CancellationConflictError("admission record is missing")
             admission = observed.record
+            if admission.state in {"prepared", "running", "cancelling"}:
+                try:
+                    validate_active_admission(self._store, admission)
+                except (
+                    ActiveAdmissionBindingError,
+                    OSError,
+                    S3IntegrityError,
+                    TypeError,
+                    ValueError,
+                ) as error:
+                    raise CancellationConflictError(
+                        f"invalid active admission binding: {error}"
+                    ) from error
             if admission.state == "prepared":
                 try:
                     self._store.update_admission(
@@ -365,6 +451,19 @@ class CancellationService:
         current = self._store.read_admission(admission.run_id)
         if current is None:
             raise CancellationConflictError("admission disappeared during cancellation")
+        if current.record.state in {"prepared", "running", "cancelling"}:
+            try:
+                validate_active_admission(self._store, current.record)
+            except (
+                ActiveAdmissionBindingError,
+                OSError,
+                S3IntegrityError,
+                TypeError,
+                ValueError,
+            ) as error:
+                raise CancellationConflictError(
+                    f"invalid active admission binding: {error}"
+                ) from error
         if current.record.state == "cancelled":
             final = current.record
         elif (
@@ -380,9 +479,33 @@ class CancellationService:
                     ),
                 ).record
             except S3CasConflictError as error:
-                raise CancellationConflictError(
-                    "cancellation finalization lost admission CAS"
-                ) from error
+                durable = self._store.read_run_state(admission.run_id)
+                if isinstance(durable, ConflictRunState):
+                    raise CancellationConflictError(
+                        "; ".join(durable.reasons)
+                    ) from error
+                if isinstance(durable, TerminalRunState):
+                    return CancellationResult(
+                        run_id=admission.run_id,
+                        state="terminal",
+                        owner_function_call_id=call_id,
+                        controller_terminal_observed=controller_terminal,
+                        terminal_proof_observed=True,
+                        cleanup_complete=cleanup_complete,
+                        sweeps=sweeps,
+                    )
+                refreshed = self._store.read_admission(admission.run_id)
+                if refreshed is not None and refreshed.record.state == "cancelled":
+                    return CancellationResult(
+                        run_id=admission.run_id,
+                        state="cancelled",
+                        owner_function_call_id=call_id,
+                        controller_terminal_observed=controller_terminal,
+                        terminal_proof_observed=False,
+                        cleanup_complete=cleanup_complete,
+                        sweeps=sweeps,
+                    )
+                raise
         else:
             final = current.record
         state = "cancelled" if final.state == "cancelled" else "failed"

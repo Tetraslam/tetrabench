@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+import stat
 from pathlib import Path
 
 import pytest
@@ -37,30 +39,78 @@ def _receipt() -> SubmissionReceipt:
     )
 
 
-def test_receipt_store_fsyncs_new_root_parent_file_and_root(
+def test_receipt_store_durably_creates_each_missing_directory_component(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     import tetrabench.receipts as receipts_module
 
-    calls: list[int] = []
+    fsynced_directories: list[Path] = []
+    fsynced_files: list[Path] = []
     real_fsync = receipts_module.os.fsync
 
     def recording_fsync(descriptor: int) -> None:
-        calls.append(descriptor)
+        path = Path(os.readlink(f"/proc/self/fd/{descriptor}"))
+        if stat.S_ISDIR(os.fstat(descriptor).st_mode):
+            fsynced_directories.append(path)
+        else:
+            fsynced_files.append(path)
         real_fsync(descriptor)
 
     monkeypatch.setattr(receipts_module.os, "fsync", recording_fsync)
-    store = ReceiptStore(tmp_path / "new-parent" / "state")
+    store = ReceiptStore(tmp_path / "first" / "second" / "state")
     receipt = _receipt()
     store.write(receipt)
 
     data = store.path_for(receipt.run_id).read_bytes()
     assert data == canonical_model_bytes(receipt)
     assert loads_canonical_json(data) == receipt.model_dump(mode="json")
-    assert len(calls) == 3
+    assert fsynced_directories == [
+        tmp_path,
+        tmp_path / "first",
+        tmp_path / "first" / "second",
+        store.root,
+    ]
+    assert len(fsynced_files) == 1
+    assert fsynced_files[0].parent == store.root
     assert store.read("run-1") == receipt
     assert store.path_for("run-1").stat().st_mode & 0o777 == 0o600
+
+
+@pytest.mark.parametrize("crash_after_parent", range(3))
+def test_receipt_root_creation_stops_at_each_unfsynced_crash_boundary(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    crash_after_parent: int,
+) -> None:
+    import tetrabench.receipts as receipts_module
+
+    class SimulatedCrash(RuntimeError):
+        pass
+
+    components = [
+        tmp_path / "first",
+        tmp_path / "first" / "second",
+        tmp_path / "first" / "second" / "state",
+    ]
+    parent_boundaries = [tmp_path, *components[:-1]]
+    real_fsync = receipts_module.os.fsync
+
+    def crashing_fsync(descriptor: int) -> None:
+        path = Path(os.readlink(f"/proc/self/fd/{descriptor}"))
+        if path == parent_boundaries[crash_after_parent]:
+            raise SimulatedCrash
+        real_fsync(descriptor)
+
+    monkeypatch.setattr(receipts_module.os, "fsync", crashing_fsync)
+    store = ReceiptStore(components[-1])
+
+    with pytest.raises(SimulatedCrash):
+        store.write(_receipt())
+
+    assert all(path.is_dir() for path in components[: crash_after_parent + 1])
+    assert all(not path.exists() for path in components[crash_after_parent + 1 :])
+    assert not store.path_for("run-1").exists()
 
 
 def test_receipt_history_appends_attempts_and_spawn_evidence(tmp_path: Path) -> None:
