@@ -3,10 +3,14 @@ from __future__ import annotations
 from pathlib import Path
 from types import SimpleNamespace
 
+import harbor.environments.modal as harbor_modal_module
 import modal
 import pytest
 from harbor.environments.modal import ModalEnvironment
+from harbor.models.task.config import EnvironmentConfig
+from harbor.models.trial.paths import TrialPaths
 
+from tetrabench.controller_runtime import credential_free_harbor_environment
 from tetrabench.harbor import (
     ATTEMPT_LABEL,
     PLAN_LABEL,
@@ -200,3 +204,54 @@ def test_custom_environment_rejects_modal_sandbox_v2_before_harbor_start(
             observation_path=str(tmp_path / "children.jsonl"),
             modal_sandbox_v2=True,
         )
+
+
+def test_modal_sandbox_environment_payload_excludes_ambient_provider_namespaces(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    provider_names = {
+        "AWS_ACCOUNT_ID",
+        "aws_access_key_id",
+        "AwS_AlternateCredential",
+        "TIGRIS_SECRET_ACCESS_KEY",
+        "tigris_storage_secret_access_key",
+        "TiGrIs_AlternateCredential",
+        "bOtO_cOnFiG",
+        "bOtOcOrE_TcP_KeEpAlIvE",
+    }
+    for index, name in enumerate(sorted(provider_names)):
+        monkeypatch.setenv(name, f"ambient-sensitive-{index}")
+    environment_dir = tmp_path / "environment"
+    environment_dir.mkdir()
+    (environment_dir / "Dockerfile").write_text("FROM alpine:3.23\n")
+    trial_paths = TrialPaths(tmp_path / "trial")
+    safe_payload = {name: "unavailable" for name in provider_names}
+    captured_payloads: list[dict[str, str]] = []
+    monkeypatch.setattr(
+        harbor_modal_module,
+        "_cached_env_secret",
+        lambda value: captured_payloads.append(dict(value)) or object(),
+    )
+
+    with credential_free_harbor_environment():
+        assert provider_names.isdisjoint(__import__("os").environ)
+        environment = TetrabenchModalEnvironment(
+            environment_dir=environment_dir,
+            environment_name="task",
+            session_id="harbor-owned-session",
+            trial_paths=trial_paths,
+            task_env_config=EnvironmentConfig(env=safe_payload),
+            run_id="run-1",
+            attempt_id="attempt-1",
+            plan_sha256="f" * 64,
+            event_sink_key="test-sink",
+            observation_path=str(tmp_path / "children.jsonl"),
+        )
+        sandbox_secrets = environment._secrets_config()
+
+    assert len(sandbox_secrets) == 1
+    assert captured_payloads == [safe_payload]
+    assert all(
+        __import__("os").environ[name].startswith("ambient-sensitive-")
+        for name in provider_names
+    )

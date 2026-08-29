@@ -46,52 +46,37 @@ from tetrabench.records import (
 CONTROLLER_ROOT = Path("/tetrabench/controller")
 HARBOR_VERSION = "0.22.0"
 MODAL_VERSION = "1.5.4"
-_CREDENTIAL_ENVIRONMENT_NAMES = frozenset(
-    {
-        "AWS_ACCESS_KEY_ID",
-        "AWS_SECRET_ACCESS_KEY",
-        "AWS_SESSION_TOKEN",
-        "AWS_SECURITY_TOKEN",
-        "AWS_PROFILE",
-        "AWS_DEFAULT_PROFILE",
-        "AWS_SHARED_CREDENTIALS_FILE",
-        "AWS_CONFIG_FILE",
-        "AWS_WEB_IDENTITY_TOKEN_FILE",
-        "AWS_ROLE_ARN",
-        "AWS_ROLE_SESSION_NAME",
-        "AWS_CONTAINER_CREDENTIALS_RELATIVE_URI",
-        "AWS_CONTAINER_CREDENTIALS_FULL_URI",
-        "AWS_CONTAINER_AUTHORIZATION_TOKEN",
-        "AWS_CONTAINER_AUTHORIZATION_TOKEN_FILE",
-        "AWS_CREDENTIAL_EXPIRATION",
-        "AWS_BEARER_TOKEN_BEDROCK",
-        "AWS_SDK_LOAD_CONFIG",
-        "BOTO_CONFIG",
-        "TIGRIS_ACCESS_KEY_ID",
-        "TIGRIS_SECRET_ACCESS_KEY",
-        "TIGRIS_STORAGE_ACCESS_KEY_ID",
-        "TIGRIS_STORAGE_SECRET_ACCESS_KEY",
-    }
+_PROVIDER_ENVIRONMENT_PREFIXES = ("AWS_", "TIGRIS_")
+_LEGACY_PROVIDER_ENVIRONMENT_NAMES = frozenset(
+    {"BOTO_CONFIG", "BOTOCORE_TCP_KEEPALIVE"}
 )
 _credential_environment_lock = threading.RLock()
 
 
+def _is_provider_environment_name(name: str) -> bool:
+    normalized = name.upper()
+    return normalized.startswith(_PROVIDER_ENVIRONMENT_PREFIXES) or (
+        normalized in _LEGACY_PROVIDER_ENVIRONMENT_NAMES
+    )
+
+
 @contextmanager
 def credential_free_harbor_environment() -> Iterator[None]:
-    """Hide provider credential sources until one controller run fully returns."""
+    """Hide reviewed provider environment selectors for one Harbor boundary."""
     with _credential_environment_lock:
         saved = {
-            name: os.environ[name]
-            for name in _CREDENTIAL_ENVIRONMENT_NAMES
-            if name in os.environ
+            name: value
+            for name, value in os.environ.items()
+            if _is_provider_environment_name(name)
         }
-        for name in _CREDENTIAL_ENVIRONMENT_NAMES:
+        for name in saved:
             os.environ.pop(name, None)
         try:
             yield
         finally:
-            for name in _CREDENTIAL_ENVIRONMENT_NAMES:
-                os.environ.pop(name, None)
+            for name in tuple(os.environ):
+                if _is_provider_environment_name(name):
+                    os.environ.pop(name, None)
             os.environ.update(saved)
 
 

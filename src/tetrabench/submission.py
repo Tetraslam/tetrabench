@@ -311,7 +311,10 @@ class SubmissionService:
     def _spawn(self, request: RequestRecord) -> str:
         request_sha256 = sha256_hex(canonical_model_bytes(request))
         storage = request.plan.storage
-        assert storage is not None
+        if storage is None:
+            raise SubmissionRefusedError(
+                "controller spawn requires resolved storage configuration"
+            )
         invocation = ControllerInvocation(
             schema_version=1,
             run_id=request.run_id,

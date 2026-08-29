@@ -522,7 +522,8 @@ class S3Store:
             max_size=descriptor.size,
             exact_service_checksum=False,
         )
-        assert isinstance(data, bytes)
+        if not isinstance(data, bytes):
+            raise S3IntegrityError("verified content reader did not return bytes")
         return data
 
     def stream_content_to_fd(self, descriptor: ContentObject, fd: int) -> None:
@@ -966,7 +967,8 @@ class S3Store:
                 last_error = error
             if attempt + 1 < self._verification_attempts:
                 self._sleep(self._backoff(attempt, self._verification_delay_seconds))
-        assert last_error is not None
+        if last_error is None:
+            raise S3IntegrityError("HEAD verification exhausted without a response")
         raise last_error
 
     def _verify_head(
@@ -1021,7 +1023,8 @@ class S3Store:
             if attempt + 1 < self._verification_attempts:
                 self._sleep(self._backoff(attempt, self._verification_delay_seconds))
         if response is None:
-            assert last_error is not None
+            if last_error is None:
+                raise S3IntegrityError("GET verification exhausted without a response")
             raise last_error
         body = response.get("Body")
         close = getattr(body, "close", None)

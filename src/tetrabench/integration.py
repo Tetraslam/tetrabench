@@ -335,7 +335,8 @@ def run_local_composition(
     )
     prepared = prepare_fixture_submission(task_directory, config, run_id=run_id)
     store = _MemoryStore(prepared)
-    assert prepared.plan.storage is not None
+    if prepared.plan.storage is None:
+        raise RuntimeError("local composition requires resolved storage")
     invocation = ControllerInvocation(
         schema_version=1,
         run_id=run_id,

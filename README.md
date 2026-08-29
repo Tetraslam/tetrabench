@@ -14,8 +14,9 @@ isolation, Volume boundaries, context verification, terminal-last publication,
 no-follow bounded artifact collection, bounded failure evidence, and real
 child-observer orchestration with fakes. Modal 1.5.4 App construction and the
 installed distribution metadata are exercised against the real local SDK.
-A new private Tigris Single-region `iad` bucket is the authoritative coordination
-baseline. Live evidence covers location admission, immediate GET/HEAD/LIST,
+A Tigris Single-region `iad` bucket is the authoritative coordination baseline.
+Retained E-046 evidence records it as private at cutover. Live evidence covers
+location admission, immediate GET/HEAD/LIST,
 conditional create and concurrent single-winner update, verified probe cleanup,
 and a fresh-process detached Harbor oracle smoke with reward `1.0`. The retained
 Global bucket is legacy immutable evidence only; tetrabench rejects it for
@@ -59,8 +60,9 @@ Python 3.12 is required. Package metadata rejects Python 3.13 and newer.
 GitHub Actions runs on pushes to `master` and pull requests with read-only
 repository access. The Python 3.12 job checks the lockfile, installs locked
 dependencies, runs Ruff and ty, requires the Docker daemon and both marked
-Docker tests, runs the full pytest suite, builds both distributions, smoke-tests
-an isolated wheel installation, and audits all locked dependency groups. A
+Docker tests, runs the full pytest suite, scans production source and tools with
+Bandit, builds both distributions, smoke-tests an isolated wheel installation,
+and audits all locked dependency groups. A
 separate job scans the full Git history with a digest-pinned Gitleaks image and
 redacts findings.
 
@@ -128,7 +130,10 @@ uv run tetrabench artifacts pull RUN_ID OUTPUT_DIR --profile PROFILE
 
 Human output uses Rich. `--json` writes one RFC 8785 canonical JSON document,
 followed by a newline, to stdout. Errors go to stderr; doctor errors are
-canonical JSON on stderr when `--json` is set.
+canonical JSON on stderr when `--json` is set. Cloud commands reduce caught
+Botocore and Modal provider exceptions to `provider_error` and `provider request
+failed`; locally generated configuration and integrity errors retain their
+specific messages.
 
 `run` accepts only a profile that resolves to an explicit local controller and
 Docker execution. It resolves the selected checked-in catalog tasks and runs
@@ -272,13 +277,19 @@ is discovered from the securely collected inventory at normal and multi-step
 agent paths, following continuation references. The oracle fixture does not
 emit ATIF, so the terminal records that absence instead of creating a trace.
 
-The controller constructs its S3 client before removing AWS and Tigris
-credential, profile, and credential-file environment variables for the entire
-Harbor run. Harbor child configuration receives only an invocation-scoped
-registry key; the trusted controller process publishes lifecycle events through
-the already-created store. The Docker fixture asks Harbor to interpolate the
-standard AWS variables and verifies that the child receives only its explicit
-unavailable defaults while terminal publication still succeeds.
+The controller constructs its S3 client before removing every environment key in
+the case-insensitive `AWS_` and `TIGRIS_` namespaces, plus Botocore's
+non-prefixed `BOTO_CONFIG` and `BOTOCORE_TCP_KEEPALIVE` selectors, for the
+entire Harbor run. This includes `AWS_ACCOUNT_ID`. Attached local execution
+applies the same boundary while
+Harbor validates and runs. Harbor child configuration receives only an
+invocation-scoped registry key; the trusted controller process publishes
+lifecycle events through the already-created store. The Docker fixture asks
+Harbor to interpolate uppercase, lowercase, mixed-case, and alternate namespace
+members and verifies that the child receives only its explicit unavailable
+defaults while terminal publication still succeeds. Arbitrary nonstandard
+provider variables outside these namespaces and reviewed Botocore names are not
+removed.
 
 ## Controller deployment
 
@@ -356,23 +367,44 @@ uv run python tools/provider_consistency_probe.py \
   --provider tigris --bucket BUCKET --allow-mutation
 ```
 
-### Storage IAM requirements
+### Storage roles and actions
 
-Both normal v1 identities need `s3:GetBucketLocation` on the bucket so every
-admission path can fail closed before mutation. The submitter also needs the
-existing bucket-list/object-read permissions used by status and conflict checks,
-plus `s3:PutObject` for context, request, and admission keys. The controller
-needs the existing bucket-list/object-read permissions plus `s3:PutObject` for
-admission, event, artifact, and terminal keys. Neither normal identity receives
-`s3:DeleteObject`.
+The local contract and E-046 retained policy evidence define this bounded
+matrix. Current live enforcement remains `unproven` until the future probes
+below run with renewed credentials.
+
+| Role | Bucket actions | Object reads | Object writes | Delete |
+| --- | --- | --- | --- | --- |
+| Submitter | `s3:GetBucketLocation`, `s3:ListBucket` | Configured prefix, for conflict and status reads | Context objects, requests, and admission beneath the configured prefix | None |
+| Controller | `s3:GetBucketLocation`, `s3:ListBucket` | Configured prefix, for request, reconciliation, and cleanup reads | Admission, events, artifacts, and terminals beneath the configured prefix | None |
+| Harbor child (agent and verifier) | None | None | None | None |
+
+All durable key constructors validate the configured prefix, run and attempt
+IDs, digests, and logical paths before a provider call. Normal runtime clients
+have no delete method in their used provider interface; only the opt-in
+consistency probe calls `DeleteObject`.
+
+Tigris currently accepts but does not enforce an `s3:prefix` condition on
+`ListBucket`. Submitter and controller listing is therefore bucket-wide even
+when object read and write actions are prefix-scoped. Use a dedicated bucket
+when exposing bucket key names to either role is unacceptable.
 
 The opt-in consistency probe is separate operational evidence. Use a temporary,
 probe-prefix-scoped credential with `s3:GetBucketLocation`, `s3:ListBucket`,
 `s3:PutObject`, `s3:GetObject`, and `s3:DeleteObject`, then remove the credential
-and policy. Tigris currently accepts but does not enforce an `s3:prefix`
-condition on `ListBucket`, so listing is bucket-wide; object get/put/delete
-permissions remain prefix-scoped. No live IAM resource is changed by
-tetrabench's tests or configuration.
+and policy. No live IAM resource is changed by tetrabench's tests or
+configuration.
+
+The next live IAM probe must use fresh submitter, controller, and deliberately
+unprivileged child credentials. For each identity it must exercise every allowed
+action above, a cross-prefix `GetObject` and `PutObject`, and `DeleteObject`; the
+expected denials and allowed calls must be retained with credential material
+redacted. The privacy and encryption probe must record `GetBucketPolicy`,
+`GetBucketAcl`, `GetPublicAccessBlock`, and `GetBucketEncryption` where the
+provider supports them, then write and `HeadObject` one probe object to inspect
+its effective encryption metadata before verified cleanup. Unsupported provider
+inspection APIs remain `unproven`; a default or documentation claim is not
+evidence of the live bucket state.
 
 Docker planning requires both explicit local controller and Docker execution:
 

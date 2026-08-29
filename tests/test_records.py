@@ -115,6 +115,53 @@ def test_validated_identifiers_and_key_builders() -> None:
     assert admission_key("run-1") == "runs/run-1/admission.json"
 
 
+def test_every_durable_key_family_stays_beneath_the_configured_prefix() -> None:
+    digest = "a" * 64
+    prefix = "tenant/v1"
+    keys = (
+        content_object_key(digest, prefix=prefix),
+        request_key("run-1", digest, prefix=prefix),
+        event_key("run-1", "attempt-1", 1, digest, prefix=prefix),
+        terminal_key("run-1", digest, prefix=prefix),
+        admission_key("run-1", prefix=prefix),
+    )
+
+    assert all(key.startswith(f"{prefix}/") for key in keys)
+    assert all("//" not in key and "/../" not in key for key in keys)
+
+
+@pytest.mark.parametrize(
+    "value",
+    ["../escape", "run/escape", "run\\escape", "/absolute", "run%2fescape"],
+)
+def test_untrusted_identifiers_cannot_escape_any_run_key_family(value: str) -> None:
+    digest = "a" * 64
+    builders = (
+        lambda: request_key(value, digest, prefix="tenant/v1"),
+        lambda: event_key(value, "attempt-1", 1, digest, prefix="tenant/v1"),
+        lambda: terminal_key(value, digest, prefix="tenant/v1"),
+        lambda: admission_key(value, prefix="tenant/v1"),
+    )
+
+    for build in builders:
+        with pytest.raises(ValueError, match="safe identifier"):
+            build()
+
+
+@pytest.mark.parametrize("digest", ["../" + "a" * 61, "A" * 64, "a" * 63 + "/"])
+def test_untrusted_digests_cannot_escape_any_digest_key_family(digest: str) -> None:
+    builders = (
+        lambda: content_object_key(digest, prefix="tenant/v1"),
+        lambda: request_key("run-1", digest, prefix="tenant/v1"),
+        lambda: event_key("run-1", "attempt-1", 1, digest, prefix="tenant/v1"),
+        lambda: terminal_key("run-1", digest, prefix="tenant/v1"),
+    )
+
+    for build in builders:
+        with pytest.raises(ValueError, match="digest"):
+            build()
+
+
 def test_admission_record_has_canonical_history_and_one_owner() -> None:
     plan = _plan()
     manifest = ContextManifest(schema_version=1, files=())

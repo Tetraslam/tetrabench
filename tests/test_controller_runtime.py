@@ -5,6 +5,7 @@ import threading
 from pathlib import Path
 
 import pytest
+from botocore.exceptions import ClientError
 
 from tetrabench.canonical_json import sha256_hex
 from tetrabench.controller import ControllerInvocation
@@ -748,6 +749,92 @@ def test_failure_evidence_never_serializes_exception_message(tmp_path: Path) -> 
     failure = tmp_path / "runs/run-1/attempts/attempt-one/failure.json"
     assert secret.encode() not in failure.read_bytes()
     assert all(secret not in str(event.payload) for event in store.events)
+
+
+def test_provider_failure_evidence_excludes_raw_sdk_material(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    runtime, store, _operations, invocation = _runtime(tmp_path, fail=True)
+    secret = "TIGRIS_SECRET_ACCESS_KEY=provider-secret-material"
+
+    def raise_provider_error(*_args, **_kwargs):
+        raise ClientError(
+            {"Error": {"Code": "AccessDenied", "Message": secret}},
+            "PutObject",
+        )
+
+    runtime._runner.run = raise_provider_error
+    result = runtime.run(invocation, function_call_id="fc-1")
+
+    failure = tmp_path / "runs/run-1/attempts/attempt-one/failure.json"
+    durable = failure.read_bytes() + b"".join(
+        canonical_model_bytes(event) for event in store.events
+    )
+    assert result.detail == "ClientError"
+    assert secret.encode() not in durable
+    assert b"provider-secret-material" not in durable
+    assert secret not in capsys.readouterr().out
+
+
+def test_complete_harbor_boundary_excludes_provider_environment_and_payload(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    runtime, _store, _operations, invocation = _runtime(tmp_path)
+    provider_names = {
+        "AWS_ACCOUNT_ID",
+        "aws_access_key_id",
+        "AwS_AlternateCredential",
+        "TIGRIS_SECRET_ACCESS_KEY",
+        "tigris_storage_secret_access_key",
+        "TiGrIs_AlternateCredential",
+        "bOtO_cOnFiG",
+        "bOtOcOrE_TcP_KeEpAlIvE",
+    }
+    secrets = {
+        name: f"sensitive-{index}" for index, name in enumerate(sorted(provider_names))
+    }
+    for name, value in secrets.items():
+        monkeypatch.setenv(name, value)
+    introduced_name = "aWs_InjectedDuringHarborRun"
+    unrelated_name = "CUSTOM_S3_PROVIDER_VARIABLE"
+    monkeypatch.setenv(unrelated_name, "outside-reviewed-namespaces")
+    original_run = runtime._runner.run
+
+    def inspect_boundary(
+        request, paths, *, environment_import_path, labels, event_sink_key
+    ):
+        assert provider_names.isdisjoint(__import__("os").environ)
+        assert __import__("os").environ[unrelated_name] == (
+            "outside-reviewed-namespaces"
+        )
+        __import__("os").environ[introduced_name] = "must-be-removed"
+        payload = repr(
+            (
+                request.model_dump(mode="json"),
+                environment_import_path,
+                labels,
+                event_sink_key,
+            )
+        )
+        assert all(name not in payload for name in provider_names)
+        assert all(value not in payload for value in secrets.values())
+        return original_run(
+            request,
+            paths,
+            environment_import_path=environment_import_path,
+            labels=labels,
+            event_sink_key=event_sink_key,
+        )
+
+    runtime._runner.run = inspect_boundary
+    result = runtime.run(invocation, function_call_id="fc-1")
+
+    assert result.state == "terminal"
+    assert all(
+        __import__("os").environ[name] == value for name, value in secrets.items()
+    )
+    assert introduced_name not in __import__("os").environ
+    assert __import__("os").environ[unrelated_name] == "outside-reviewed-namespaces"
 
 
 def test_invocation_digest_is_checked_before_parsing() -> None:

@@ -306,11 +306,14 @@ def test_real_harbor_local_docker_fixture_end_to_end(
     assert _docker_available(), "Docker daemon is required for the test suite"
     credential_names = (
         "AWS_ACCESS_KEY_ID",
-        "AWS_SECRET_ACCESS_KEY",
-        "AWS_SESSION_TOKEN",
-        "AWS_PROFILE",
-        "AWS_SHARED_CREDENTIALS_FILE",
-        "AWS_CONFIG_FILE",
+        "AWS_ACCOUNT_ID",
+        "aws_alternate_credential",
+        "AwS_Mixed_Credential",
+        "TIGRIS_SECRET_ACCESS_KEY",
+        "tigris_alternate_credential",
+        "TiGrIs_Mixed_Credential",
+        "bOtO_cOnFiG",
+        "bOtOcOrE_TcP_KeEpAlIvE",
     )
     for name in credential_names:
         monkeypatch.setenv(name, f"controller-secret-{name.lower()}")

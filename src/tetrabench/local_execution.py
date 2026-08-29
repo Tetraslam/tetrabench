@@ -10,7 +10,10 @@ from tetrabench.canonical_json import sha256_hex
 from tetrabench.catalog import SectionName
 from tetrabench.config import load_project_config
 from tetrabench.context import seal_context
-from tetrabench.controller_runtime import AttemptPaths
+from tetrabench.controller_runtime import (
+    AttemptPaths,
+    credential_free_harbor_environment,
+)
 from tetrabench.harbor import (
     ATTEMPT_LABEL,
     ENVIRONMENT_IMPORT_PATH,
@@ -103,7 +106,8 @@ def run_local(
         )
 
     runner = HarborRunner()
-    runner.validate_tasks(request, root)
+    with credential_free_harbor_environment():
+        runner.validate_tasks(request, root)
     try:
         output_directory.mkdir(mode=0o700)
     except FileExistsError as error:
@@ -126,12 +130,13 @@ def run_local(
         ATTEMPT_LABEL: paths.root.name,
         PLAN_LABEL: request.plan_sha256,
     }
-    result = runner.run(
-        request,
-        paths,
-        environment_import_path=ENVIRONMENT_IMPORT_PATH,
-        labels=labels,
-    )
+    with credential_free_harbor_environment():
+        result = runner.run(
+            request,
+            paths,
+            environment_import_path=ENVIRONMENT_IMPORT_PATH,
+            labels=labels,
+        )
     return LocalExecutionResult(
         outcome=result.outcome,
         reward=result.reward,

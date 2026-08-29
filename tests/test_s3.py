@@ -118,6 +118,7 @@ class FakeS3Client:
         self.skip_managed_body = False
         self.put_barrier: threading.Barrier | None = None
         self.put_error: ClientError | None = None
+        self.delete_calls = 0
         self._lock = threading.Lock()
 
     def put_object(self, **kwargs: Any) -> Mapping[str, Any]:
@@ -250,6 +251,10 @@ class FakeS3Client:
             response["NextContinuationToken"] = str(end)
         return response
 
+    def delete_object(self, **_kwargs: Any) -> None:
+        self.delete_calls += 1
+        raise AssertionError("normal S3Store paths must never call DeleteObject")
+
     def seed(self, key: str, data: bytes, media_type: str = "application/json") -> None:
         digest = sha256_hex(data)
         self.objects[key] = _StoredObject(
@@ -304,6 +309,7 @@ def store(request: pytest.FixtureRequest) -> Iterator[tuple[S3Store, FakeS3Clien
     client.provider = request.param
     client.location = "us-west-2" if request.param == "aws" else "iad"
     yield S3Store(config, client, sleep=lambda _seconds: None), client
+    assert client.delete_calls == 0
 
 
 def _plan(section: str = "systems-design") -> ResolvedPlan:

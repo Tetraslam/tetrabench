@@ -79,15 +79,23 @@ def _fail(error: Exception) -> None:
     raise typer.Exit(2)
 
 
+def _safe_command_error(error: Exception) -> tuple[str | None, str]:
+    if isinstance(error, (BotoCoreError, ClientError, ModalError)):
+        return "provider_error", "provider request failed"
+    return None, str(error)
+
+
 def _fail_command(error: Exception, *, json_output: bool) -> None:
+    error_type, message = _safe_command_error(error)
     if json_output:
-        _canonical_echo(
-            {"error": str(error), "schema_version": 1},
-            stderr=True,
-        )
+        report = {"error": message, "schema_version": 1}
+        if error_type is not None:
+            report["error_type"] = error_type
+        _canonical_echo(report, stderr=True)
     else:
-        err.print(f"[red]error:[/red] {error}")
-    raise typer.Exit(2)
+        suffix = f" ({error_type})" if error_type is not None else ""
+        err.print(f"[red]error:[/red] {message}{suffix}")
+    raise typer.Exit(2) from None
 
 
 def _canonical_echo(value: object, *, stderr: bool = False) -> None:
@@ -112,41 +120,23 @@ def _modal_client(config, profile: str | None) -> ModalControllerClient:
     )
 
 
-def _storage_error(error: ClientError, *, provider: str, bucket: str) -> str:
-    code = str(error.response.get("Error", {}).get("Code", "Unknown"))
-    display = _provider_display(provider)
-    if code in {"404", "NoSuchBucket", "NotFound"}:
-        return f"{display} storage bucket not found: {bucket}"
-    if code in {
-        "401",
-        "403",
-        "AccessDenied",
-        "ExpiredToken",
-        "InvalidAccessKeyId",
-        "InvalidToken",
-        "SignatureDoesNotMatch",
-        "TokenRefreshRequired",
-    }:
-        return f"{display} storage authentication or authorization failed ({code})"
-    return f"{display} storage read check failed ({code})"
-
-
 def _fail_doctor(error: Exception, *, json_output: bool) -> None:
-    message = str(error)
+    error_type, message = _safe_command_error(error)
     if json_output:
-        _canonical_echo(
-            {
-                "error": message,
-                "mutation_attempted": False,
-                "schema_version": 1,
-                "storage_writes": "unproven",
-            },
-            stderr=True,
-        )
+        report = {
+            "error": message,
+            "mutation_attempted": False,
+            "schema_version": 1,
+            "storage_writes": "unproven",
+        }
+        if error_type is not None:
+            report["error_type"] = error_type
+        _canonical_echo(report, stderr=True)
     else:
-        err.print(f"[red]error:[/red] {message}")
+        suffix = f" ({error_type})" if error_type is not None else ""
+        err.print(f"[red]error:[/red] {message}{suffix}")
         err.print("[yellow]unproven:[/yellow] storage writes; no mutation attempted")
-    raise typer.Exit(2)
+    raise typer.Exit(2) from None
 
 
 @app.callback()
@@ -322,20 +312,8 @@ def doctor(
             try:
                 store: _ReadAccessStore = create_s3_store(storage)
                 topology = store.check_read_access()
-            except ClientError as error:
-                raise ValueError(
-                    _storage_error(
-                        error,
-                        provider=storage.provider,
-                        bucket=storage.bucket,
-                    )
-                ) from error
-            except BotoCoreError as error:
-                display = _provider_display(storage.provider)
-                raise ValueError(
-                    f"{display} storage credentials or connection failed "
-                    f"({type(error).__name__})"
-                ) from error
+            except (BotoCoreError, ClientError) as error:
+                _fail_doctor(error, json_output=json_output)
     except (ValueError, ValidationError) as error:
         _fail_doctor(error, json_output=json_output)
 
@@ -383,12 +361,14 @@ def doctor(
     out.print("[green]ok[/green] catalog and local context paths")
     out.print("[dim]not attempted[/dim] cloud controller checks")
     if online:
-        assert storage is not None
+        if storage is None:
+            raise RuntimeError("online doctor completed without storage configuration")
         display = _provider_display(storage.provider)
         prefix = f"s3://{storage.bucket}/{storage.prefix}".rstrip("/")
         out.print(f"[green]ok[/green] {display} bucket read access: {storage.bucket}")
         out.print(f"[green]ok[/green] {display} prefix list access: {prefix}")
-        assert topology is not None
+        if topology is None:
+            raise RuntimeError("online doctor completed without bucket topology")
         out.print(
             f"[green]ok[/green] {display} bucket location: "
             f"{topology.bucket_location} ({topology.location_type})"
@@ -488,7 +468,10 @@ def submit(
         )
         storage = prepared.plan.storage
         controller_config = prepared.plan.controller
-        assert storage is not None and controller_config.kind == "modal"
+        if storage is None or controller_config.kind != "modal":
+            raise SubmissionRefusedError(
+                "cloud submission requires resolved storage and a Modal controller"
+            )
         service = SubmissionService(
             create_s3_store(storage),
             _modal_client(load_project_config(Path.cwd(), profile=profile), profile),

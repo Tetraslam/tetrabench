@@ -804,9 +804,15 @@ class CancellationService:
         self, observed: AdmissionRead
     ) -> CancellationResult:
         admission = observed.record
-        assert self._children is not None
+        if self._children is None:
+            raise CancellationUnavailableError(
+                "running cancellation requires the deployed Harbor child observer"
+            )
         call_id = admission.owner_function_call_id
-        assert call_id is not None
+        if call_id is None:
+            raise CancellationConflictError(
+                "running cancellation admission has no controller owner"
+            )
         self._controller.cancel(call_id)
         controller_terminal = False
         for check in range(self._controller_checks):

@@ -213,7 +213,8 @@ def run_probe(
 
     cleanup_error = None
     if cleanup_required:
-        assert create_client is not None
+        if create_client is None:
+            raise RuntimeError("probe cleanup required before client construction")
         cleanup_error = _cleanup_probe_key(
             config,
             create_client,
@@ -227,7 +228,8 @@ def run_probe(
             original_error=original_error,
             cleanup_error=cleanup_error,
         ) from original_error
-    assert report is not None
+    if report is None:
+        raise RuntimeError("probe completed without a report")
     return report
 
 

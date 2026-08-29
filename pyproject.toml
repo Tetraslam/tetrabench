@@ -41,6 +41,7 @@ select = ["B", "E", "F", "I", "RUF", "UP"]
 
 [dependency-groups]
 dev = [
+    "bandit>=1.8.6",
     "hatchling>=1.32.0",
     "pip-audit>=2.9.0",
     "pytest>=9.1.1",

@@ -4,12 +4,14 @@ import os
 import shutil
 import stat
 import subprocess
+from collections.abc import Callable
 from importlib.metadata import entry_points, version
 from pathlib import Path
 from typing import Any, Literal, cast
 
 import pytest
-from botocore.exceptions import ClientError
+from botocore.exceptions import ClientError, CredentialRetrievalError
+from modal.exception import Error as ModalError
 from typer.testing import CliRunner
 
 from tetrabench.artifacts import ArtifactPullRefusedError, ArtifactPullResult
@@ -22,7 +24,7 @@ from tetrabench.remote import (
     RemoteResult,
     RemoteRunsReport,
 )
-from tetrabench.s3 import S3Store
+from tetrabench.s3 import S3IntegrityError, S3Store
 
 ROOT = Path(__file__).parents[1]
 runner = CliRunner()
@@ -135,6 +137,29 @@ def _client_error(code: str) -> ClientError:
         {"Error": {"Code": code, "Message": "test error"}},
         "HeadBucket",
     )
+
+
+def _adversarial_client_error() -> ClientError:
+    return ClientError(
+        {
+            "Error": {
+                "Code": "CredentialCode-AWS_ACCESS_KEY_ID",
+                "Message": "AWS_SECRET_ACCESS_KEY=client-error-secret",
+            }
+        },
+        "GetObject-TIGRIS_SECRET_ACCESS_KEY",
+    )
+
+
+def _adversarial_botocore_error() -> CredentialRetrievalError:
+    return CredentialRetrievalError(
+        provider="AWS_ACCESS_KEY_ID",
+        error_msg="AWS_SECRET_ACCESS_KEY=botocore-error-secret",
+    )
+
+
+def _adversarial_modal_error() -> ModalError:
+    return ModalError("MODAL_TOKEN_SECRET=modal-error-secret")
 
 
 def test_version_and_installed_entrypoint() -> None:
@@ -509,6 +534,18 @@ def test_run_real_harbor_docker_from_temporary_catalog(
     project, user_path = _local_project(tmp_path)
     output = tmp_path / "output"
     monkeypatch.chdir(project)
+    for name in (
+        "AWS_ACCESS_KEY_ID",
+        "AWS_ACCOUNT_ID",
+        "aws_alternate_credential",
+        "AwS_Mixed_Credential",
+        "TIGRIS_SECRET_ACCESS_KEY",
+        "tigris_alternate_credential",
+        "TiGrIs_Mixed_Credential",
+        "bOtO_cOnFiG",
+        "bOtOcOrE_TcP_KeEpAlIvE",
+    ):
+        monkeypatch.setenv(name, f"local-controller-secret-{name.lower()}")
     monkeypatch.setattr("tetrabench.config.default_user_config_path", lambda: user_path)
     monkeypatch.setattr(
         "tetrabench.cli.create_s3_store",
@@ -721,18 +758,11 @@ def test_doctor_online_reports_global_bucket_as_readable_but_admission_unsafe(
     assert not any(name.startswith("put") for name, _kwargs in client.operations)
 
 
-@pytest.mark.parametrize(
-    ("code", "message"),
-    [
-        ("AccessDenied", "Tigris storage authentication or authorization failed"),
-        ("NoSuchBucket", "Tigris storage bucket not found: doctor-bucket"),
-    ],
-)
-def test_doctor_online_reports_auth_and_not_found_on_stderr(
+@pytest.mark.parametrize("code", ["AccessDenied", "NoSuchBucket"])
+def test_doctor_online_redacts_provider_errors_on_stderr(
     tmp_path: Path,
     monkeypatch,
     code: str,
-    message: str,
 ) -> None:
     user_path = _profile_file(tmp_path, "tigris")
     client = _DoctorClient(_client_error(code))
@@ -747,7 +777,9 @@ def test_doctor_online_reports_auth_and_not_found_on_stderr(
 
     assert result.exit_code == 2
     assert result.stdout == ""
-    assert message in result.stderr
+    assert "error: provider request failed (provider_error)" in result.stderr
+    assert code not in result.stderr
+    assert "test error" not in result.stderr
     assert "storage writes; no mutation attempted" in result.stderr
     assert client.operations == [("head_bucket", {"Bucket": "doctor-bucket"})]
 
@@ -770,10 +802,9 @@ def test_doctor_json_error_is_canonical_stderr(tmp_path: Path, monkeypatch) -> N
     assert result.exit_code == 2
     assert result.stdout == ""
     report = loads_canonical_json(result.stderr.removesuffix("\n").encode("utf-8"))
-    expected_error = "AWS storage authentication or authorization failed"
-    expected_error += " (InvalidAccessKeyId)"
     assert report == {
-        "error": expected_error,
+        "error": "provider request failed",
+        "error_type": "provider_error",
         "mutation_attempted": False,
         "schema_version": 1,
         "storage_writes": "unproven",
@@ -850,6 +881,195 @@ def test_submit_empty_section_json_error_is_canonical_stderr(monkeypatch) -> Non
     assert isinstance(report, dict)
     assert report["schema_version"] == 1
     assert "not runnable" in str(report["error"])
+
+
+@pytest.mark.parametrize(
+    ("operation", "arguments", "error_factory"),
+    [
+        pytest.param(
+            "doctor",
+            ["doctor", "--profile", "online", "--online"],
+            error_factory,
+            id=f"doctor-{error_id}",
+        )
+        for error_id, error_factory in (
+            ("client-error", _adversarial_client_error),
+            ("botocore-error", _adversarial_botocore_error),
+        )
+    ]
+    + [
+        pytest.param(
+            "controller_deploy",
+            ["controller", "deploy", "--yes"],
+            _adversarial_modal_error,
+            id="controller-deploy-modal-error",
+        )
+    ]
+    + [
+        pytest.param(operation, arguments, error_factory, id=f"{operation}-{error_id}")
+        for operation, arguments in (
+            ("submit", ["submit", "systems-design"]),
+            ("recover", ["recover", "run-1", "--yes"]),
+            ("status", ["status", "run-1"]),
+            ("cancel", ["cancel", "run-1", "--yes"]),
+        )
+        for error_id, error_factory in (
+            ("client-error", _adversarial_client_error),
+            ("botocore-error", _adversarial_botocore_error),
+            ("modal-error", _adversarial_modal_error),
+        )
+    ]
+    + [
+        pytest.param(operation, arguments, error_factory, id=f"{operation}-{error_id}")
+        for operation, arguments in (
+            ("result", ["result", "run-1", "--profile", "remote"]),
+            (
+                "artifacts_pull",
+                ["artifacts", "pull", "run-1", "OUTPUT", "--profile", "remote"],
+            ),
+            ("runs_remote", ["runs", "--remote", "--profile", "remote"]),
+        )
+        for error_id, error_factory in (
+            ("client-error", _adversarial_client_error),
+            ("botocore-error", _adversarial_botocore_error),
+        )
+    ],
+)
+@pytest.mark.parametrize("json_output", [False, True], ids=["human", "json"])
+def test_remote_commands_redact_provider_exception_families(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    operation: str,
+    arguments: list[str],
+    error_factory: Callable[[], Exception],
+    json_output: bool,
+) -> None:
+    provider_error = error_factory()
+    provider_error.__cause__ = RuntimeError("CHAINED_PROVIDER_CAUSE=chained-secret")
+
+    def raise_provider_error(*_args, **_kwargs):
+        raise provider_error
+
+    class Service:
+        submit = staticmethod(raise_provider_error)
+        recover = staticmethod(raise_provider_error)
+        status = staticmethod(raise_provider_error)
+        cancel = staticmethod(raise_provider_error)
+        result = staticmethod(raise_provider_error)
+        pull = staticmethod(raise_provider_error)
+        runs = staticmethod(raise_provider_error)
+
+    if operation == "doctor":
+        user_path = _profile_file(tmp_path, "aws")
+        monkeypatch.chdir(ROOT)
+        monkeypatch.setattr(
+            "tetrabench.config.default_user_config_path", lambda: user_path
+        )
+        monkeypatch.setattr("tetrabench.cli.create_s3_store", raise_provider_error)
+    elif operation == "controller_deploy":
+        monkeypatch.chdir(ROOT)
+        monkeypatch.setattr("tetrabench.cli.deploy_controller", raise_provider_error)
+    elif operation == "submit":
+        monkeypatch.setattr("tetrabench.cli.prepare_submission", raise_provider_error)
+    elif operation == "recover":
+        monkeypatch.setattr(
+            "tetrabench.cli._recovery_service", lambda _profile: Service()
+        )
+    elif operation == "status":
+        monkeypatch.setattr(
+            "tetrabench.cli._status_service", lambda _profile: Service()
+        )
+    elif operation == "cancel":
+        monkeypatch.setattr(
+            "tetrabench.cli._cancellation_service", lambda _profile: Service()
+        )
+    elif operation in {"result", "runs_remote"}:
+        monkeypatch.setattr(
+            "tetrabench.cli._remote_result_service", lambda _profile: Service()
+        )
+    else:
+
+        class Config:
+            storage = object()
+
+        monkeypatch.setattr(
+            "tetrabench.cli.load_project_config", lambda *_args, **_kwargs: Config()
+        )
+        monkeypatch.setattr("tetrabench.cli.create_s3_store", lambda _storage: object())
+        monkeypatch.setattr(
+            "tetrabench.cli.ArtifactPullService", lambda _store: Service()
+        )
+        arguments = [
+            str(tmp_path / "output") if item == "OUTPUT" else item for item in arguments
+        ]
+
+    if json_output:
+        arguments = [*arguments, "--json"]
+    result = runner.invoke(app, arguments)
+
+    assert result.exit_code == 2
+    assert result.stdout == ""
+    for raw_field in (
+        "AWS_ACCESS_KEY_ID",
+        "AWS_SECRET_ACCESS_KEY",
+        "TIGRIS_SECRET_ACCESS_KEY",
+        "MODAL_TOKEN_SECRET",
+        "CHAINED_PROVIDER_CAUSE",
+        "secret",
+        "args",
+        "cause",
+        "context",
+        "message",
+        "traceback",
+    ):
+        assert raw_field not in result.stderr
+    if json_output:
+        expected = {
+            "error": "provider request failed",
+            "error_type": "provider_error",
+            "schema_version": 1,
+        }
+        if operation == "doctor":
+            expected |= {
+                "mutation_attempted": False,
+                "storage_writes": "unproven",
+            }
+        assert (
+            loads_canonical_json(result.stderr.removesuffix("\n").encode()) == expected
+        )
+    else:
+        expected = "error: provider request failed (provider_error)\n"
+        if operation == "doctor":
+            expected += "unproven: storage writes; no mutation attempted\n"
+        assert result.stderr == expected
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        S3IntegrityError("locally validated terminal binding failed"),
+        ValueError("local profile requires storage configuration"),
+    ],
+    ids=["integrity", "configuration"],
+)
+def test_remote_command_preserves_precise_local_error(
+    monkeypatch, error: Exception
+) -> None:
+    class Service:
+        @staticmethod
+        def result(_run_id: str) -> RemoteResult:
+            raise error
+
+    monkeypatch.setattr(
+        "tetrabench.cli._remote_result_service", lambda _profile: Service()
+    )
+    result = runner.invoke(app, ["result", "run-1", "--profile", "remote", "--json"])
+
+    assert result.exit_code == 2
+    assert loads_canonical_json(result.stderr.removesuffix("\n").encode()) == {
+        "error": str(error),
+        "schema_version": 1,
+    }
 
 
 def test_status_json_conflict_uses_stdout_and_exit_three(monkeypatch) -> None:
