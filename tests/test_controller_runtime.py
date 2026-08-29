@@ -452,6 +452,23 @@ def test_runner_failure_publishes_available_evidence_but_no_terminal(
     assert "s3:event:controller-failed" in operations
 
 
+def test_native_artifact_validation_failure_blocks_controller_success(
+    tmp_path: Path,
+) -> None:
+    runtime, store, operations, invocation = _runtime(tmp_path)
+
+    def reject_manifest(*args, **kwargs):
+        del args, kwargs
+        raise ValueError("Harbor declared artifact collection failed")
+
+    runtime._runner.run = reject_manifest
+    result = runtime.run(invocation, function_call_id="fc-1")
+    assert result.state == "failed"
+    assert store.terminals == []
+    assert store.admission.record.state == "failed"
+    assert "s3:terminal" not in operations
+
+
 def test_not_quiescent_cleanup_code_is_consistent_at_every_publication_site(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],

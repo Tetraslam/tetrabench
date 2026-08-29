@@ -31,7 +31,16 @@ call running. The Single-region cutover smoke likewise published 14 artifacts
 terminal-last, retained its named-Volume attempt, and left no active controller
 or nested Harbor child. AWS and true provider preemption remain unproven. The
 checked-in benchmark sections still contain no tasks, so `submit` refuses
-them. Detached submission now derives every regular file under each selected
+them. A second source-only fixture proves Harbor 0.22 separate verification
+locally: the final forge API call seals its database before the agent exits;
+Harbor then collects the real Git worktree, stops `main`, exports the already-
+sealed forge sidecar, and runs a no-network verifier with hidden source baked
+from `tests/`. The verifier validates native artifact placement, forge hashes
+and transitions, Git objects, a clean clone, and product behavior before writing
+exact binary reward bytes. Detached Modal proof remains unproven because the
+retained storage credentials are expired.
+
+Detached submission now derives every regular file under each selected
 catalog task directory and seals that complete fixture into the immutable
 context before it constructs an S3 or Modal service. The source-only fixture
 helper remains the only exercised live cloud submission path.
@@ -62,7 +71,7 @@ Python 3.12 is required. Package metadata rejects Python 3.13 and newer.
 
 GitHub Actions runs on pushes to `master` and pull requests with read-only
 repository access. The Python 3.12 job checks the lockfile, installs locked
-dependencies, runs Ruff and ty, requires the Docker daemon and both marked
+dependencies, runs Ruff and ty, requires the Docker daemon and all three marked
 Docker tests, runs the full pytest suite, scans production source and tools with
 Bandit, builds both distributions, smoke-tests an isolated wheel installation,
 and audits all locked dependency groups. A
@@ -86,9 +95,9 @@ terminal proof.
 [`benchmarks/README.md`](benchmarks/README.md) is the v1 task-family and admission
 contract. It is not a substitute for the deterministic manifests that each
 fixture must eventually own. Its two catalog task lists remain empty; fixture
-work is blocked on the local and detached separate-verifier handoff,
-forge-sidecar, and native binary-reward admission prerequisites. Automatic
-selected-fixture sealing is locally complete; its first live Modal catalog run
+work is blocked on detached separate-verifier and forge-sidecar proof plus native
+binary-reward admission. The separate-verifier prototype and automatic
+selected-fixture sealing are locally complete; their live Modal catalog path
 remains unproven.
 
 The accepted v1 design targets Harbor v0.22.0 evaluations through:
@@ -305,11 +314,28 @@ PY
 
 The native directory is retained unchanged. Tetrabench validates job and
 per-trial config, lock, and result files with Harbor 0.22's Pydantic models.
+Each persisted trial task path must still load as a real Harbor task directory,
+and its task-level artifacts compose before trial-level artifacts. Native
+artifact manifests require strict JSON and the exact bytes written by Harbor
+0.22's indented serializer; tetrabench does not reinterpret them as RFC 8785
+records.
 Persisted files own outcomes, rewards, exceptions, evidence, and artifact
 bindings; the value returned by `job.run` is checked only for agreement. ATIF
 is discovered from the securely collected inventory at normal and multi-step
 agent paths, following continuation references. The oracle fixture does not
 emit ATIF, so the terminal records that absence instead of creating a trace.
+
+`tests/fixtures/harbor_authority_task` is a separate source-only authority
+prototype. It is not cataloged or installed in wheels. Its Docker composition
+contains `main` and a forge sidecar with no shared forge volume. The Oracle makes
+one real commit and submits one transition through the documented `forge` CLI.
+The final forge API transition validates complete state, appends its terminal
+hash-chained event, revokes the run capability, and seals the database in one
+immediate transaction before the agent exits. Harbor's sidecar collect hook only
+publishes an already-sealed export. Database finalization and fail-closed atomic
+file publication are separate operations. The clean verifier
+recomputes authority from the collected repository and sealed export; agent
+logs, local result files, and claimed hashes never determine reward.
 
 The controller constructs its S3 client before removing every environment key in
 the case-insensitive `AWS_` and `TIGRIS_` namespaces, plus Botocore's

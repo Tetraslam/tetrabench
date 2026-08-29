@@ -19,6 +19,9 @@ def test_fixture_is_source_only_and_absent_from_installed_wheel(tmp_path: Path) 
     source = next(tmp_path.glob("*.tar.gz"))
     with zipfile.ZipFile(wheel) as archive:
         assert not any("fixtures/harbor_task" in name for name in archive.namelist())
+        assert not any(
+            "fixtures/harbor_authority_task" in name for name in archive.namelist()
+        )
         assert not any("benchmarks/catalog.toml" in name for name in archive.namelist())
         assert not any(
             "provider_consistency_probe" in name for name in archive.namelist()
@@ -27,5 +30,19 @@ def test_fixture_is_source_only_and_absent_from_installed_wheel(tmp_path: Path) 
         names = archive.getnames()
         assert any(
             name.endswith("tests/fixtures/harbor_task/task.toml") for name in names
+        )
+        assert any(
+            name.endswith("tests/fixtures/harbor_authority_task/task.toml")
+            for name in names
+        )
+        assert any(
+            name.endswith("tests/fixtures/harbor_authority_task/environment/forge.py")
+            for name in names
+        )
+        assert any(
+            name.endswith(
+                "tests/fixtures/harbor_authority_task/tests/artifact_contract.json"
+            )
+            for name in names
         )
         assert any(name.endswith("benchmarks/catalog.toml") for name in names)

@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import os
+import stat
 from dataclasses import dataclass
 from importlib.metadata import version
 from pathlib import Path
@@ -15,7 +17,15 @@ from harbor.models.environment_type import EnvironmentType
 from harbor.models.job.config import JobConfig
 from harbor.models.job.lock import JobLock, TrialLock
 from harbor.models.job.result import JobResult
+from harbor.models.task.artifacts import (
+    convention_source_for_os,
+    effective_artifact_service,
+    is_convention_entry,
+    source_relative_path,
+    with_convention_entry,
+)
 from harbor.models.trajectories import Trajectory
+from harbor.models.trial.artifact_manifest import ArtifactManifest
 from harbor.models.trial.config import (
     AgentConfig,
     EnvironmentConfig,
@@ -107,6 +117,132 @@ def _safe_component(value: str, *, field: str) -> str:
     if Path(value).name != value or value in {"", ".", ".."}:
         raise ValueError(f"Harbor persisted an unsafe {field}")
     return value
+
+
+def _artifact_destination(source: str, destination: str | None) -> str:
+    relative = (
+        Path(destination) if destination else Path(*source_relative_path(source).parts)
+    )
+    return "artifacts" if relative == Path(".") else f"artifacts/{relative.as_posix()}"
+
+
+def _reject_manifest_duplicate_keys(
+    pairs: list[tuple[str, object]],
+) -> dict[str, object]:
+    value: dict[str, object] = {}
+    for key, item in pairs:
+        if key in value:
+            raise ValueError(f"duplicate Harbor artifact manifest key: {key!r}")
+        value[key] = item
+    return value
+
+
+def _reject_manifest_nonfinite(value: str) -> object:
+    raise ValueError(f"nonfinite Harbor artifact manifest value: {value}")
+
+
+def _load_trial_artifact_manifest(manifest_path: Path) -> ArtifactManifest:
+    manifest_bytes = manifest_path.read_bytes()
+    try:
+        manifest_data = json.loads(
+            manifest_bytes.decode("utf-8"),
+            object_pairs_hook=_reject_manifest_duplicate_keys,
+            parse_constant=_reject_manifest_nonfinite,
+        )
+    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise ValueError("Harbor trial artifact manifest is not valid JSON") from error
+    if not isinstance(manifest_data, list) or any(
+        not isinstance(entry, dict)
+        or set(entry) != {"destination", "service", "source", "status", "type"}
+        or not isinstance(entry["source"], str)
+        or not isinstance(entry["destination"], str)
+        or not isinstance(entry["type"], str)
+        or not isinstance(entry["status"], str)
+        or (entry["service"] is not None and not isinstance(entry["service"], str))
+        for entry in manifest_data
+    ):
+        raise ValueError("Harbor trial artifact manifest schema changed")
+    manifest = ArtifactManifest(entries=manifest_data)
+    expected_bytes = json.dumps(manifest.to_json_data(), indent=2).encode("utf-8")
+    if manifest_bytes != expected_bytes:
+        raise ValueError("Harbor trial artifact manifest representation changed")
+    return manifest
+
+
+def _validate_trial_artifact_manifest(
+    trial_directory: Path, trial_config: TrialConfig
+) -> None:
+    artifacts_directory = trial_directory / "artifacts"
+    manifest_path = artifacts_directory / "manifest.json"
+    if manifest_path.is_symlink() or not manifest_path.is_file():
+        raise ValueError("Harbor trial artifact manifest is missing or unsafe")
+    manifest = _load_trial_artifact_manifest(manifest_path)
+    task_path = trial_config.task.path
+    if task_path is None or task_path.is_symlink() or not task_path.is_dir():
+        raise ValueError("Harbor persisted task path is missing or not a directory")
+    try:
+        task = Task(task_dir=task_path)
+    except (OSError, UnicodeError, ValueError) as error:
+        raise ValueError("Harbor persisted task path is not a valid task") from error
+    task_artifacts = list(task.config.artifacts)
+    task_os = task.config.environment.os
+    convention_source = convention_source_for_os(task_os)
+    expected = with_convention_entry(
+        [*task_artifacts, *trial_config.artifacts],
+        convention_source=convention_source,
+    )
+    if len(manifest.entries) != len(expected):
+        raise ValueError("Harbor trial artifact manifest entry count changed")
+
+    claimed: list[Path] = []
+    for entry, artifact in zip(manifest.entries, expected, strict=True):
+        destination = _artifact_destination(artifact.source, artifact.destination)
+        is_convention = is_convention_entry(artifact, convention_source)
+        expected_service = artifact.service
+        if (
+            entry.source != artifact.source
+            or entry.destination != destination
+            or entry.service != expected_service
+            or effective_artifact_service(artifact) != (entry.service or "main")
+        ):
+            raise ValueError("Harbor trial artifact manifest binding changed")
+        if is_convention:
+            if entry.status not in {"ok", "empty"}:
+                raise ValueError("Harbor convention artifact collection failed")
+        elif entry.status != "ok":
+            raise ValueError("Harbor declared artifact collection failed")
+
+        relative = Path(entry.destination).relative_to("artifacts")
+        target = artifacts_directory / relative
+        target_stat = target.lstat() if target.exists() else None
+        if entry.status == "empty":
+            if not is_convention or (
+                target_stat is not None
+                and (not stat.S_ISDIR(target_stat.st_mode) or any(target.iterdir()))
+            ):
+                raise ValueError("Harbor convention artifact is not empty")
+            continue
+        if target_stat is None or stat.S_ISLNK(target_stat.st_mode):
+            raise ValueError("Harbor artifact path is missing or unsafe")
+        actual_type = (
+            "directory"
+            if stat.S_ISDIR(target_stat.st_mode)
+            else "file"
+            if stat.S_ISREG(target_stat.st_mode)
+            else "special"
+        )
+        if entry.type != actual_type:
+            raise ValueError("Harbor artifact manifest type disagrees with path")
+        for current, directories, files in os.walk(target, followlinks=False):
+            for name in [*directories, *files]:
+                if stat.S_ISLNK((Path(current) / name).lstat().st_mode):
+                    raise ValueError("Harbor artifact contains a symlink")
+        if any(
+            path == target or path in target.parents or target in path.parents
+            for path in claimed
+        ):
+            raise ValueError("Harbor artifact destinations collide")
+        claimed.append(target)
 
 
 class Harbor022Api:
@@ -227,6 +363,7 @@ class Harbor022Api:
             persisted_trial_config = TrialConfig.model_validate_json(
                 trial_config.read_text()
             )
+            _validate_trial_artifact_manifest(trial_directory, persisted_trial_config)
             persisted_trial_lock = TrialLock.model_validate_json(trial_lock.read_text())
             persisted_trial_locks.append(_exact_model_value(persisted_trial_lock))
             persisted_trial = TrialResult.model_validate_json(

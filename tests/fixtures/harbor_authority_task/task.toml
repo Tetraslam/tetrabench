@@ -1,0 +1,30 @@
+schema_version = "1.4"
+artifacts = [
+  { source = "/workspace/repo", destination = "main-workspace", service = "main" },
+  { source = "/forge/export", destination = "forge-export", service = "forge" },
+]
+
+[environment]
+build_timeout_sec = 300
+network_mode = "public"
+cpus = 1
+memory_mb = 512
+storage_mb = 1024
+
+[agent]
+timeout_sec = 60
+
+[verifier]
+environment_mode = "separate"
+timeout_sec = 60
+
+[verifier.environment]
+network_mode = "no-network"
+cpus = 1
+memory_mb = 384
+storage_mb = 512
+
+[[verifier.collect]]
+service = "forge"
+command = "python /opt/forge/forge.py export --output /forge/export"
+timeout_sec = 20

@@ -530,3 +530,67 @@ Provenance: user-provided authority contract, local command-level mutation regre
 Detached preparation now retains the exact resolved Modal App, Function, and environment selector in its in-memory `PreparedSubmission`. The submit CLI constructs storage only from immutable resolved-plan storage and constructs Modal only from that prepared selector. The source-only fixture launcher follows the same boundary. Project configuration and catalog data are not reread after preparation, so replacement cannot combine a later endpoint or bucket revision with the prepared request. The launch selector contains resource names only and is absent from plans, requests, receipts, and durable evidence. D-072 records this authority.
 
 E-063 passed with 552 tests. Its command-level regression replaces both project config and catalog after preparation, rejects any second config load, counts exactly one config and catalog load, and observes the original Tigris bucket plus original Modal App, Function, and environment at spawn. Both required Docker tests, lock and locked sync, Ruff check/format, ty, Bandit, actionlint, wheel/sdist build, isolated locked-runtime wheel smoke, all-groups pip-audit, `git diff --check`, and redacted Gitleaks over all 19 commits passed.
+
+## 2026-08-29T10:35:31-07:00: Clean-verifier prototype contract
+
+Provenance: user-provided implementation contract; pinned Harbor 0.22.0 task models and lifecycle source; Harbor documentation; and local Docker image-manifest inspection. Implementation evidence is pending.
+
+E-064 will add one source-only, non-catalog fixture distinct from the existing simple oracle fixture. Its main service owns a real local Git worktree and reaches a task-local forge only through a documented standard-library API/CLI. The forge owns immutable initial state, schema-checked transitions, a hash-chained event log, one atomic SQLite seal transition, and a canonical export. No forge filesystem is shared with main.
+
+Pinned Harbor 0.22 native lifecycle is the authority handoff: declared main artifacts collect first; separate-verifier mode attempts to stop main; sidecar `[[verifier.collect]]` seals before exporting; declared sidecar artifacts collect separately; and only then does Harbor build and run the clean verifier from `tests/`. Harbor treats collect-hook and main-stop failures as warnings, so the verifier must reject missing or invalid exports and the sealed forge must reject any write after collection begins. The verifier runs with `network_mode = "no-network"`, receives only declared artifacts at their source paths, validates Git and forge state independently, and writes the only reward as exact integer `0` or `1` plus diagnostics.
+
+The shared container base is `python:3.12.11-slim-bookworm@sha256:519591d6871b7bc437060736b9f7456b8731f1499a57e22e6c285135ae657bf7`. Runtime uses only Python's standard library and Git already installed in the built images; the Git package version will be pinned after the first image build establishes the current Bookworm package candidate. Detached Modal proof remains `unproven` because the retained storage credentials are expired.
+
+## 2026-08-29T11:10:28-07:00: E-064 local clean-verifier evidence
+
+Provenance: pinned Harbor 0.22.0 models and lifecycle, local Docker, adversarial fixture tests, native job inspection, package inspection, and complete local CI/security parity. No catalog task, provider call, commit, or live resource was created or changed.
+
+E-064 passed locally. The source-only `harbor_authority_task` fixture uses Harbor's normal compose task layout with separate `main` and `forge` filesystems. Main contains a deterministic real Git repository and only the documented forge HTTP/CLI surface. The standard-library forge validates one explicit PR-like transition against immutable current state and a 40-character commit OID, appends a SHA-256 event chain in one SQLite transaction, and seals before writing an atomically replaced canonical export. Its HTTP endpoint returns conflict for every write after seal, including the tested leftover-main request.
+
+Harbor collected the main Git artifact, stopped `main`, ran the forge `[[verifier.collect]]` seal/export hook, collected the sidecar artifact, and created a separate verifier from the `tests/` build context. Native task policy recorded public agent network and no-network verifier execution. The Oracle proved `/tests` and the baked verifier marker absent before making one focused commit and submitting the transition. The clean verifier validated its hidden artifact contract, expected paths, sidecar file hashes and event chain, every event OID, immutable base and focused ancestry, Git fsck, exact refs and local config, a no-hardlink clean clone, product output, artifact limits, and forbidden files. It wrote exact `1\n` reward bytes plus canonical diagnostics. Native Harbor job/trial config, lock, result, separate-verifier mode, and artifact manifest all parsed successfully.
+
+Adversarial tests reject an agent-owned event file, invalid OID/current state, an HTTP write after seal, a modified snapshot with a recomputed manifest hash, either missing declared artifact, forbidden external Git object sources, and a same-environment verifier without the baked marker. Agent logs and claimed result files never determine reward.
+
+All 561 tests passed on Python 3.12. The three Docker-marked tests passed separately. Ruff check/format, ty, `uv lock --check`, locked all-group sync, Bandit, actionlint, wheel/sdist build, isolated locked-runtime wheel install and metadata/content smoke, all-groups pip-audit, `git diff --check`, redacted Gitleaks over all 20 commits, and redacted changed/untracked scans passed. Wheels exclude both source-only fixtures; source distributions retain the complete new fixture. Detached Modal E-064 and automatic catalog sealing remain `unproven` because the retained storage credentials are expired.
+
+## 2026-08-29T11:14:00-07:00: E-064 build-source pin correction
+
+Provenance: live Debian snapshot package-index check and a repeated real Docker E-064 run. This corrects the pending Git-package statement in the 10:35 contract entry.
+
+The main and clean-verifier builds now replace mutable Debian mirrors with `snapshot.debian.org/archive/debian/20260829T000000Z`, disable stale `Valid-Until` rejection for that immutable snapshot, and install exact `git=1:2.39.5-0+deb12u3`. The forge image needs no package installation. The repeated real Docker run passed with reward `1` after both Dockerfiles used the snapshot.
+
+## 2026-08-29T12:00:00-07:00: E-064 authority and verifier correction
+
+Provenance: user-provided review findings, pinned Harbor 0.22 models and artifact semantics, local adversarial tests, and repeated local Docker execution. This entry corrects the 10:35 and 11:10 E-064 entries without altering them. Final parity evidence is pending.
+
+The sidecar collect hook no longer creates forge terminal authority. The agent's final submitted API transition validates complete state, appends the final hash-chained event under a unique replay key, revokes the run capability, and records terminal sealed state in one `BEGIN IMMEDIATE` transaction before agent exit. Collection only publishes an already-terminal export and fails if finalization never happened. Canonical file publication follows with fail-closed temp writes, file and directory `fsync`, rename, and parent `fsync`; it is ordered after the atomic database transition but is not jointly atomic with it.
+
+The clean verifier now parses submitted Git metadata and local config before any Git command, rejects repository-controlled hooks, fsmonitor, aliases, filters, object indirection, replacement refs, shallow/graft state, submodules, includes, unknown config, links, and special files, and invokes only absolute `/usr/bin/git` under a cleared environment and explicit safe overrides. Product behavior runs from a runner-owned copy under a distinct no-new-privileges UID/GID with resource and timeout bounds; tests, forge state, artifacts, reward output, and runtime sockets remain inaccessible to that runner. The separate verifier records UID/GID, effective cgroup CPU/memory, mount/socket exposure, and DNS/direct-IP/hostname egress probes. Harbor 0.22 has no verifier PID-limit primitive, so no PID guarantee is claimed.
+
+Production native-artifact validation now parses every trial manifest with Harbor 0.22 models, derives the effective convention, task, and trial entries using Harbor service/source/destination semantics, requires every declared entry to be `ok`, validates actual file/directory types and links, and rejects missing, extra, failed, skipped, empty, mutated, or colliding declarations before controller success.
+
+## 2026-08-29T11:53:18-07:00: Notes timestamp correction
+
+Provenance: local clock check immediately after the preceding entry was appended.
+
+The preceding heading's `12:00:00-07:00` timestamp was recorded incorrectly. Its actual creation time was approximately `11:52:00-07:00`. File order preserves append order.
+
+## 2026-08-29T11:59:52-07:00: E-065 local hardening evidence
+
+Provenance: complete Python 3.12 suite, three separately required real-Docker tests, pinned Harbor 0.22 native artifacts, verifier runtime diagnostics, package inspection, and local CI/security parity. No catalog task, provider call, detached run, commit, or live resource was created or changed.
+
+E-065 passed locally with 591 tests. All three Docker tests passed separately and again in the full suite. The clean verifier recorded root orchestration, product execution under UID/GID 65532 with no-new-privileges and rlimits, effective one-CPU and 384 MiB cgroup bounds, no Docker/containerd socket or undeclared task mount, and failed DNS, direct-IP TCP, and hostname TCP probes. Harbor 0.22 has no verifier PID-limit primitive, so no PID guarantee is claimed. Detached Modal remains `unproven`.
+
+Adversarial coverage includes concurrent terminal transitions, capability revocation, unique replay keys, pre-finalization collection failure, post-terminal writes, exact HTTP method/path/content type/body/framing limits, duplicate/nonfinite/boolean/whitespace/schema/recomputed-hash JSON, direct Git structure/config inspection, non-executing hook/fsmonitor/alias/filter/alternate-object/replace-ref/shallow exploits, distinct-UID product behavior, native manifest source/destination/service/type/status/path/symlink/entry-set/collision mutations, and controller terminal-publication refusal after native provenance failure.
+
+`uv lock --check`, locked all-group sync, Ruff check and format, ty, clean Bandit, actionlint, wheel/sdist build, isolated locked-runtime wheel installation and metadata/content smoke, all-groups pip-audit, `git diff --check`, and redacted Gitleaks over all 20 commits passed. A full worktree Gitleaks scan initially reported the already documented E-031 prose false positive; replacing its slash-joined service names with normal prose removed that trigger without suppressing the rule.
+
+## 2026-08-29T12:27:48-07:00: E-066 native-manifest provenance correction
+
+Provenance: user-provided remaining P2 findings, pinned Harbor 0.22 `Task`, `ArtifactHandler`, artifact helpers, and manifest models, focused adversarial tests, full Python 3.12 validation, and repeated local Docker execution. No provider call, detached run, commit, or live resource was created or changed.
+
+Native artifact validation now rejects a persisted trial whose task path is absent, a file, a symlink, or an invalid Harbor task directory. It loads the pinned task config and composes task-level artifacts before trial-level artifacts with Harbor's OS-specific convention entry. Fake native-manifest tests use a copied real task directory rather than a `/task` placeholder.
+
+The native manifest parser now rejects invalid UTF-8, trailing data, duplicate object keys, nonfinite constants, invalid root and field types, and schema changes. Accepted bytes must exactly equal Harbor 0.22's `json.dumps(manifest.to_json_data(), indent=2)` output. This deliberately rejects whitespace, member-order, and trailing-byte changes without applying tetrabench's RFC 8785 record serializer to a Harbor-owned file.
+
+All 607 tests passed, including all three Docker tests separately and again in the full suite. `uv lock --check`, locked all-group sync, Ruff check and format, ty, Bandit, actionlint, wheel/sdist build, isolated locked-runtime wheel installation and metadata/content smoke, all-groups pip-audit, `git diff --check`, and redacted Gitleaks over all 20 commits passed.

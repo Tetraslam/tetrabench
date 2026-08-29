@@ -192,12 +192,27 @@ tests cover deterministic ordering, every file identity input, multi-task
 composition, explicit-context collisions, path and type rejection, limits, and
 file and directory mutation races before provider construction. A materialized
 fixture matches the stable checkout tree by relative path, bytes, and normalized
-mode. The full Python 3.12 suite passes 536 tests, including both real-Docker
-tests, and isolated-wheel inspection confirms that wheels still contain neither
-catalogs nor source-only fixtures while source distributions retain them. A live
-Modal run of automatic catalog sealing remains unproven. The separate-verifier,
-network-policy, artifact-handoff, and forge-sidecar boundary remains entirely
-unimplemented, so the admission gate still blocks fixture work.
+mode.
+
+E-064 locally proves the second boundary with a distinct source-only prototype.
+Pinned Harbor 0.22 runs a real Git worktree beside an API/CLI-only forge
+sidecar. The final agent-side API call atomically appends the terminal event,
+revokes its capability, and seals the database. Harbor then collects the main
+worktree, stops `main`, and publishes the already-sealed forge export through
+`[[verifier.collect]]` before running a no-network verifier
+built from hidden `tests/` source. The verifier checks the native artifact
+manifest, sidecar export manifest and hash chain, every event OID, Git fsck,
+focused ancestry, a clean clone, product behavior, and forbidden agent files. It
+alone writes exact binary reward bytes and diagnostics. Adversarial tests reject
+agent-owned event files, post-seal API writes, recomputed snapshot tampering,
+missing artifacts, and shared-environment verifier assumptions.
+
+The full Python 3.12 suite passes 591 tests, including three real-Docker tests.
+Wheels contain neither catalog nor source-only fixture files; source
+distributions retain both fixtures. Detached Modal runs of E-064 and automatic
+catalog sealing remain unproven because the retained storage credentials are
+expired. The catalogs stay empty until detached proof and the remaining
+admission work pass.
 
 ## Systems design through implementation
 
@@ -474,11 +489,10 @@ most 8 distinct fault schedules.
 
 ## Implementation order
 
-1. Complete the separate-verifier handoff and forge-sidecar snapshot prototype
-   locally and in detached Modal, then run automatic selected-fixture sealing
-   through live Modal. Automatic sealing already passes local and controller
-   materialization tests. Do not create a task fixture before these
-   prerequisites pass.
+1. Run the locally proven E-064 separate-verifier and forge-sidecar prototype in
+   detached Modal, then run automatic selected-fixture sealing through live
+   Modal. Renew scoped storage credentials first. Do not create a catalog task
+   before these prerequisites pass.
 2. Implement binary native-reward validation and section pass-rate summaries.
    Freeze the pinned agent and verifier images, manifest schemas, fault
    scheduler, exploit-audit checks, budgets, and admission evidence format.
