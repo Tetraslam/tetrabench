@@ -442,3 +442,63 @@ The 08:15 entry's statement that every remote command was covered is corrected: 
 The common renderer now classifies `ClientError`, every `BotoCoreError` subclass, and `modal.exception.Error` as fixed `provider_error` / `provider request failed` with exit 2. Independent human and JSON parameterization injects adversarial ClientError fields, `CredentialRetrievalError` arguments, Modal error arguments, and a chained cause across online doctor, controller deploy, submit, recover, status, cancel, result, artifact pull, and remote runs wherever each exception family is caught. Exact output assertions exclude raw messages, arguments, subtype and chaining fields. Separate regressions retain precise local configuration and integrity errors.
 
 E-060 passed with 505 tests and both separately required Docker tests. Ruff check/format, ty, `uv lock --check`, locked sync, wheel/sdist build, isolated locked-runtime wheel installation and metadata/content smoke, Bandit, all-groups pip-audit, actionlint, `git diff --check`, and redacted full-history Gitleaks all passed. No live provider call occurred.
+
+## 2026-08-29T08:46:12-07:00: Tetrabench v1 benchmark task design
+
+Provenance: user-provided task contract on 2026-08-29; primary project and paper pages for SWE-bench, Terminal-Bench 2.0, DDBench, InfraBench, CI-Repair-Bench, SWE-Review, GitGoodBench, BulkPR-Bench, and UnderSpecBench; local inspection of the Harbor 0.22 fixture and tetrabench catalog/context contracts. The user contract is authoritative for tetrabench scope. The cited benchmarks establish adjacent evaluation coverage, not fixture admission evidence.
+
+The accepted v1 design contains five systems-design-through-implementation tasks (`authority-fencing`, `atomic-outbox`, `lifecycle-reconciliation`, `online-migration`, and `tenant-authorization`) and five single-pull-request workflow tasks (`pr-submit`, `ci-repair`, `review-adjudication`, `release-backport`, and `merge-queue-recovery`). Every task has objective executable mandatory gates and a strict binary primary reward. Additional native Harbor reward diagnostics cannot soften that reward. The GitHub lane uses real local Git plus a bounded task-local forge state machine and makes no live GitHub API claim.
+
+The design records CPU-only pinned execution, standard Harbor fixture and verifier boundaries, newly authored compact fixtures, three reused Git snapshots, no verifier network dependency, public-test contamination limits, shared-root exploit risk, anti-shortcut admission, exact task order, and v1 exclusions. No task fixture was added, and both catalogs remain empty.
+
+Audit found one prerequisite: detached submission must derive, seal, and request-bind the complete selected task fixture before the first fixture is implemented or cataloged. Existing explicit context paths can omit fixture files and therefore do not prove that detached execution uses the intended immutable task. D-066 records this blocker and points to the canonical design.
+
+Primary sources:
+
+- SWE-bench: https://github.com/swe-bench/SWE-bench
+- Terminal-Bench 2.0: https://www.tbench.ai/benchmarks/terminal-bench-2
+- DDBench: https://arxiv.org/abs/2608.14863
+- InfraBench: https://arxiv.org/abs/2608.11234
+- CI-Repair-Bench: https://arxiv.org/abs/2604.27148
+- SWE-Review: https://arxiv.org/abs/2607.06065
+- GitGoodBench: https://aclanthology.org/2025.realm-1.19/
+- BulkPR-Bench: https://arxiv.org/abs/2608.02685
+- UnderSpecBench: https://arxiv.org/abs/2607.02294
+
+## 2026-08-29T08:50:34-07:00: V1 design validation
+
+Provenance: local Python 3.12 validation of the uncommitted design and catalog-description change. No task fixture, provider call, detached run, or catalog task was created.
+
+The strict catalog model accepts and exposes both new section descriptions, while both task lists remain empty. Offline `tetrabench doctor`, TOML parsing and empty-task assertions, and design completeness assertions passed. All 505 tests passed, including the two existing real-Docker Harbor tests. Ruff check and format, ty, `uv lock --check`, wheel and source-distribution build to a temporary output directory, and `git diff --check` passed. The test run retained the existing Harbor checksum deprecation and deliberate replacement-race cleanup warnings; no new failure occurred.
+
+## 2026-08-29T09:06:59-07:00: V1 task-family and admission correction
+
+Provenance: user-provided evaluator, manifest, scoring, network, artifact, admission, citation, and prose corrections on 2026-08-29; pinned Harbor 0.22.0 package inspection; Harbor task, artifact-collection, and network-policy documentation; and the cited benchmark papers. This entry corrects the 08:46 task-design entry without changing its ten task families or empty catalogs.
+
+`benchmarks/README.md` is a task-family and admission contract until fixtures own local manifests. Every v1 task requires Harbor 0.22 separate-verifier mode. Agent output is a declared bounded artifact set beneath `/artifacts`; Harbor collects after the agent phase, stops the main service, and launches a clean no-network verifier whose image is built from `tests/` with hidden code baked in. Systems verifiers rebuild fresh state and rerun fixed hidden schedules. GitHub tasks use real local Git plus a minimal API/CLI-only forge sidecar; clean verification validates collected event schema and Git objects, reconstructs transitions from the immutable initial snapshot, and reruns behavior from clean clones. Mutable agent-controlled logs and results are never authority.
+
+Each future fixture must expose `contract.toml` and keep `tests/cases.toml` in the verifier image. The manifests bind initial state, interfaces, logical time, named cases, schedules, checkpoints, gates, seeds, and expected state/effect hashes. Primary reward is exactly finite integer `0` or `1`, with `1` requiring every mandatory gate. Native task rewards are authoritative and section score is their binary pass rate. Tetrabench validation and summarization remain unimplemented prerequisites.
+
+P7 now blocks fixtures on local and detached selected-fixture sealing, separate-verifier handoff, forge-sidecar collection, both phase network policies, deterministic manifests, reward validation, and bounded admission. Per-task admission uses at most 16 hidden cases and 8 schedules; fixed gold/no-op/mutant/exploit/calibration runs; a `$25` model-spend cap; an 8-hour wall-clock cap; 35-minute agent attempts; a 2-minute normal hidden suite; a 4-minute verifier hard timeout; lower submission/verifier artifact budgets beneath the existing collector hard limits. Overproduction fails closed, but these declared-artifact limits do not claim control of arbitrary undeclared agent output.
+
+Citation wording was checked against the primary papers: SWE-bench applies generated patches and runs fail-to-pass/pass-to-pass tests; InfraBench combines four lifecycle gates, executable preservation checks, and a post-hoc LLM risk review; CI-Repair-Bench re-executes a validation-preserving standardized workflow; SWE-Review starts from AI-generated candidate PRs and measures post-review revision outcomes; GitGoodBench covers merge-conflict resolution, interactive rebase, and iterative committing; UnderSpecBench varies intended action, target certainty, and blast radius rather than missing authority. The related-work conclusion is limited to task designs not represented by the cited set.
+
+Primary sources added or rechecked:
+
+- Harbor task and separate-verifier semantics: https://www.harborframework.com/docs/tasks#verifier-environment-shared-vs-separate
+- Harbor artifact lifecycle: https://www.harborframework.com/docs/run-jobs/results-and-artifacts#how-collection-works
+- Harbor network policy: https://www.harborframework.com/docs/tasks/network-policy
+- SWE-bench paper: https://arxiv.org/abs/2310.06770
+- InfraBench: https://arxiv.org/abs/2608.11234
+- CI-Repair-Bench: https://arxiv.org/abs/2604.27148
+- SWE-Review: https://arxiv.org/abs/2607.06065
+- GitGoodBench: https://aclanthology.org/2025.realm-1.19/
+- UnderSpecBench: https://arxiv.org/abs/2607.02294
+
+## 2026-08-29T09:13:44-07:00: Corrected v1 contract validation
+
+Provenance: local Python 3.12, Docker, package, security, link, and pinned Vale validation after the task-family and admission correction. No fixture, provider call, detached run, or catalog task was created.
+
+All 505 tests passed, including the two separately required real-Docker Harbor tests. Ruff check and format, ty, `uv lock --check`, locked dependency sync, Bandit, all-groups pip-audit, actionlint, wheel/sdist build, isolated locked-runtime wheel installation and metadata/content smoke, offline `tetrabench doctor`, `git diff --check`, and redacted full-history Gitleaks passed. The full suite retained the existing Harbor checksum deprecation and deliberate retained-evidence cleanup warnings.
+
+A bounded link check resolved all 13 links in `benchmarks/README.md`, including local anchors and external sources. The repo-pinned Vale AI-tells rules ran on that document. Concrete findings improved sentence-case headings, negation, semicolon use, lifecycle actors, and sentence linkage. Remaining errors are documented false positives for required domain terms (`implementation`, `implement`, `blast radius`, and `named` IDs), an exact paper title, mandatory gate quantifiers, and genuine three-action contract sets; passive-voice and sentence-uniformity warnings mostly occur in the enumerated gate specification.

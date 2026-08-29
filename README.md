@@ -80,6 +80,13 @@ terminal proof.
 
 ## Reviewed design scope
 
+[`benchmarks/README.md`](benchmarks/README.md) is the v1 task-family and admission
+contract. It is not a substitute for the deterministic manifests that each
+fixture must eventually own. Its two catalog task lists remain empty; fixture
+work is blocked on the local and detached separate-verifier handoff,
+forge-sidecar, selected-fixture sealing, and native binary-reward admission
+prerequisites.
+
 The accepted v1 design targets Harbor v0.22.0 evaluations through:
 
 - a deployed Modal Function for detached cloud execution;

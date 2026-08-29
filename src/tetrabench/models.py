@@ -185,6 +185,7 @@ class CatalogTask(StrictModel):
 
 
 class CatalogSection(StrictModel):
+    description: NonEmptyString | None = None
     readme: NonEmptyString
     tasks: list[CatalogTask] = Field(default_factory=list)
 

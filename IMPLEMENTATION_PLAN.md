@@ -5,6 +5,7 @@
 - Project state: P0 through P6 are complete for their local/static contracts. Live Tigris/Modal evidence includes cancellation, forced controller interruption/recovery, and the E-046 Single-region `iad` cutover. Current live provider IAM/privacy/encryption state, AWS behavior, and true provider preemption remain `unproven`.
 - Current action: E-060 closed the remaining provider-exception leak at the common CLI boundary. GitHub Actions enforces the Python 3.12 lock, lint, type, Bandit, real-Docker test, package, dependency-audit, and full-history secret-scan gates on pushes to `master` and pull requests.
 - Next action: run the exact E-021/E-023 live IAM, privacy, and encryption probes, run the consistency probe on AWS, then observe a real provider-initiated Modal preemption.
+- Task-catalog gate: no fixture work may start until P7 proves selected-fixture sealing, Harbor 0.22 separate-verifier handoff, forge-sidecar collection, phase network policies, and binary-reward admission locally and in detached Modal.
 - Canonical record updated: 2026-08-29.
 
 ## Systems-Design Working Record
@@ -202,6 +203,10 @@ runs/<run-id>/terminals/<terminal-sha>.json
 | D-063 | Python 3.12 CI requires locked quality, real-Docker, package, dependency, and full-history secret checks | accepted | One least-privilege workflow makes the local release evidence repeatable without repository/cloud secrets or mutable third-party action references. |
 | D-064 | Fixed public `ClientError` output and namespace-based Harbor environment isolation | provider-error scope corrected by D-065; environment contract accepted | Prevents provider-controlled ClientError fields and newly introduced environment namespace members from crossing public CLI or Harbor child boundaries while preserving local diagnostics. |
 | D-065 | Fixed public output for every caught Botocore and Modal provider exception | accepted; corrects D-064 provider scope | Provider base-family exceptions can carry credential retrieval, transport, authentication, and chained messages outside `ClientError`; all use one fixed renderer while local diagnostics remain precise. |
+| D-066 | Ten v1 task families with empty catalogs | accepted | `benchmarks/README.md` is a task-family and admission contract until fixtures own local deterministic manifests. |
+| D-067 | Harbor 0.22 separate-verifier mode, declared `/artifacts`, clean verifier images, and forge-sidecar snapshots | accepted; implementation unproven | Stops the agent environment before clean verification and keeps evaluator correctness independent of agent-produced logs, results, or mutable forge state. |
+| D-068 | Fixture-local `contract.toml` and hidden `tests/cases.toml`; exact binary primary rewards | accepted; implementation unproven | Gives every scoring term a fixed case or gate, makes native per-task rewards authoritative, and defines section score as binary pass rate. |
+| D-069 | Bounded per-task admission repetitions, mutants, audits, calibration, time, spend, artifact, and verifier limits | accepted; implementation unproven | Makes admission finite and fail-closed without claiming a bound on arbitrary undeclared agent output. |
 
 ### Superseded or Rejected
 
@@ -233,6 +238,8 @@ runs/<run-id>/terminals/<terminal-sha>.json
 - [ ] [U-009] `unproven`: live AWS `PutObject` conditional create/update behavior. AWS documents the required 200/404/409/412 semantics, but no AWS mutation was run.
 - [x] [U-010] Resolved by E-046: a new private Tigris Single-region `iad` bucket passed the live consistency probe and became the authoritative coordination baseline without modifying or copying the retained Global bucket.
 - [ ] [U-011] `unproven`: current live Tigris/AWS IAM denials, bucket privacy, and effective encryption. Retained E-046 evidence records the Tigris bucket and policies at cutover, but renewed credentials are required for the E-021/E-023 probes.
+- [ ] [U-012] `unproven`: Harbor 0.22 selected-fixture sealing and separate-verifier handoff, including public agent network, no-network verification, declared `/artifacts`, stop-main-first forge-sidecar collection, and clean verification, on both local Docker and detached Modal.
+- [ ] [U-013] `unproven`: task admission rejects every primary reward except finite integer `0` or `1` and computes section pass rate from authoritative native binary task rewards.
 
 ## Planned Package Tree
 
@@ -348,6 +355,24 @@ Acceptance is complete for behavior that can be proven without live provider
 credentials. The README distinguishes that local/static evidence from U-011's
 live IAM, privacy, and encryption checks.
 
+### P7: Task admission foundation
+
+- [ ] [P7-01] Seal and request-bind the complete selected fixture for local and
+  detached execution.
+- [ ] [P7-02] Prove a Harbor 0.22 separate-verifier prototype locally and in
+  detached Modal, including clean `tests/`-built verifier images, declared
+  `/artifacts`, agent public network, verifier no-network, and lifecycle order.
+- [ ] [P7-03] Prove a minimal forge sidecar whose state and event log are
+  snapshotted after main stops and reconstructed by a clean verifier.
+- [ ] [P7-04] Implement fixture-manifest validation, exact binary primary-reward
+  admission, and binary section pass-rate summaries.
+- [ ] [P7-05] Implement the fixed admission repetitions, mutant cap, exploit
+  audits, calibration records, runtime limits, model-spend cap, wall-clock cap,
+  and task/native-artifact budgets in D-069.
+
+Acceptance: U-012 and U-013 pass locally and in detached Modal before the first
+task fixture is created. P7 adds no fixture or catalog entry.
+
 ## Evidence Table
 
 | Evidence ID | Claim | Required evidence | State | Reference |
@@ -427,10 +452,13 @@ These are tracked capabilities, not v1 implementation tasks.
 
 ## Task Catalogs
 
-### Systems Design
+[D-066..D-069] [`benchmarks/README.md`](benchmarks/README.md) is the accepted v1
+task-family and admission contract for five systems-design-through-implementation
+tasks and five local Git/forge workflow tasks. It is not a fixture-local
+manifest. Both catalog task lists remain empty.
 
-This benchmark category is empty. It is not an implementation work queue.
-
-### GitHub Workflow
-
-This benchmark category is empty. It is not an implementation work queue.
+P7 blocks fixture work on selected-fixture sealing, separate-verifier and
+forge-sidecar handoff, phase network enforcement, deterministic manifests,
+binary reward validation and summarization, and bounded admission. After P7,
+each task follows the implementation and per-task admission order in the
+contract.

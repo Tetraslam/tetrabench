@@ -40,9 +40,11 @@ def _local_project(tmp_path: Path) -> tuple[Path, Path]:
         """\
 schema_version = 1
 [sections.systems-design]
+description = "Systems"
 readme = "systems.md"
 tasks = [{ id = "fixture", harbor_task = "tasks/fixture" }]
 [sections.github-workflow]
+description = "GitHub"
 readme = "github.md"
 tasks = []
 """,
@@ -826,9 +828,11 @@ catalog_path = "catalog.toml"
         """\
 schema_version = 1
 [sections.systems-design]
+description = "Systems"
 readme = "systems.md"
 tasks = []
 [sections.github-workflow]
+description = "GitHub"
 readme = "github.md"
 tasks = []
 """,
