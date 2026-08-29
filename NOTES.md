@@ -340,3 +340,53 @@ Provenance: user-provided lifecycle contract, local Python 3.12 regressions, ful
 This entry corrects the cleanup behavior recorded at 05:35 and 05:41 without altering those historical entries. Harbor-native task validation still completes before output creation and leaves no destination on failure. Once tetrabench creates the output reservation, it never deletes it. After exact `0700` is established, empty and populated failures remain private owned evidence; replacement races retain both the moved private reservation and replacement content without deletion. D-057 supersedes D-055 and D-056 where more specific.
 
 All 376 tests passed, including both real Docker suite paths and regressions for pre-validation absence plus empty, content, and replacement-race retention. Ruff check and format, ty, `uv lock --check`, wheel/sdist build, and `git diff --check` passed. A fresh installed wheel completed the fixture with reward `1.0` and exact `0700` output. A separate installed-wheel process received SIGINT after native config creation, exited 130 with canonical interruption evidence, and retained the native directory at exact `0700`.
+
+## 2026-08-29T06:19:32-07:00: Remote result and artifact user loop
+
+Provenance: user contract, local AWS/Tigris-parameterized provider fakes, POSIX filesystem race regressions, full Python 3.12 validation, real attached Docker regressions, and a fresh isolated-wheel installation.
+
+Remote result and run listing now use the configured S3 namespace without receipts, Modal inspection, an index, or a database. Result interpretation starts with `S3Store.read_run_state`, validates terminal/admission/request/plan/storage binding, parses the bound native Harbor result for the standard reward, and keeps stable unknown, nonterminal, terminal, and conflict output plus exits. Remote listing paginates the complete configured `runs/` namespace, accepts only exact admission/request/event/terminal layouts, deduplicates valid run IDs, and surfaces every malformed key in sorted order.
+
+Artifact pull deliberately admits only successful bound terminals. It validates the complete logical inventory before creating output, then roots all writes in opened no-follow directory descriptors, verifies parent/destination/nested identities, uses exclusive no-follow file creation, enforces directory `0700` and file `0600`, and rejects traversal, duplicates, prefix conflicts, corruption, replacements, symlinks, and injected content. A created destination is never deleted. Failed and cancelled inventories remain visible through `result` rather than materializable. Read and pull paths use no provider delete operation. Cancellation now confirms before constructing provider services; JSON cancellation requires `--yes`.
+
+E-052 passed with 415 tests, including both real Docker paths, plus Ruff check/format, ty, `uv lock --check`, wheel/sdist build, `git diff --check`, and fresh installed-wheel root/result/runs/artifacts/cancel help and import/version checks. The suite emitted only the existing Harbor checksum deprecation and pytest cleanup warnings from deliberately retained replacement-race evidence.
+
+## 2026-08-29T06:37:02-07:00: Remote authority and extraction correction
+
+Provenance: user-provided review findings, local Python 3.12 provider/filesystem regressions, full validation, real attached Docker execution, and a fresh isolated-wheel installation.
+
+Terminal request, plan, run, and configured-storage validation no longer depends on an admission record. Admission validation composes with the same authoritative validator and adds its expected plan digest. Result, artifact pull, status, and terminal recovery retain conflict reporting through that shared path; absent-admission wrong-storage terminals now fail closed.
+
+Artifact pull shares the controller's default 10,000-file, 64-MiB-per-file, and 1-GiB-total policy and preflights every limit before destination reservation. S3 bodies stream directly into exclusive destination descriptors while hashing and counting, with no pull-side `read_content` buffering. Verified files and every created directory entry are fsynced in durability order. Corrupt partial private evidence is retained and receives best-effort fsync without masking its original exception. Paginated listing rejects malformed truncation state and missing, non-string, or repeated continuation tokens.
+
+E-053 passed with 433 tests, including both real Docker paths. Ruff check/format, ty, `uv lock --check`, wheel/sdist build, and `git diff --check` passed. A fresh isolated wheel passed root/result/runs/artifact CLI help, completed the real Docker fixture with reward `1.0`, and retained exact-`0700` native evidence after installed-CLI SIGINT exit 130. The full suite emitted only the existing Harbor checksum deprecation and deliberate retained-evidence cleanup warnings.
+
+## 2026-08-29T06:47:46-07:00: Response-body and artifact-fd cleanup correction
+
+Provenance: user-provided P2 findings, local Python 3.12 close-spy and fsync-failure regressions, full validation, real attached-Docker tests, and a fresh isolated-wheel installation.
+
+S3 GET response validation, direct streaming, and final digest/length checks now share one body cleanup guard. Rejected metadata closes an available body, and a simultaneous close failure cannot replace the original validation or streaming exception. Artifact writing enters its failure-state guard immediately after exclusive file creation, before parent fsync. Parent-fsync and later failures attempt file and parent durability plus descriptor close without masking the first exception; successful materialization still requires successful close. D-060 records the lifecycle contract.
+
+E-054 passed with 438 tests, including both real Docker paths. Ruff check/format, ty, `uv lock --check`, wheel/sdist build, and `git diff --check` passed. A fresh isolated wheel passed version, root/result/runs/artifact help, import, and distribution-metadata smoke checks. The suite emitted only the existing Harbor checksum deprecation and deliberate retained-evidence cleanup warnings. No provider call occurred.
+
+## 2026-08-29T06:56:31-07:00: Artifact directory descriptor cleanup correction
+
+Provenance: user-provided lifecycle finding, local Python 3.12 fault-injection regressions, full validation, real attached-Docker tests, and a fresh isolated-wheel installation.
+
+Artifact pull now registers every successfully opened parent-anchor, destination-root, and nested-directory descriptor with one cleanup owner before fchmod, fsync, fstat, or type/identity validation. Failure unwind best-effort fsyncs all acquired artifact directories and their parent, then closes each descriptor once. Durability and close failures remain suppressed only while another exception is active, so they cannot replace the setup failure.
+
+E-055 passed with 446 tests, including both real Docker paths. The root/nested regression matrix injects fchmod, fsync, fstat, and type-validation failures while close itself also fails after releasing the descriptor; every case retains the first exception, records one close, and proves the descriptor is closed. Ruff check/format, ty, `uv lock --check`, wheel/sdist build, `git diff --check`, and a fresh isolated-wheel version/root/result/runs/artifact-help plus import/metadata smoke passed. No provider call occurred.
+
+## 2026-08-29T06:58:07-07:00: Directory-close wording correction
+
+Provenance: immediate local review of the preceding append-only entry against the implemented cleanup path.
+
+The preceding statement that close failures are suppressed only while another exception is active is too narrow. Artifact directory closure is unconditionally best effort on both success and failure. The proven failure-path claim is that a close error cannot replace the original setup exception.
+
+## 2026-08-29T07:05:22-07:00: Artifact final-mode trust-boundary correction
+
+Provenance: user-provided final mode finding, local Python 3.12 mode-race regressions, full validation, and fresh isolated-wheel inspection.
+
+This entry corrects earlier artifact-pull wording where private-tree and fail-closed claims could imply isolation from a malicious process running as the same UID. Tetrabench's enforceable boundary is descriptor-rooted exclusive no-follow creation and pathname/symlink overwrite defense. Artifact finalization now reapplies exact `0600` to each file and exact `0700` to each destination directory, then checks retained type, identity, and exact mode through `fstat` before final fsync/close. Failure unwind attempts the same restoration for safely retained partial evidence without replacing its original error. A same-UID process remains authoritative and may mutate the tree during or after pull; post-return immutability is not promised. D-062 records the correction.
+
+E-056 passed with 449 tests, including both real Docker paths and regressions for mid-pull root/directory/file widening, corrupt partial-evidence restoration, and post-`fchmod` mode-change rejection. Ruff check/format, ty, `uv lock --check`, wheel/sdist build, `git diff --check`, and a fresh isolated-wheel version/artifact-help plus import/metadata smoke passed. No provider call occurred.

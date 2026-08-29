@@ -18,6 +18,7 @@ from typing import BinaryIO, Literal, Protocol
 
 from harbor.models.trajectories import Trajectory
 
+from tetrabench.artifact_policy import ArtifactLimits
 from tetrabench.canonical_json import dumps_canonical_json, sha256_hex
 from tetrabench.controller import (
     ControllerAdmissionService,
@@ -45,10 +46,6 @@ from tetrabench.records import (
 CONTROLLER_ROOT = Path("/tetrabench/controller")
 HARBOR_VERSION = "0.22.0"
 MODAL_VERSION = "1.5.4"
-DEFAULT_MAX_ARTIFACT_FILES = 10_000
-DEFAULT_MAX_ARTIFACT_FILE_BYTES = 64 * 1024 * 1024
-DEFAULT_MAX_ARTIFACT_TOTAL_BYTES = 1024 * 1024 * 1024
-
 _CREDENTIAL_ENVIRONMENT_NAMES = frozenset(
     {
         "AWS_ACCESS_KEY_ID",
@@ -167,15 +164,7 @@ class HarborRunnerProtocol(Protocol):
     ) -> HarborRunResult: ...
 
 
-@dataclass(frozen=True, slots=True)
-class ArtifactCollectionLimits:
-    max_files: int = DEFAULT_MAX_ARTIFACT_FILES
-    max_file_bytes: int = DEFAULT_MAX_ARTIFACT_FILE_BYTES
-    max_total_bytes: int = DEFAULT_MAX_ARTIFACT_TOTAL_BYTES
-
-    def __post_init__(self) -> None:
-        if min(self.max_files, self.max_file_bytes, self.max_total_bytes) <= 0:
-            raise ValueError("artifact collection limits must be positive")
+ArtifactCollectionLimits = ArtifactLimits
 
 
 @dataclass(frozen=True, slots=True)

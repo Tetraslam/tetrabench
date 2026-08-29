@@ -107,8 +107,13 @@ uv run tetrabench recover RUN_ID --yes --json
 uv run tetrabench status RUN_ID
 uv run tetrabench status RUN_ID --json
 uv run tetrabench cancel RUN_ID
+uv run tetrabench cancel RUN_ID --yes --json
+uv run tetrabench result RUN_ID --profile PROFILE
+uv run tetrabench result RUN_ID --profile PROFILE --json
 uv run tetrabench runs
 uv run tetrabench runs --json
+uv run tetrabench runs --remote --profile PROFILE
+uv run tetrabench artifacts pull RUN_ID OUTPUT_DIR --profile PROFILE
 ```
 
 Human output uses Rich. `--json` writes one RFC 8785 canonical JSON document,
@@ -182,10 +187,53 @@ The controller preserves a cancelling admission instead of replacing it with
 failed when provider shutdown interrupts its exception path. Cancellation polls
 the owner for up to ten seconds and can be resumed safely if provider shutdown
 takes longer.
+`cancel` asks for confirmation before constructing an S3 or Modal client.
+`--yes` skips the prompt. `cancel --json` requires `--yes` and otherwise exits
+without provider construction or mutation.
 Modal API, authentication, and other inspection failures do not prove that the
 owner call stopped. Terminal proof can be published only by the exact owner
 while admission is running or cancelling, after revalidating the immutable
 request and all run/request/plan bindings.
+
+## Remote results and artifacts
+
+`result` reads the selected AWS or Tigris profile directly. It requires no
+local receipt and constructs no Modal client. The report distinguishes
+`unknown`, `nonterminal`, `terminal`, and `conflict`, validates terminal,
+admission, request, plan, and storage bindings, and shows outcome, standard
+reward when the native Harbor result provides one, and the complete terminal
+inventory. Unknown exits 4, conflict exits 3, and failed or cancelled authority
+exits 1. Successful and still-running states exit 0.
+
+`runs` retains local receipt listing by default. `runs --remote --profile
+PROFILE` paginates the configured `runs/` prefix, derives unique run IDs only
+from valid admission, request, event, and terminal keys, then reads each run
+through the same authoritative result path. Malformed keys are reported in
+sorted order and make the command exit 3. There is no remote index or database.
+
+`artifacts pull` accepts one successful bound terminal. Failed and cancelled
+terminals remain inspectable through `result` but are not materialized. Pull
+validates the whole logical inventory and the shared controller/receiver limits
+before reserving an absent destination. The defaults admit at most 10,000 files,
+64 MiB per file, and 1 GiB total. Each content-addressed object streams directly
+from S3 to its exclusive destination descriptor while tetrabench hashes and
+counts it; pull has no whole-object buffering path. Digest and size must verify
+before the file is fsynced and successfully closed. Every acquired S3 response
+body is closed, including when response metadata or streamed bytes are rejected.
+The destination and each nested directory are created at exact `0700`; files
+are exclusively created and immediately set to exact `0600`. Finalization
+reapplies `0600` to every file and `0700` to every directory through held or
+no-follow descriptors, verifies exact type, identity, and mode with `fstat`, then
+fsyncs and closes. Materialization uses no-follow, exclusive,
+directory-FD-relative operations rooted in the opened destination, so pathname
+replacement or a symlink cannot redirect writes outside that tree. Traversal,
+duplicate or prefix conflicts, corruption, and detected replacement or injected
+content abort the pull. Partial evidence receives the same mode restoration and
+fsync on a best-effort basis without masking the original failure. The reserved
+directory is retained on every failure. A process with the same UID remains
+authoritative over these files and can mutate them during or after the pull;
+tetrabench does not claim isolation from that actor or post-return immutability.
+Remote result, listing, and pull paths never call provider delete.
 
 ## Verified local Harbor fixture
 

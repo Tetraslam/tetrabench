@@ -15,6 +15,11 @@ from rich.console import Console
 from rich.table import Table
 
 from tetrabench import __version__
+from tetrabench.artifacts import (
+    ArtifactDestinationExistsError,
+    ArtifactPullRefusedError,
+    ArtifactPullService,
+)
 from tetrabench.canonical_json import dumps_canonical_json
 from tetrabench.catalog import SectionName, get_section, load_catalog, select_tasks
 from tetrabench.config import load_project_config
@@ -37,9 +42,12 @@ from tetrabench.modal_app import (
 )
 from tetrabench.plan import canonical_model_bytes, plan_digest, resolve_plan
 from tetrabench.receipts import ReceiptConflictError, ReceiptStore
+from tetrabench.remote import RemoteResult, RemoteResultService
 from tetrabench.s3 import (
     CoordinationTopology,
     S3CasConflictError,
+    S3ConflictError,
+    S3IntegrityError,
     UnsafeCoordinationTopologyError,
     create_s3_store,
 )
@@ -55,7 +63,9 @@ app = typer.Typer(
     no_args_is_help=True,
 )
 controller_app = typer.Typer(no_args_is_help=True)
+artifacts_app = typer.Typer(no_args_is_help=True)
 app.add_typer(controller_app, name="controller")
+app.add_typer(artifacts_app, name="artifacts")
 out = Console()
 err = Console(stderr=True)
 
@@ -653,12 +663,21 @@ def _cancellation_service(profile: str | None) -> CancellationService:
 def cancel(
     run_id: str,
     profile: Annotated[str | None, typer.Option(help="User profile name.")] = None,
+    yes: Annotated[
+        bool,
+        typer.Option("--yes", help="Cancel without an interactive confirmation."),
+    ] = False,
     json_output: Annotated[
         bool,
         typer.Option("--json", help="Emit canonical JSON to stdout."),
     ] = False,
 ) -> None:
     """CAS-cancel runs and clean profile-scoped Harbor Modal children."""
+    if json_output and not yes:
+        _fail_command(ValueError("cancel --json requires --yes"), json_output=True)
+    if not yes and not typer.confirm(f"Cancel run {run_id}?", default=False):
+        err.print("cancellation declined; no cloud mutation attempted")
+        raise typer.Exit(1)
     try:
         result = _cancellation_service(profile).cancel(run_id)
     except (
@@ -684,14 +703,164 @@ def cancel(
         raise typer.Exit(3)
 
 
+def _remote_result_service(profile: str | None) -> RemoteResultService:
+    config = load_project_config(Path.cwd(), profile=profile)
+    if config.storage is None:
+        raise ValueError("remote reads require storage configuration")
+    return RemoteResultService(create_s3_store(config.storage))
+
+
+def _result_exit(report: RemoteResult) -> int:
+    if report.state == "conflict":
+        return 3
+    if report.state == "unknown":
+        return 4
+    if report.outcome in {"failed", "cancelled"} or report.admission_state in {
+        "failed",
+        "cancelled",
+    }:
+        return 1
+    return 0
+
+
 @app.command()
-def runs(
+def result(
+    run_id: str,
+    profile: Annotated[str, typer.Option(help="Remote storage profile name.")],
     json_output: Annotated[
         bool,
         typer.Option("--json", help="Emit canonical JSON to stdout."),
     ] = False,
 ) -> None:
-    """List local recovery receipts without claiming durable run authority."""
+    """Read one authoritative remote run result without local receipts."""
+    try:
+        report = _remote_result_service(profile).result(run_id)
+    except (
+        BotoCoreError,
+        ClientError,
+        OSError,
+        S3ConflictError,
+        S3IntegrityError,
+        ValueError,
+        ValidationError,
+    ) as error:
+        _fail_command(error, json_output=json_output)
+    if json_output:
+        typer.echo(canonical_model_bytes(report).decode("utf-8"))
+    else:
+        out.print(f"[bold]Run:[/bold] {report.run_id}")
+        out.print(f"[bold]State:[/bold] {report.state}")
+        if report.admission_state is not None:
+            out.print(f"[bold]Admission:[/bold] {report.admission_state}")
+        if report.outcome is not None:
+            out.print(f"[bold]Outcome:[/bold] {report.outcome}")
+            out.print(f"[bold]Reward:[/bold] {report.reward or 'unavailable'}")
+        if report.artifacts:
+            table = Table("Artifact", "Bytes", "SHA-256", "Media type")
+            for artifact in report.artifacts:
+                table.add_row(
+                    artifact.logical_path,
+                    str(artifact.size),
+                    artifact.sha256,
+                    artifact.media_type,
+                )
+            out.print(table)
+        for reason in report.reasons:
+            err.print(f"[red]conflict:[/red] {reason}")
+    exit_code = _result_exit(report)
+    if exit_code:
+        raise typer.Exit(exit_code)
+
+
+@artifacts_app.command("pull")
+def artifacts_pull(
+    run_id: str,
+    output_dir: Path,
+    profile: Annotated[str, typer.Option(help="Remote storage profile name.")],
+    json_output: Annotated[
+        bool,
+        typer.Option("--json", help="Emit canonical JSON to stdout."),
+    ] = False,
+) -> None:
+    """Pull one successful terminal inventory into a new private directory."""
+    try:
+        config = load_project_config(Path.cwd(), profile=profile)
+        if config.storage is None:
+            raise ValueError("artifact pull requires storage configuration")
+        report = ArtifactPullService(create_s3_store(config.storage)).pull(
+            run_id, output_dir
+        )
+    except (
+        ArtifactDestinationExistsError,
+        ArtifactPullRefusedError,
+        BotoCoreError,
+        ClientError,
+        OSError,
+        S3IntegrityError,
+        ValueError,
+        ValidationError,
+    ) as error:
+        _fail_command(error, json_output=json_output)
+    if json_output:
+        typer.echo(canonical_model_bytes(report).decode("utf-8"))
+    else:
+        out.print(f"[green]pulled[/green] {len(report.artifacts)} artifacts")
+        out.print(f"[bold]Run:[/bold] {report.run_id}")
+        out.print(f"[bold]Output:[/bold] {report.output_directory}")
+
+
+@app.command()
+def runs(
+    remote: Annotated[
+        bool,
+        typer.Option("--remote", help="List authoritative remote run records."),
+    ] = False,
+    profile: Annotated[
+        str | None, typer.Option(help="Remote storage profile name.")
+    ] = None,
+    json_output: Annotated[
+        bool,
+        typer.Option("--json", help="Emit canonical JSON to stdout."),
+    ] = False,
+) -> None:
+    """List local receipts, or authoritative remote records with --remote."""
+    if remote:
+        if profile is None:
+            _fail_command(
+                ValueError("runs --remote requires --profile"),
+                json_output=json_output,
+            )
+        try:
+            report = _remote_result_service(profile).runs()
+        except (
+            BotoCoreError,
+            ClientError,
+            OSError,
+            S3IntegrityError,
+            ValueError,
+            ValidationError,
+        ) as error:
+            _fail_command(error, json_output=json_output)
+        if json_output:
+            typer.echo(canonical_model_bytes(report).decode("utf-8"))
+        else:
+            table = Table("Run", "State", "Admission", "Outcome", "Reward")
+            for item in report.runs:
+                table.add_row(
+                    item.run_id,
+                    item.state,
+                    item.admission_state or "-",
+                    item.outcome or "-",
+                    item.reward or "-",
+                )
+            out.print(table)
+            for item in report.malformed_keys:
+                err.print(f"[red]malformed key:[/red] {item.key}: {item.reason}")
+        if report.malformed_keys or any(
+            item.state == "conflict" for item in report.runs
+        ):
+            raise typer.Exit(3)
+        return
     try:
         receipts = ReceiptStore().list()
     except (OSError, ValueError, ValidationError) as error:

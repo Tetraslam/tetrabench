@@ -74,6 +74,33 @@ class _ChunkTrackedBody(io.BytesIO):
         return super().read(size)
 
 
+class _CloseSpyBody:
+    def __init__(
+        self,
+        data: bytes,
+        *,
+        read_error: BaseException | None = None,
+        close_error: BaseException | None = None,
+    ) -> None:
+        self._stream = io.BytesIO(data)
+        self._read_error = read_error
+        self._close_error = close_error
+        self.close_attempts = 0
+        self.closed = False
+
+    def read(self, size: int = -1) -> bytes:
+        if self._read_error is not None:
+            raise self._read_error
+        return self._stream.read(size)
+
+    def close(self) -> None:
+        self.close_attempts += 1
+        if self._close_error is not None:
+            raise self._close_error
+        self.closed = True
+        self._stream.close()
+
+
 class FakeS3Client:
     """One deterministic in-memory implementation of the used boto3 surface."""
 
@@ -1147,6 +1174,80 @@ def test_existing_get_lag_is_retried_without_duplicate_put(
     assert sum(operation[0] == "put" for operation in client.operations) == puts_before
 
 
+def test_content_streams_directly_to_destination_fd(
+    store: tuple[S3Store, FakeS3Client],
+    tmp_path: Path,
+) -> None:
+    s3, client = store
+    data = b"streamed-content"
+    descriptor = s3.publish_content(data)
+    client.read_sizes.clear()
+    destination = tmp_path / "content"
+    fd = os.open(destination, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    try:
+        s3.stream_content_to_fd(descriptor, fd)
+    finally:
+        os.close(fd)
+
+    assert destination.read_bytes() == data
+    assert client.read_sizes
+    assert all(size <= descriptor.size + 1 for size in client.read_sizes)
+
+
+def test_content_stream_closes_body_when_metadata_is_rejected(
+    store: tuple[S3Store, FakeS3Client],
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    s3, client = store
+    descriptor = s3.publish_content(b"content")
+    response = dict(
+        client.get_object(Bucket="bucket", Key=descriptor.key, ChecksumMode="ENABLED")
+    )
+    body = _CloseSpyBody(b"content")
+    response["Body"] = body
+    response["Metadata"] = {"sha256": "f" * 64}
+    monkeypatch.setattr(client, "get_object", lambda **_kwargs: response)
+    fd = os.open(tmp_path / "content", os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    try:
+        with pytest.raises(S3IntegrityError, match="metadata"):
+            s3.stream_content_to_fd(descriptor, fd)
+    finally:
+        os.close(fd)
+
+    assert body.close_attempts == 1
+    assert body.closed
+
+
+def test_content_stream_preserves_read_error_when_body_close_fails(
+    store: tuple[S3Store, FakeS3Client],
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    s3, client = store
+    descriptor = s3.publish_content(b"content")
+    response = dict(
+        client.get_object(Bucket="bucket", Key=descriptor.key, ChecksumMode="ENABLED")
+    )
+    read_error = OSError("read failed")
+    body = _CloseSpyBody(
+        b"content",
+        read_error=read_error,
+        close_error=OSError("close failed"),
+    )
+    response["Body"] = body
+    monkeypatch.setattr(client, "get_object", lambda **_kwargs: response)
+    fd = os.open(tmp_path / "content", os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    try:
+        with pytest.raises(OSError) as caught:
+            s3.stream_content_to_fd(descriptor, fd)
+    finally:
+        os.close(fd)
+
+    assert caught.value is read_error
+    assert body.close_attempts == 1
+
+
 def test_paginated_run_listing_covers_every_record_prefix(
     store: tuple[S3Store, FakeS3Client],
 ) -> None:
@@ -1170,6 +1271,112 @@ def test_paginated_run_listing_covers_every_record_prefix(
 
     assert isinstance(state, UnknownRunState)
     assert client.list_calls == 4
+
+
+def test_remote_run_discovery_paginates_authoritative_keys_and_deduplicates(
+    store: tuple[S3Store, FakeS3Client],
+) -> None:
+    s3, client = store
+    digest = "a" * 64
+    for key in (
+        request_key("run-1", digest, prefix="tenant/v1"),
+        event_key("run-1", "attempt-1", 1, digest, prefix="tenant/v1"),
+        terminal_key("run-2", digest, prefix="tenant/v1"),
+        admission_key("run-2", prefix="tenant/v1"),
+    ):
+        client.seed(key, b"record")
+    client.page_size = 1
+    client.list_calls = 0
+
+    discovery = s3.discover_runs()
+
+    assert discovery.run_ids == ("run-1", "run-2")
+    assert discovery.malformed_keys == ()
+    assert client.list_calls == 4
+
+
+@pytest.mark.parametrize(
+    "response",
+    [
+        {"Contents": (), "IsTruncated": True},
+        {
+            "Contents": (),
+            "IsTruncated": True,
+            "NextContinuationToken": 1,
+        },
+    ],
+)
+def test_truncated_listing_rejects_missing_or_non_string_token(
+    store: tuple[S3Store, FakeS3Client],
+    monkeypatch: pytest.MonkeyPatch,
+    response: dict[str, object],
+) -> None:
+    s3, client = store
+    monkeypatch.setattr(client, "list_objects_v2", lambda **_kwargs: response)
+
+    with pytest.raises(S3IntegrityError, match="continuation token"):
+        s3.discover_runs()
+
+
+def test_truncated_listing_rejects_repeated_token(
+    store: tuple[S3Store, FakeS3Client],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    s3, client = store
+    responses = iter(
+        (
+            {
+                "Contents": (),
+                "IsTruncated": True,
+                "NextContinuationToken": "same",
+            },
+            {
+                "Contents": (),
+                "IsTruncated": True,
+                "NextContinuationToken": "same",
+            },
+        )
+    )
+    monkeypatch.setattr(client, "list_objects_v2", lambda **_kwargs: next(responses))
+
+    with pytest.raises(S3IntegrityError, match="repeated continuation token"):
+        s3.discover_runs()
+
+
+def test_listing_rejects_non_boolean_truncation_state(
+    store: tuple[S3Store, FakeS3Client],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    s3, client = store
+    monkeypatch.setattr(
+        client,
+        "list_objects_v2",
+        lambda **_kwargs: {"Contents": (), "IsTruncated": 0},
+    )
+
+    with pytest.raises(S3IntegrityError, match="truncation state"):
+        s3.discover_runs()
+
+
+def test_remote_run_discovery_surfaces_every_malformed_key_deterministically(
+    store: tuple[S3Store, FakeS3Client],
+) -> None:
+    s3, client = store
+    keys = (
+        "tenant/v1/runs/Bad!/admission.json",
+        "tenant/v1/runs/run-1/other.json",
+        "tenant/v1/runs/run-1/requests/not-a-digest.json",
+        "tenant/v1/runs/run-1/events/attempt-1/1-" + "a" * 64 + ".json",
+    )
+    for key in reversed(keys):
+        client.seed(key, b"record")
+    client.page_size = 2
+
+    discovery = s3.discover_runs()
+
+    assert discovery.run_ids == ()
+    assert tuple(item.key for item in discovery.malformed_keys) == tuple(sorted(keys))
+    assert all(item.reason for item in discovery.malformed_keys)
 
 
 def test_managed_multipart_ignores_composite_checksum_but_verifies_bytes(

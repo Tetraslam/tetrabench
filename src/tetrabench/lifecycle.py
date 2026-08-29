@@ -9,7 +9,7 @@ from typing import Literal, Protocol
 from tetrabench.canonical_json import sha256_hex
 from tetrabench.controller import ControllerCallState, DetachedControllerClient
 from tetrabench.models import FrozenRecord, NonEmptyString, ResolvedStorageConfig
-from tetrabench.plan import canonical_model_bytes
+from tetrabench.plan import canonical_model_bytes, plan_digest
 from tetrabench.receipts import ReceiptStore
 from tetrabench.records import (
     AdmissionRecord,
@@ -31,17 +31,18 @@ from tetrabench.s3 import (
 from tetrabench.storage import request_key
 
 
-class LifecycleStore(Protocol):
+class BindingStore(Protocol):
     @property
     def storage(self) -> ResolvedStorageConfig: ...
-
-    def require_coordination_safe(self) -> CoordinationTopology: ...
-
-    def read_run_state(self, run_id: str) -> RunReadState: ...
-
     def read_request(
         self, run_id: str, request_sha256: str, request_object_key: str
     ) -> RequestRecord: ...
+
+
+class LifecycleStore(BindingStore, Protocol):
+    def require_coordination_safe(self) -> CoordinationTopology: ...
+
+    def read_run_state(self, run_id: str) -> RunReadState: ...
 
     def read_admission(self, run_id: str) -> AdmissionRead | None: ...
 
@@ -54,31 +55,53 @@ class ActiveAdmissionBindingError(RuntimeError):
     """An active admission is not bound to its immutable request and storage."""
 
 
-def _validate_admission_request_binding(
-    store: LifecycleStore,
+class AuthoritativeBindingError(RuntimeError):
+    """A terminal or request does not bind its canonical plan and storage."""
+
+
+def validate_request_plan_storage_binding(
+    store: BindingStore,
+    *,
+    run_id: str,
+    request_sha256: str,
+    plan_sha256: str | None = None,
+) -> RequestRecord:
+    """Validate canonical request, plan, run, and configured storage authority."""
+    storage = store.storage
+    request = store.read_request(
+        run_id,
+        request_sha256,
+        request_key(run_id, request_sha256, prefix=storage.prefix),
+    )
+    if sha256_hex(canonical_model_bytes(request)) != request_sha256:
+        raise AuthoritativeBindingError("request canonical digest does not match")
+    if request.run_id != run_id:
+        raise AuthoritativeBindingError("request run ID does not match")
+    if plan_digest(request.plan) != request.plan_sha256:
+        raise AuthoritativeBindingError("request plan digest does not match")
+    if plan_sha256 is not None and request.plan_sha256 != plan_sha256:
+        raise AuthoritativeBindingError("referenced plan digest does not match")
+    if request.plan.storage != storage:
+        raise AuthoritativeBindingError("request plan storage does not match")
+    return request
+
+
+def validate_admission_request_binding(
+    store: BindingStore,
     admission: AdmissionRecord,
 ) -> RequestRecord:
     """Read and validate the immutable authority bound by an admission."""
-    storage = store.storage
-    request = store.read_request(
-        admission.run_id,
-        admission.request_sha256,
-        request_key(
-            admission.run_id,
-            admission.request_sha256,
-            prefix=storage.prefix,
-        ),
-    )
-    if (
-        sha256_hex(canonical_model_bytes(request)) != admission.request_sha256
-        or request.run_id != admission.run_id
-        or request.plan_sha256 != admission.plan_sha256
-        or request.plan.storage != storage
-    ):
+    try:
+        return validate_request_plan_storage_binding(
+            store,
+            run_id=admission.run_id,
+            request_sha256=admission.request_sha256,
+            plan_sha256=admission.plan_sha256,
+        )
+    except AuthoritativeBindingError as error:
         raise ActiveAdmissionBindingError(
             "active admission does not match its immutable request, plan, and storage"
-        )
-    return request
+        ) from error
 
 
 def validate_active_admission(
@@ -94,20 +117,34 @@ def validate_active_admission(
         "failed",
     }:
         raise ValueError("active admission validation requires an active state")
-    return _validate_admission_request_binding(store, admission)
+    return validate_admission_request_binding(store, admission)
 
 
-def _terminal_admission_conflicts(
-    store: LifecycleStore,
+def terminal_admission_conflicts(
+    store: BindingStore,
     terminal: TerminalRunState,
     admission: AdmissionRecord | None,
 ) -> tuple[str, ...]:
-    """Return the status/recovery conflicts for terminal cleanup authority."""
-    if admission is None:
-        return ()
+    """Return binding conflicts for one authoritative terminal observation."""
     reasons: list[str] = []
     try:
-        _validate_admission_request_binding(store, admission)
+        validate_request_plan_storage_binding(
+            store,
+            run_id=terminal.run_id,
+            request_sha256=terminal.terminal.request_sha256,
+        )
+    except (
+        AuthoritativeBindingError,
+        OSError,
+        S3IntegrityError,
+        TypeError,
+        ValueError,
+    ) as error:
+        reasons.append(f"invalid terminal binding: {error}")
+    if admission is None:
+        return tuple(reasons)
+    try:
+        validate_admission_request_binding(store, admission)
     except (
         ActiveAdmissionBindingError,
         OSError,
@@ -204,7 +241,7 @@ class StatusService:
         admission = admission_read.record if admission_read is not None else None
         if isinstance(durable, TerminalRunState):
             conflict_reasons.extend(
-                _terminal_admission_conflicts(self._store, durable, admission)
+                terminal_admission_conflicts(self._store, durable, admission)
             )
         elif admission is not None and admission.state in {
             "prepared",
@@ -563,7 +600,7 @@ class RecoveryService:
         self, run_id: str, terminal: TerminalRunState
     ) -> RecoveryResult:
         current = self._store.read_admission(run_id)
-        conflicts = _terminal_admission_conflicts(
+        conflicts = terminal_admission_conflicts(
             self._store,
             terminal,
             current.record if current is not None else None,

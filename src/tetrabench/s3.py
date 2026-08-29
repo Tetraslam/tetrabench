@@ -12,7 +12,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from functools import lru_cache
 from pathlib import Path
-from typing import Any, BinaryIO, Literal, Protocol, cast
+from typing import TYPE_CHECKING, Any, BinaryIO, Literal, Protocol, cast
 
 import boto3
 from boto3.s3.transfer import TransferConfig
@@ -47,6 +47,9 @@ from tetrabench.storage import (
     terminal_key,
     validate_s3_key,
 )
+
+if TYPE_CHECKING:
+    from tetrabench.remote import RemoteRunDiscovery
 
 type StorageConfig = (
     AwsStorageConfig
@@ -522,6 +525,21 @@ class S3Store:
         assert isinstance(data, bytes)
         return data
 
+    def stream_content_to_fd(self, descriptor: ContentObject, fd: int) -> None:
+        """Stream verified content directly into an already-exclusive file fd."""
+        expected_key = content_object_key(descriptor.sha256, prefix=self._prefix)
+        if descriptor.key != expected_key:
+            raise S3IntegrityError("content object is outside the configured namespace")
+        self._read_verified_object(
+            descriptor.key,
+            sha256=descriptor.sha256,
+            size=descriptor.size,
+            media_type=descriptor.media_type,
+            exact_service_checksum=False,
+            collect=False,
+            destination_fd=fd,
+        )
+
     def publish_request(self, request: RequestRecord) -> str:
         """Publish first, then discover visible request conflicts boundedly."""
         for item in request.context_manifest.files:
@@ -771,6 +789,63 @@ class S3Store:
         ]
         return tuple(sorted(events, key=lambda item: (item.attempt_id, item.sequence)))
 
+    def discover_runs(self) -> RemoteRunDiscovery:
+        """Paginate the configured run namespace and validate every record key."""
+        from tetrabench.remote import MalformedRemoteKey, RemoteRunDiscovery
+
+        namespace = f"{self._prefix}/runs/" if self._prefix else "runs/"
+        run_ids: set[str] = set()
+        malformed: list[MalformedRemoteKey] = []
+        for key in self._list_keys(namespace):
+            try:
+                run_ids.add(self._run_id_from_authoritative_key(key, namespace))
+            except ValueError as error:
+                malformed.append(MalformedRemoteKey(key=key, reason=str(error)))
+        return RemoteRunDiscovery(
+            run_ids=tuple(sorted(run_ids)),
+            malformed_keys=tuple(sorted(malformed, key=lambda item: item.key)),
+        )
+
+    def _run_id_from_authoritative_key(self, key: str, namespace: str) -> str:
+        if not key.startswith(namespace):
+            raise ValueError("object key is outside the configured run namespace")
+        suffix = key[len(namespace) :]
+        parts = suffix.split("/")
+        if len(parts) < 2:
+            raise ValueError("run record key does not match an authoritative layout")
+        run_id = validate_run_id(parts[0])
+        expected: str | None = None
+        if len(parts) == 2 and parts[1] == "admission.json":
+            expected = admission_key(run_id, prefix=self._prefix)
+        elif len(parts) == 3 and parts[1] in {"requests", "terminals"}:
+            filename = parts[2]
+            if not filename.endswith(".json"):
+                raise ValueError("immutable run record key must end in .json")
+            digest = filename.removesuffix(".json")
+            expected = (
+                request_key(run_id, digest, prefix=self._prefix)
+                if parts[1] == "requests"
+                else terminal_key(run_id, digest, prefix=self._prefix)
+            )
+        elif len(parts) == 4 and parts[1] == "events":
+            attempt_id = parts[2]
+            filename = parts[3]
+            sequence_text, separator, digest_json = filename.partition("-")
+            if not separator or not digest_json.endswith(".json"):
+                raise ValueError("event key does not match the authoritative layout")
+            if len(sequence_text) != 16 or not sequence_text.isdecimal():
+                raise ValueError("event key does not contain a canonical sequence")
+            expected = event_key(
+                run_id,
+                attempt_id,
+                int(sequence_text),
+                digest_json.removesuffix(".json"),
+                prefix=self._prefix,
+            )
+        if expected is None or expected != key:
+            raise ValueError("run record key does not match an authoritative layout")
+        return run_id
+
     def _publish_managed_file(
         self, stream: BinaryIO, descriptor: ContentObject
     ) -> None:
@@ -927,6 +1002,7 @@ class S3Store:
         max_size: int | None = None,
         exact_service_checksum: bool,
         collect: bool = True,
+        destination_fd: int | None = None,
     ) -> bytes:
         response: Mapping[str, Any] | None = None
         last_error: ClientError | None = None
@@ -947,22 +1023,24 @@ class S3Store:
         if response is None:
             assert last_error is not None
             raise last_error
-        self._validate_object_response(
-            response,
-            key=key,
-            sha256=sha256,
-            size=size,
-            media_type=media_type,
-            exact_service_checksum=exact_service_checksum,
-        )
         body = response.get("Body")
-        if not hasattr(body, "read"):
-            raise S3IntegrityError(f"stored object body is not readable: {key}")
-        digest = hashlib.sha256()
-        chunks: list[bytes] = []
-        read_size = 0
-        limit = size if size is not None else max_size
+        close = getattr(body, "close", None)
+        failed = True
         try:
+            self._validate_object_response(
+                response,
+                key=key,
+                sha256=sha256,
+                size=size,
+                media_type=media_type,
+                exact_service_checksum=exact_service_checksum,
+            )
+            if not hasattr(body, "read"):
+                raise S3IntegrityError(f"stored object body is not readable: {key}")
+            digest = hashlib.sha256()
+            chunks: list[bytes] = []
+            read_size = 0
+            limit = size if size is not None else max_size
             while True:
                 request_size = _READ_CHUNK_SIZE
                 if limit is not None:
@@ -978,21 +1056,33 @@ class S3Store:
                 if limit is not None and read_size > limit:
                     raise S3IntegrityError(f"stored object body is oversized: {key}")
                 digest.update(chunk)
+                if destination_fd is not None:
+                    view = memoryview(chunk)
+                    written = 0
+                    while written < len(view):
+                        count = os.write(destination_fd, view[written:])
+                        if count <= 0:
+                            raise OSError("artifact file write made no progress")
+                        written += count
                 if collect:
                     chunks.append(chunk)
+            if size is not None and read_size != size:
+                raise S3IntegrityError(f"stored content length does not match: {key}")
+            if response.get("ContentLength") != read_size:
+                raise S3IntegrityError(
+                    f"stored body length does not match HEAD data: {key}"
+                )
+            if digest.hexdigest() != sha256:
+                raise S3IntegrityError(f"stored body SHA-256 does not match: {key}")
+            failed = False
+            return b"".join(chunks)
         finally:
-            close = getattr(body, "close", None)
             if callable(close):
-                close()
-        if size is not None and read_size != size:
-            raise S3IntegrityError(f"stored content length does not match: {key}")
-        if response.get("ContentLength") != read_size:
-            raise S3IntegrityError(
-                f"stored body length does not match HEAD data: {key}"
-            )
-        if digest.hexdigest() != sha256:
-            raise S3IntegrityError(f"stored body SHA-256 does not match: {key}")
-        return b"".join(chunks)
+                try:
+                    close()
+                except BaseException:
+                    if not failed:
+                        raise
 
     @staticmethod
     def _validate_object_response(
@@ -1193,6 +1283,7 @@ class S3Store:
     def _list_keys(self, prefix: str) -> list[str]:
         keys: list[str] = []
         continuation_token: str | None = None
+        seen_tokens: set[str] = set()
         while True:
             kwargs: dict[str, Any] = {"Bucket": self._bucket, "Prefix": prefix}
             if continuation_token is not None:
@@ -1207,13 +1298,24 @@ class S3Store:
                 ):
                     raise S3IntegrityError("S3 listing returned an invalid object key")
                 keys.append(item["Key"])
-            if not response.get("IsTruncated", False):
+            truncated = response.get("IsTruncated")
+            if not isinstance(truncated, bool):
+                raise S3IntegrityError("S3 listing returned invalid truncation state")
+            next_token = response.get("NextContinuationToken")
+            if next_token is not None and not isinstance(next_token, str):
+                raise S3IntegrityError(
+                    "S3 listing returned a non-string continuation token"
+                )
+            if not truncated:
                 break
-            continuation_token = response.get("NextContinuationToken")
-            if not isinstance(continuation_token, str) or not continuation_token:
+            if not next_token:
                 raise S3IntegrityError(
                     "truncated S3 listing omitted continuation token"
                 )
+            if next_token == continuation_token or next_token in seen_tokens:
+                raise S3IntegrityError("S3 listing repeated continuation token")
+            seen_tokens.add(next_token)
+            continuation_token = next_token
         return sorted(set(keys))
 
     def _run_prefix(self, run_id: str, record_type: str) -> str:

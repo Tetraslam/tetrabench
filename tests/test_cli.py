@@ -12,10 +12,16 @@ import pytest
 from botocore.exceptions import ClientError
 from typer.testing import CliRunner
 
+from tetrabench.artifacts import ArtifactPullRefusedError, ArtifactPullResult
 from tetrabench.canonical_json import loads_canonical_json
 from tetrabench.cli import app
 from tetrabench.controller_runtime import HarborRunResult
-from tetrabench.lifecycle import RecoveryResult, RunStatus
+from tetrabench.lifecycle import CancellationResult, RecoveryResult, RunStatus
+from tetrabench.remote import (
+    MalformedRemoteKey,
+    RemoteResult,
+    RemoteRunsReport,
+)
 from tetrabench.s3 import S3Store
 
 ROOT = Path(__file__).parents[1]
@@ -880,7 +886,7 @@ def test_running_cancel_refuses_before_cas_without_real_child_observer(
     monkeypatch.setattr(
         "tetrabench.cli._cancellation_service", lambda _profile: Service()
     )
-    result = runner.invoke(app, ["cancel", "run-1"])
+    result = runner.invoke(app, ["cancel", "run-1", "--yes"])
     assert result.exit_code == 2
     assert result.stdout == ""
     assert "child observer" in result.stderr
@@ -901,6 +907,294 @@ def test_runs_json_is_canonical_local_receipt_cache(monkeypatch) -> None:
         "receipts": [],
         "schema_version": 1,
     }
+
+
+@pytest.mark.parametrize(
+    ("report", "exit_code"),
+    [
+        (RemoteResult(run_id="run-1", state="unknown"), 4),
+        (
+            RemoteResult(
+                run_id="run-1",
+                state="nonterminal",
+                admission_state="running",
+            ),
+            0,
+        ),
+        (
+            RemoteResult(
+                run_id="run-1",
+                state="terminal",
+                outcome="succeeded",
+                reward="1.0",
+                terminal_sha256="a" * 64,
+            ),
+            0,
+        ),
+        (
+            RemoteResult(
+                run_id="run-1",
+                state="terminal",
+                outcome="failed",
+                terminal_sha256="a" * 64,
+            ),
+            1,
+        ),
+        (
+            RemoteResult(
+                run_id="run-1",
+                state="terminal",
+                outcome="cancelled",
+                terminal_sha256="a" * 64,
+            ),
+            1,
+        ),
+        (
+            RemoteResult(
+                run_id="run-1",
+                state="conflict",
+                reasons=("multiple terminals",),
+            ),
+            3,
+        ),
+    ],
+)
+def test_result_json_has_stable_states_and_exits(
+    monkeypatch: pytest.MonkeyPatch,
+    report: RemoteResult,
+    exit_code: int,
+) -> None:
+    class Service:
+        @staticmethod
+        def result(_run_id: str) -> RemoteResult:
+            return report
+
+    monkeypatch.setattr(
+        "tetrabench.cli._remote_result_service", lambda _profile: Service()
+    )
+
+    result = runner.invoke(app, ["result", "run-1", "--profile", "fresh", "--json"])
+
+    assert result.exit_code == exit_code
+    assert result.stderr == ""
+    payload = loads_canonical_json(result.stdout.removesuffix("\n").encode())
+    assert isinstance(payload, dict)
+    assert payload["state"] == report.state
+    assert payload["artifacts"] == []
+
+
+def test_result_human_terminal_shows_outcome_reward_and_inventory(monkeypatch) -> None:
+    from tetrabench.remote import RemoteArtifact
+
+    report = RemoteResult(
+        run_id="run-1",
+        state="terminal",
+        outcome="succeeded",
+        reward="0.5",
+        terminal_sha256="a" * 64,
+        artifacts=(
+            RemoteArtifact(
+                logical_path="job/result.json",
+                sha256="b" * 64,
+                size=12,
+                media_type="application/json",
+            ),
+        ),
+    )
+
+    class Service:
+        @staticmethod
+        def result(_run_id: str) -> RemoteResult:
+            return report
+
+    monkeypatch.setattr(
+        "tetrabench.cli._remote_result_service", lambda _profile: Service()
+    )
+
+    result = runner.invoke(app, ["result", "run-1", "--profile", "fresh"])
+
+    assert result.exit_code == 0
+    assert "Outcome: succeeded" in result.stdout
+    assert "Reward: 0.5" in result.stdout
+    assert "job/result.json" in result.stdout
+
+
+def test_runs_remote_surfaces_malformed_keys_and_exits_three(monkeypatch) -> None:
+    malformed = MalformedRemoteKey(key="runs/bad", reason="invalid layout")
+
+    class Service:
+        @staticmethod
+        def runs() -> RemoteRunsReport:
+            return RemoteRunsReport(runs=(), malformed_keys=(malformed,))
+
+    monkeypatch.setattr(
+        "tetrabench.cli._remote_result_service", lambda _profile: Service()
+    )
+
+    result = runner.invoke(app, ["runs", "--remote", "--profile", "fresh", "--json"])
+
+    assert result.exit_code == 3
+    assert result.stderr == ""
+    payload = loads_canonical_json(result.stdout.removesuffix("\n").encode())
+    assert isinstance(payload, dict)
+    assert payload["malformed_keys"] == [
+        {"key": "runs/bad", "reason": "invalid layout"}
+    ]
+
+
+def test_runs_remote_requires_profile() -> None:
+    result = runner.invoke(app, ["runs", "--remote", "--json"])
+
+    assert result.exit_code == 2
+    assert result.stdout == ""
+    payload = loads_canonical_json(result.stderr.removesuffix("\n").encode())
+    assert isinstance(payload, dict)
+    assert payload["error"] == "runs --remote requires --profile"
+
+
+def test_artifacts_pull_json_is_canonical(monkeypatch, tmp_path: Path) -> None:
+    from tetrabench.remote import RemoteArtifact
+
+    artifact = RemoteArtifact(
+        logical_path="job/result.json",
+        sha256="a" * 64,
+        size=6,
+        media_type="application/json",
+    )
+
+    class Config:
+        storage = object()
+
+    class Service:
+        @staticmethod
+        def pull(run_id: str, output: Path) -> ArtifactPullResult:
+            return ArtifactPullResult(
+                run_id=run_id,
+                output_directory=str(output.absolute()),
+                terminal_sha256="b" * 64,
+                artifacts=(artifact,),
+            )
+
+    monkeypatch.setattr(
+        "tetrabench.cli.load_project_config", lambda *_args, **_kwargs: Config()
+    )
+    monkeypatch.setattr("tetrabench.cli.create_s3_store", lambda _storage: object())
+    monkeypatch.setattr("tetrabench.cli.ArtifactPullService", lambda _store: Service())
+    output = tmp_path / "output"
+
+    result = runner.invoke(
+        app,
+        [
+            "artifacts",
+            "pull",
+            "run-1",
+            str(output),
+            "--profile",
+            "fresh",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert result.stderr == ""
+    payload = loads_canonical_json(result.stdout.removesuffix("\n").encode())
+    assert isinstance(payload, dict)
+    assert payload["output_directory"] == str(output.absolute())
+    assert payload["artifacts"] == [artifact.model_dump(mode="json")]
+
+
+def test_artifacts_pull_limit_failure_is_deterministic_json(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    class Config:
+        storage = object()
+
+    class Service:
+        @staticmethod
+        def pull(_run_id: str, _output: Path) -> ArtifactPullResult:
+            raise ArtifactPullRefusedError("terminal inventory exceeds max_total_bytes")
+
+    monkeypatch.setattr(
+        "tetrabench.cli.load_project_config", lambda *_args, **_kwargs: Config()
+    )
+    monkeypatch.setattr("tetrabench.cli.create_s3_store", lambda _storage: object())
+    monkeypatch.setattr("tetrabench.cli.ArtifactPullService", lambda _store: Service())
+
+    result = runner.invoke(
+        app,
+        [
+            "artifacts",
+            "pull",
+            "run-1",
+            str(tmp_path / "output"),
+            "--profile",
+            "fresh",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 2
+    assert result.stdout == ""
+    assert loads_canonical_json(result.stderr.removesuffix("\n").encode()) == {
+        "error": "terminal inventory exceeds max_total_bytes",
+        "schema_version": 1,
+    }
+
+
+def test_cancel_decline_constructs_no_provider_service(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "tetrabench.cli._cancellation_service",
+        lambda _profile: pytest.fail("decline constructed provider service"),
+    )
+
+    result = runner.invoke(app, ["cancel", "run-1"], input="n\n")
+
+    assert result.exit_code == 1
+    assert "no cloud mutation attempted" in result.stderr
+
+
+def test_cancel_json_requires_yes_before_provider_construction(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "tetrabench.cli._cancellation_service",
+        lambda _profile: pytest.fail("JSON refusal constructed provider service"),
+    )
+
+    result = runner.invoke(app, ["cancel", "run-1", "--json"])
+
+    assert result.exit_code == 2
+    assert result.stdout == ""
+    assert loads_canonical_json(result.stderr.removesuffix("\n").encode()) == {
+        "error": "cancel --json requires --yes",
+        "schema_version": 1,
+    }
+
+
+def test_cancel_yes_preserves_machine_result_and_exit(monkeypatch) -> None:
+    class Service:
+        @staticmethod
+        def cancel(run_id: str) -> CancellationResult:
+            return CancellationResult(
+                run_id=run_id,
+                state="cancelled",
+                controller_terminal_observed=True,
+                terminal_proof_observed=False,
+                cleanup_complete=True,
+                sweeps=2,
+            )
+
+    monkeypatch.setattr(
+        "tetrabench.cli._cancellation_service", lambda _profile: Service()
+    )
+
+    result = runner.invoke(app, ["cancel", "run-1", "--yes", "--json"])
+
+    assert result.exit_code == 0
+    assert result.stderr == ""
+    payload = loads_canonical_json(result.stdout.removesuffix("\n").encode())
+    assert isinstance(payload, dict)
+    assert payload["state"] == "cancelled"
+    assert payload["cleanup_complete"] is True
 
 
 def test_recover_requires_confirmation_before_service_call(monkeypatch) -> None:
