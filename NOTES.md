@@ -602,3 +602,9 @@ Provenance: user-provided Harbor 0.22 Docker egress-control correction, the reta
 Harbor's Docker `no-network` control may permit `getaddrinfo` through its control path while denying outbound traffic. The clean verifier now records DNS success or failure and the unique returned addresses as runtime evidence without requiring DNS failure. Direct-IP and hostname TCP probes still must fail; successful response-bearing connections fail reward closed. Tests cover DNS-resolves/TCP-denied, DNS-fails/TCP-denied, and successful direct-IP or hostname TCP probes.
 
 All 607 tests passed, including all three Docker tests separately and again in the full suite. `uv lock --check`, locked all-group sync, Ruff check and format, ty, Bandit, actionlint, wheel/sdist build, isolated locked-runtime wheel installation and metadata/content smoke, all-groups pip-audit, `git diff --check`, and a redacted worktree Gitleaks scan passed. Hosted GitHub Actions validation remains pending.
+
+## 2026-08-29T13:11:29-07:00: E-067 hosted validation
+
+Provenance: GitHub Actions run [33272641566](https://github.com/Tetraslam/tetrabench/actions/runs/33272641566) for commit `e40b0cca4cab4c0aa3a45a97110a87a2e99a6491`.
+
+The hosted Python 3.12 job passed the three required Docker tests, the full 607-test suite, lock and locked sync, Ruff, ty, Bandit, package build and isolated-wheel smoke, and the all-groups dependency audit. The independent full-history Gitleaks job passed. This closes the hosted clean-verifier false failure while retaining both TCP-denial gates.
