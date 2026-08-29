@@ -25,6 +25,7 @@ from tetrabench.models import (
 )
 from tetrabench.plan import canonical_model_bytes, parse_canonical_model
 from tetrabench.records import (
+    AdmissionRecord,
     AttemptEvent,
     ConflictRunState,
     ContentObject,
@@ -35,6 +36,7 @@ from tetrabench.records import (
     validate_run_id,
 )
 from tetrabench.storage import (
+    admission_key,
     content_object_key,
     event_key,
     request_key,
@@ -80,6 +82,18 @@ class S3ConflictError(RuntimeError):
     """An immutable run record conflicts with visible durable state."""
 
 
+class S3CasConflictError(RuntimeError):
+    """A conditional admission write lost to another writer."""
+
+
+@dataclass(frozen=True, slots=True)
+class AdmissionRead:
+    """One admission body paired with the opaque ETag that read it."""
+
+    record: AdmissionRecord
+    etag: str
+
+
 def create_s3_client(config: StorageConfig) -> S3Client:
     """Construct a boto3 client without resolving or serializing credentials."""
     kwargs: dict[str, Any] = {"region_name": config.region}
@@ -103,6 +117,19 @@ def _checksum_sha256(digest: str) -> str:
 def _is_not_found(error: ClientError) -> bool:
     code = str(error.response.get("Error", {}).get("Code", ""))
     return code in {"404", "NoSuchKey", "NotFound"}
+
+
+def _is_cas_conflict(error: ClientError, *, allow_not_found: bool) -> bool:
+    code = str(error.response.get("Error", {}).get("Code", ""))
+    status = error.response.get("ResponseMetadata", {}).get("HTTPStatusCode")
+    conditional = code in {
+        "409",
+        "412",
+        "ConditionalRequestConflict",
+        "PreconditionFailed",
+    } or status in {409, 412}
+    not_found = code in {"404", "NoSuchKey", "NotFound"} or status == 404
+    return conditional or (allow_not_found and not_found)
 
 
 def _exponential_backoff(retry: int, delay_seconds: float) -> float:
@@ -312,6 +339,121 @@ class S3Store:
             known_request_digests=(digest,),
         )
         return digest
+
+    def read_request(
+        self, run_id: str, request_sha256: str, request_object_key: str
+    ) -> RequestRecord:
+        """Fetch and validate one immutable request by its complete identity."""
+        run_id = validate_run_id(run_id)
+        expected_key = request_key(run_id, request_sha256, prefix=self._prefix)
+        if request_object_key != expected_key:
+            raise S3IntegrityError("request key does not match the requested identity")
+        data = self._read_record_bytes(expected_key, request_sha256)
+        request = parse_canonical_model(data, RequestRecord)
+        if request.run_id != run_id:
+            raise S3IntegrityError("request body run ID does not match its key")
+        for item in request.context_manifest.files:
+            self.verify_content(item.content)
+        return request
+
+    def create_admission(self, admission: AdmissionRecord) -> AdmissionRead:
+        """Create the fixed coordination record only when the key is absent."""
+        if admission.revision != 0 or admission.state != "prepared":
+            raise ValueError("admission creation requires revision-zero prepared state")
+        return self._put_admission(admission, IfNoneMatch="*")
+
+    def read_admission(self, run_id: str) -> AdmissionRead | None:
+        """Read and validate the fixed admission record with its opaque ETag."""
+        run_id = validate_run_id(run_id)
+        key = admission_key(run_id, prefix=self._prefix)
+        try:
+            response = self._client.get_object(
+                Bucket=self._bucket,
+                Key=key,
+                ChecksumMode="ENABLED",
+            )
+        except ClientError as error:
+            if _is_not_found(error):
+                return None
+            raise
+        body = response.get("Body")
+        if not hasattr(body, "read"):
+            raise S3IntegrityError("admission body is not readable")
+        try:
+            data = body.read(MAX_CANONICAL_JSON_BYTES + 1)
+            if not isinstance(data, bytes):
+                raise S3IntegrityError("admission body did not return bytes")
+            if body.read(1):
+                raise S3IntegrityError("admission body is oversized")
+        finally:
+            close = getattr(body, "close", None)
+            if callable(close):
+                close()
+        if len(data) > MAX_CANONICAL_JSON_BYTES:
+            raise S3IntegrityError("admission body is oversized")
+        digest = sha256_hex(data)
+        self._validate_object_response(
+            response,
+            key=key,
+            sha256=digest,
+            size=len(data),
+            media_type=_JSON_MEDIA_TYPE,
+            exact_service_checksum=True,
+        )
+        etag = response.get("ETag")
+        if not isinstance(etag, str) or not etag:
+            raise S3IntegrityError("admission read omitted its ETag")
+        record = parse_canonical_model(data, AdmissionRecord)
+        if record.run_id != run_id:
+            raise S3IntegrityError("admission body run ID does not match its key")
+        return AdmissionRead(record=record, etag=etag)
+
+    def update_admission(
+        self,
+        expected: AdmissionRead,
+        replacement: AdmissionRecord,
+    ) -> AdmissionRead:
+        """CAS one admission revision using the ETag returned by a read/write."""
+        replacement = AdmissionRecord.model_validate(replacement.model_dump())
+        previous = expected.record
+        if replacement.run_id != previous.run_id:
+            raise ValueError("admission run ID cannot change")
+        if replacement.revision != previous.revision + 1:
+            raise ValueError("admission update must add exactly one revision")
+        if replacement.history[:-1] != previous.history:
+            raise ValueError("admission update must preserve revision history")
+        for field_name in ("request_sha256", "plan_sha256", "created_at"):
+            if getattr(replacement, field_name) != getattr(previous, field_name):
+                raise ValueError(f"admission {field_name} cannot change")
+        return self._put_admission(replacement, IfMatch=expected.etag)
+
+    def _put_admission(
+        self, admission: AdmissionRecord, **condition: str
+    ) -> AdmissionRead:
+        key = admission_key(admission.run_id, prefix=self._prefix)
+        data = canonical_model_bytes(admission)
+        digest = sha256_hex(data)
+        try:
+            response = self._client.put_object(
+                Bucket=self._bucket,
+                Key=key,
+                Body=data,
+                ContentLength=len(data),
+                ContentType=_JSON_MEDIA_TYPE,
+                Metadata={_SHA256_METADATA_KEY: digest},
+                ChecksumSHA256=_checksum_sha256(digest),
+                **condition,
+            )
+        except ClientError as error:
+            if _is_cas_conflict(error, allow_not_found="IfMatch" in condition):
+                raise S3CasConflictError(
+                    f"admission CAS conflict for run {admission.run_id!r}"
+                ) from error
+            raise
+        etag = response.get("ETag")
+        if not isinstance(etag, str) or not etag:
+            raise S3IntegrityError("admission write omitted its ETag")
+        return AdmissionRead(record=admission, etag=etag)
 
     def publish_event(self, event: AttemptEvent) -> str:
         """Publish first, then discover visible attempt-sequence conflicts."""
@@ -767,6 +909,11 @@ class S3Store:
                 raise ValueError("terminal request dependency has the wrong run ID")
             for item in request.context_manifest.files:
                 self.verify_content(item.content)
+            # A terminal's directly referenced request may be GET-visible while
+            # absent from LIST. Merge it with every listed request identity so
+            # a lagged second request remains a visible conflict.
+            observation.request_digests.add(terminal.request_sha256)
+            observation.requests[terminal.request_sha256] = request
             for artifact in terminal.artifacts:
                 self.verify_content(artifact.content)
             observation.terminals[digest] = terminal

@@ -6,6 +6,7 @@ import io
 import os
 import threading
 from collections.abc import Iterator, Mapping
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 from types import SimpleNamespace
@@ -23,6 +24,7 @@ from tetrabench.models import (
 )
 from tetrabench.plan import canonical_model_bytes, plan_digest
 from tetrabench.records import (
+    AdmissionRecord,
     ArtifactBinding,
     ArtifactInventoryEntry,
     AttemptEvent,
@@ -34,14 +36,18 @@ from tetrabench.records import (
     TerminalRecord,
     TerminalRunState,
     UnknownRunState,
+    new_admission,
+    transition_admission,
 )
 from tetrabench.s3 import (
+    AdmissionRead,
+    S3CasConflictError,
     S3ConflictError,
     S3IntegrityError,
     S3Store,
     create_s3_client,
 )
-from tetrabench.storage import event_key, request_key, terminal_key
+from tetrabench.storage import admission_key, event_key, request_key, terminal_key
 
 
 @dataclass
@@ -51,6 +57,10 @@ class _StoredObject:
     metadata: dict[str, str]
     checksum_sha256: str
     content_length: int | None = None
+
+    @property
+    def etag(self) -> str:
+        return f'"{hashlib.sha256(self.body).hexdigest()[:32]}"'
 
 
 class _ChunkTrackedBody(io.BytesIO):
@@ -78,9 +88,12 @@ class FakeS3Client:
         self.managed_uploads = 0
         self.skip_managed_body = False
         self.put_barrier: threading.Barrier | None = None
+        self.put_error: ClientError | None = None
         self._lock = threading.Lock()
 
     def put_object(self, **kwargs: Any) -> Mapping[str, Any]:
+        if self.put_error is not None:
+            raise self.put_error
         key = kwargs["Key"]
         body = kwargs["Body"]
         data = body if isinstance(body, bytes) else body.read()
@@ -90,15 +103,36 @@ class FakeS3Client:
         assert checksum == kwargs["ChecksumSHA256"]
         self.operations.append(("put", key))
         with self._lock:
+            existing = self.objects.get(key)
+            if kwargs.get("IfNoneMatch") == "*" and existing is not None:
+                raise ClientError(
+                    {
+                        "Error": {"Code": "PreconditionFailed"},
+                        "ResponseMetadata": {"HTTPStatusCode": 412},
+                    },
+                    "PutObject",
+                )
+            if "IfMatch" in kwargs and (
+                existing is None or existing.etag != kwargs["IfMatch"]
+            ):
+                raise ClientError(
+                    {
+                        "Error": {"Code": "PreconditionFailed"},
+                        "ResponseMetadata": {"HTTPStatusCode": 412},
+                    },
+                    "PutObject",
+                )
             self.objects[key] = _StoredObject(
                 body=data,
                 content_type=kwargs["ContentType"],
                 metadata=dict(kwargs["Metadata"]),
                 checksum_sha256=checksum,
             )
-        if self.put_barrier is not None:
+            etag = self.objects[key].etag
+        conditional = {"IfNoneMatch", "IfMatch"} & kwargs.keys()
+        if self.put_barrier is not None and not conditional:
             self.put_barrier.wait(timeout=5)
-        return {}
+        return {"ETag": etag}
 
     def upload_fileobj(self, **kwargs: Any) -> None:
         key = kwargs["Key"]
@@ -140,6 +174,7 @@ class FakeS3Client:
             "ContentType": stored.content_type,
             "Metadata": dict(stored.metadata),
             "ChecksumSHA256": stored.checksum_sha256,
+            "ETag": stored.etag,
         }
 
     def get_object(self, **kwargs: Any) -> Mapping[str, Any]:
@@ -156,6 +191,7 @@ class FakeS3Client:
             "ContentType": stored.content_type,
             "Metadata": dict(stored.metadata),
             "ChecksumSHA256": stored.checksum_sha256,
+            "ETag": stored.etag,
         }
 
     def list_objects_v2(self, **kwargs: Any) -> Mapping[str, Any]:
@@ -264,6 +300,10 @@ def _request(section: str = "systems-design") -> RequestRecord:
         context_manifest_sha256=sha256_hex(canonical_model_bytes(manifest)),
         context_manifest=manifest,
     )
+
+
+def _admission() -> AdmissionRecord:
+    return new_admission(_request(), timestamp="2026-08-28T20:00:00Z")
 
 
 def _terminal(
@@ -407,6 +447,82 @@ def test_request_publication_is_idempotent_and_conflicts_by_run(
         len([operation for operation in client.operations if operation[0] == "put"])
         == 2
     )
+
+
+def test_admission_create_read_and_stale_etag_conflict(
+    store: tuple[S3Store, FakeS3Client],
+) -> None:
+    s3, client = store
+    prepared = _admission()
+    created = s3.create_admission(prepared)
+
+    assert s3.read_admission("run-1") == created
+    key = admission_key("run-1", prefix="tenant/v1")
+    assert client.operations[0] == ("put", key)
+    with pytest.raises(S3CasConflictError):
+        s3.create_admission(prepared)
+
+    running = transition_admission(
+        prepared,
+        "running",
+        timestamp="2026-08-28T20:00:01Z",
+        owner_function_call_id="fc-1",
+    )
+    stale = AdmissionRead(record=prepared, etag='"stale"')
+    with pytest.raises(S3CasConflictError):
+        s3.update_admission(stale, running)
+    updated = s3.update_admission(created, running)
+    assert updated.record == running
+    assert updated.etag != created.etag
+    assert s3.read_admission("run-1") == updated
+    rewritten = running.model_copy(update={"request_sha256": "f" * 64})
+    with pytest.raises(ValueError, match="request_sha256"):
+        s3.update_admission(created, rewritten)
+
+
+def test_admission_create_does_not_misclassify_missing_bucket_as_cas(
+    store: tuple[S3Store, FakeS3Client],
+) -> None:
+    s3, client = store
+    client.put_error = ClientError(
+        {
+            "Error": {"Code": "NoSuchBucket"},
+            "ResponseMetadata": {"HTTPStatusCode": 404},
+        },
+        "PutObject",
+    )
+    with pytest.raises(ClientError, match="NoSuchBucket"):
+        s3.create_admission(_admission())
+
+
+def test_same_etag_concurrent_admission_updates_have_one_winner(
+    store: tuple[S3Store, FakeS3Client],
+) -> None:
+    s3, _client = store
+    prepared = _admission()
+    created = s3.create_admission(prepared)
+    candidates = (
+        transition_admission(
+            prepared,
+            "running",
+            timestamp="2026-08-28T20:00:01Z",
+            owner_function_call_id="fc-1",
+        ),
+        transition_admission(prepared, "cancelled", timestamp="2026-08-28T20:00:01Z"),
+    )
+
+    def update(candidate: AdmissionRecord) -> str:
+        try:
+            return s3.update_admission(created, candidate).record.state
+        except S3CasConflictError:
+            return "conflict"
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        outcomes = tuple(pool.map(update, candidates))
+    assert outcomes.count("conflict") == 1
+    observed = s3.read_admission("run-1")
+    assert observed is not None
+    assert observed.record.state in {"running", "cancelled"}
 
 
 def test_request_postwrite_merges_identity_hidden_by_independent_list_lag(
@@ -730,6 +846,27 @@ def test_lagged_request_conflict_can_surface_on_a_later_read(
 
     assert isinstance(state, ConflictRunState)
     assert "multiple request digests" in state.reasons[0]
+
+
+def test_terminal_read_merges_direct_request_with_list_visible_conflict(
+    store: tuple[S3Store, FakeS3Client],
+) -> None:
+    s3, client = store
+    _terminal_digest, terminal, _artifacts = _publish_terminal_fixture(s3)
+    referenced_key = request_key("run-1", terminal.request_sha256, prefix="tenant/v1")
+    conflicting = _request("github-workflow")
+    conflicting_data = canonical_model_bytes(conflicting)
+    conflicting_digest = sha256_hex(conflicting_data)
+    client.seed(
+        request_key("run-1", conflicting_digest, prefix="tenant/v1"),
+        conflicting_data,
+    )
+    client.set_lag("list", referenced_key, 1)
+
+    state = s3.read_run_state("run-1", attempts=1, delay_seconds=0)
+
+    assert isinstance(state, ConflictRunState)
+    assert any("multiple request digests" in reason for reason in state.reasons)
 
 
 @pytest.mark.parametrize("conflict_kind", ["request", "event"])

@@ -10,6 +10,7 @@ from typer.testing import CliRunner
 
 from tetrabench.canonical_json import loads_canonical_json
 from tetrabench.cli import app
+from tetrabench.lifecycle import RunStatus
 from tetrabench.s3 import S3Store
 
 ROOT = Path(__file__).parents[1]
@@ -341,3 +342,90 @@ exclude = ["missing"]
 
     assert result.exit_code == 2
     assert "absent from catalog: missing" in result.stderr
+
+
+def test_submit_empty_section_has_zero_s3_or_modal_side_effects(monkeypatch) -> None:
+    monkeypatch.chdir(ROOT)
+    monkeypatch.setattr(
+        "tetrabench.cli.create_s3_store",
+        lambda _config: pytest.fail("empty submit constructed S3 store"),
+    )
+
+    class ForbiddenModal:
+        def __init__(self, *_args) -> None:
+            pytest.fail("empty submit constructed Modal adapter")
+
+    monkeypatch.setattr("tetrabench.cli.ModalControllerClient", ForbiddenModal)
+    result = runner.invoke(app, ["submit", "systems-design"])
+    assert result.exit_code == 2
+    assert result.stdout == ""
+    assert "plan is not runnable" in result.stderr
+
+
+def test_submit_empty_section_json_error_is_canonical_stderr(monkeypatch) -> None:
+    monkeypatch.chdir(ROOT)
+    result = runner.invoke(app, ["submit", "systems-design", "--json"])
+    assert result.exit_code == 2
+    assert result.stdout == ""
+    report = loads_canonical_json(result.stderr.removesuffix("\n").encode())
+    assert isinstance(report, dict)
+    assert report["schema_version"] == 1
+    assert "not runnable" in str(report["error"])
+
+
+def test_status_json_conflict_uses_stdout_and_exit_three(monkeypatch) -> None:
+    class Service:
+        @staticmethod
+        def status(run_id: str) -> RunStatus:
+            return RunStatus(
+                run_id=run_id,
+                state="conflict",
+                detail="multiple terminals",
+            )
+
+    monkeypatch.setattr("tetrabench.cli._status_service", lambda _profile: Service())
+    result = runner.invoke(app, ["status", "run-1", "--json"])
+    assert result.exit_code == 3
+    assert result.stderr == ""
+    report = loads_canonical_json(result.stdout.removesuffix("\n").encode())
+    assert isinstance(report, dict)
+    assert report["state"] == "conflict"
+
+
+def test_running_cancel_refuses_before_cas_without_real_child_observer(
+    monkeypatch,
+) -> None:
+    from tetrabench.lifecycle import CancellationUnavailableError
+
+    class Service:
+        @staticmethod
+        def cancel(_run_id: str):
+            raise CancellationUnavailableError(
+                "running cancellation requires the deployed Harbor child observer; "
+                "admission was not changed"
+            )
+
+    monkeypatch.setattr(
+        "tetrabench.cli._cancellation_service", lambda _profile: Service()
+    )
+    result = runner.invoke(app, ["cancel", "run-1"])
+    assert result.exit_code == 2
+    assert result.stdout == ""
+    assert "child observer" in result.stderr
+    assert "admission was not changed" in " ".join(result.stderr.split())
+
+
+def test_runs_json_is_canonical_local_receipt_cache(monkeypatch) -> None:
+    class Store:
+        @staticmethod
+        def list() -> tuple[()]:
+            return ()
+
+    monkeypatch.setattr("tetrabench.cli.ReceiptStore", Store)
+    result = runner.invoke(app, ["runs", "--json"])
+    assert result.exit_code == 0
+    assert result.stderr == ""
+    assert loads_canonical_json(result.stdout.removesuffix("\n").encode()) == {
+        "receipts": [],
+        "schema_version": 1,
+    }

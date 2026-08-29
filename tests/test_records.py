@@ -10,6 +10,7 @@ from tetrabench.canonical_json import sha256_hex
 from tetrabench.models import ResolvedPlan
 from tetrabench.plan import canonical_model_bytes, parse_canonical_model, plan_digest
 from tetrabench.records import (
+    AdmissionRecord,
     ArtifactBinding,
     ArtifactInventoryEntry,
     AttemptEvent,
@@ -23,11 +24,14 @@ from tetrabench.records import (
     TerminalRunState,
     UnknownRunState,
     interpret_terminal_records,
+    new_admission,
+    transition_admission,
     validate_attempt_id,
     validate_monotonic_events,
     validate_run_id,
 )
 from tetrabench.storage import (
+    admission_key,
     content_object_key,
     event_key,
     request_key,
@@ -107,6 +111,97 @@ def test_validated_identifiers_and_key_builders() -> None:
         f"runs/run-1/events/attempt-1/0000000000000012-{digest}.json"
     )
     assert terminal_key("run-1", digest) == f"runs/run-1/terminals/{digest}.json"
+    assert admission_key("run-1") == "runs/run-1/admission.json"
+
+
+def test_admission_record_has_canonical_history_and_one_owner() -> None:
+    plan = _plan()
+    manifest = ContextManifest(schema_version=1, files=())
+    request = RequestRecord(
+        schema_version=1,
+        run_id="run-1",
+        plan_sha256=plan_digest(plan),
+        plan=plan,
+        context_manifest_sha256=sha256_hex(canonical_model_bytes(manifest)),
+        context_manifest=manifest,
+    )
+    prepared = new_admission(request, timestamp="2026-08-28T20:00:00Z")
+    running = transition_admission(
+        prepared,
+        "running",
+        timestamp="2026-08-28T20:00:01Z",
+        owner_function_call_id="fc-1",
+    )
+    cancelling = transition_admission(
+        running, "cancelling", timestamp="2026-08-28T20:00:02Z"
+    )
+    cancelled = transition_admission(
+        cancelling, "cancelled", timestamp="2026-08-28T20:00:03Z"
+    )
+
+    assert cancelled.revision == 3
+    assert tuple(item.state for item in cancelled.history) == (
+        "prepared",
+        "running",
+        "cancelling",
+        "cancelled",
+    )
+    assert {item.owner_function_call_id for item in cancelled.history[1:]} == {"fc-1"}
+    assert b"." not in canonical_model_bytes(cancelled).split(b"timestamp", 1)[0]
+    with pytest.raises(ValidationError):
+        AdmissionRecord.model_validate(cancelled.model_dump() | {"extra": True})
+    assert cancelled.model_config["frozen"] is True
+    with pytest.raises(ValueError, match="owner cannot change"):
+        transition_admission(
+            running,
+            "terminal",
+            timestamp="2026-08-28T20:00:02Z",
+            owner_function_call_id="fc-other",
+            terminal_sha256="a" * 64,
+        )
+
+
+def test_admission_rejects_invalid_transitions_and_terminal_without_digest() -> None:
+    plan = _plan()
+    manifest = ContextManifest(schema_version=1, files=())
+    request = RequestRecord(
+        schema_version=1,
+        run_id="run-1",
+        plan_sha256=plan_digest(plan),
+        plan=plan,
+        context_manifest_sha256=sha256_hex(canonical_model_bytes(manifest)),
+        context_manifest=manifest,
+    )
+    prepared = new_admission(request, timestamp="2026-08-28T20:00:00Z")
+    with pytest.raises(ValidationError, match="invalid admission transition"):
+        transition_admission(
+            prepared,
+            "terminal",
+            timestamp="2026-08-28T20:00:01Z",
+            owner_function_call_id="fc-1",
+            terminal_sha256="a" * 64,
+        )
+    running = transition_admission(
+        prepared,
+        "running",
+        timestamp="2026-08-28T20:00:01Z",
+        owner_function_call_id="fc-1",
+    )
+    with pytest.raises(ValidationError, match="terminal digest"):
+        transition_admission(running, "terminal", timestamp="2026-08-28T20:00:02Z")
+    with pytest.raises(ValidationError, match="move backwards"):
+        transition_admission(running, "failed", timestamp="2026-08-28T19:59:59Z")
+    unowned_cancelled = transition_admission(
+        prepared, "cancelled", timestamp="2026-08-28T20:00:01Z"
+    )
+    with pytest.raises(ValidationError, match="unclaimed cancelled"):
+        transition_admission(
+            unowned_cancelled,
+            "terminal",
+            timestamp="2026-08-28T20:00:02Z",
+            owner_function_call_id="fc-1",
+            terminal_sha256="a" * 64,
+        )
 
 
 @pytest.mark.parametrize(

@@ -1,15 +1,15 @@
 # tetrabench
 
-tetrabench is in early implementation. Its verified surface is an importable
-Python package with bounded, strict RFC 8785 canonical JSON and SHA-256 helpers,
-typed local configuration, catalog and context resolution, and a read-only
-planning CLI. The package also has a verified immutable S3 transport for
-content, request, event, and terminal records; it has not yet passed live AWS
-or Tigris smokes. The checked-in benchmark sections currently contain no tasks,
-so their plans contain zero trials and are reported as not runnable. CLI
-submission and execution are not implemented. `doctor --online` can check
-read-only access to configured AWS or Tigris storage, but live provider
-behavior has not been accepted as proven.
+tetrabench is in early implementation. Its verified local surface includes
+strict RFC 8785 records, immutable S3 transport, a fixed-key CAS admission
+record, atomic submission receipts, a detached Modal client adapter, and local
+submission, status, and cancellation services. Tigris conditional create,
+stale-ETag rejection, update, and concurrent single-winner behavior have been
+proven live on a private copy-on-write fork. It has not deployed a controller or
+run Harbor, AWS, or Modal smokes. The checked-in benchmark sections contain no tasks, so
+`submit` refuses them before constructing S3 or Modal clients. `cancel` also
+refuses a running admission before mutation until the real Harbor child
+observer is installed; it can CAS a prepared admission directly to cancelled.
 
 Python 3.12 or newer is required.
 
@@ -17,6 +17,13 @@ S3 reads and publications use bounded visibility checks. They detect every
 request, event-sequence, terminal, and dependency conflict visible during that
 window, but a lagged conflicting record can make a later read conflict. Zero
 visible terminals remains unknown or nonterminal.
+
+One explicit exception to content-addressed publication is the mutable
+coordination record at `runs/<run-id>/admission.json`. It is created with
+`If-None-Match: *` and advanced one canonical revision at a time with
+`If-Match: <etag>`. Its complete history retains one owner FunctionCall ID.
+Immutable terminal objects remain terminal authority; admission never replaces
+terminal proof.
 
 ## Reviewed design scope
 
@@ -48,6 +55,13 @@ uv run tetrabench plan systems-design --json
 uv run tetrabench doctor
 uv run tetrabench doctor --json
 uv run tetrabench doctor --profile local --online
+uv run tetrabench submit systems-design
+uv run tetrabench recover systems-design --run-id RUN_ID
+uv run tetrabench status RUN_ID
+uv run tetrabench status RUN_ID --json
+uv run tetrabench cancel RUN_ID
+uv run tetrabench runs
+uv run tetrabench runs --json
 ```
 
 Human output uses Rich. `--json` writes one RFC 8785 canonical JSON document,
@@ -62,6 +76,38 @@ storage provider client, calls `HeadBucket`, and lists at most one key under
 the configured prefix. It never calls a mutation API. A successful check proves
 only that those reads worked at that time; writes remain `unproven` and are not
 attempted.
+
+## Local detached control
+
+Receipts live under the platformdirs `tetrabench` state directory. Each
+canonical receipt appends physical spawn attempts and returned Modal call IDs
+using atomic replacement plus receipt-root-parent, file, and receipt-root
+`fsync`. Receipts are recovery caches, not a run database or owner record.
+
+For a runnable Modal plan, submission seals and uploads selected context,
+publishes the immutable request, creates or observes the prepared admission,
+then calls the deployed `Function.from_name(...).spawn()` and persists its
+FunctionCall ID as local evidence. The CLI never claims admission ownership.
+Every spawned controller must CAS prepared to running with its actual call ID;
+before that CAS it must validate the full run/request/plan invocation against
+the immutable request and admission. Only the winner may enter Harbor. `recover`
+is an explicit operator action and spawns only while admission is still
+prepared. A missing or corrupt receipt is a status warning. S3 conflicts
+dominate, and an immutable terminal object dominates admission, receipt, and
+Modal output.
+
+Cancellation uses admission CAS and needs no event-write permission. Prepared
+runs advance directly to cancelled. Running runs advance to cancelling while
+preserving the owner call ID; the service then cancels and polls that call,
+sweeps children, and advances to cancelled only after the call is terminal and
+two consecutive sweeps are empty. The deployed child observer is absent, so
+the installed command refuses running cancellation before changing admission.
+Modal API, authentication, and other inspection failures do not prove that the
+owner call stopped. Terminal proof can be published only by the exact owner
+while admission is running or cancelling, after revalidating the immutable
+request and all run/request/plan bindings.
+The deployed controller, Volume handling, Harbor execution, real child observer,
+and live cleanup remain unimplemented.
 
 ## Project configuration
 

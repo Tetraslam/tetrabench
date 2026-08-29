@@ -110,6 +110,12 @@ def terminal_key(run_id: str, terminal_sha256: str, *, prefix: str = "") -> str:
     return _with_prefix(prefix, f"runs/{run_id}/terminals/{digest}.json")
 
 
+def admission_key(run_id: str, *, prefix: str = "") -> str:
+    """Return the one mutable CAS coordination key for a run."""
+    run_id = validate_identifier(run_id, name="run_id")
+    return _with_prefix(prefix, f"runs/{run_id}/admission.json")
+
+
 def validate_content_object_key(key: str, sha256: str) -> str:
     validate_s3_key(key)
     digest = validate_sha256(sha256)

@@ -130,3 +130,25 @@ The preceding entry's 153-test count is superseded by 155 passing tests. Visible
 ## 2026-08-28T16:08:06-07:00: P2 read-only doctor completion
 
 Provenance: user contract and local Python 3.12 validation. `doctor` remains offline without client construction or credential lookup; explicit `--online` performs only `HeadBucket` and `ListObjectsV2(MaxKeys=1)` for the effective AWS or Tigris profile and reports writes as `unproven`. The 170-test suite, Ruff, ty, lock and diff checks, package inspection, isolated installed-CLI smoke, and audited secret scan passed. Live AWS/Tigris reads, publication, and writes remain U-005 `unproven`.
+
+## 2026-08-28T17:18:22-07:00: Durable admission CAS correction
+
+Provenance: user contract; live Tigris proof on a private copy-on-write fork; AWS S3 conditional-write and PutObject documentation; local Python 3.12 implementation and validation.
+
+This entry supersedes the prior no-conditional-write and host-local no-resubmit decisions without deleting them. One canonical mutable coordination exception now lives at `runs/<run-id>/admission.json`. It retains complete contiguous revision history, request/plan identity, integer-second UTC timestamps, one immutable owner FunctionCall ID after claim, and terminal digest acknowledgement. Conditional create uses `If-None-Match: *`; every transition uses the read ETag with `If-Match`. The CLI publishes request and prepared admission before spawn and never claims ownership. Explicit submissions or recovery may create duplicate calls while prepared, but only the controller whose actual call ID wins prepared→running CAS may enter Harbor. Cancellation is admission-based and needs no event-write permission. Immutable terminal publication remains terminal-object-last and authoritative; conflicts dominate, while local receipt absence or corruption is only a warning.
+
+Live Tigris evidence proved exclusive create, duplicate and stale-ETag 412 responses, current-ETag update, and exactly one winner from two concurrent updates sharing an ETag. The retained report is `~/.local/share/opencode/tetrabench-research/tigris-cas/2026-08-28-report.json`, SHA-256 `889c2f0fbeb1c44a4a9686a14cf3c64e58834da17019f5516d59de6c3ea96416`. Its temporary fork and access key were removed. AWS documents the required conditional semantics, but AWS remains live-unproven. The 218-test suite, Ruff, ty, lock check, package build, isolated wheel smoke/content inspection, diff check, and audited secret scan passed. Deployed controller, Harbor, Volume, real child cleanup, and live Modal/AWS races remain unimplemented or unproven.
+
+## 2026-08-28T17:33:13-07:00: Controller authority-boundary correction
+
+Provenance: user-provided CAS control findings and local Python 3.12 implementation and validation.
+
+Controller invocations now carry the plan digest in addition to run, request, key, and resolved storage identity. Claim reparses the invocation, fetches and validates the immutable request, and requires exact run/request/plan agreement with admission before CAS. Terminal publication repeats those checks, requires the exact owner while admission is running or cancelling, validates the terminal binding, publishes the terminal object last, and then CAS-acknowledges its digest. A non-owner or stale invocation cannot publish terminal proof. Cancellation now treats successful return, remote execution failure, and expired output as stopped; Modal API, authentication, and other inspection failures remain unknown and cannot finalize cancellation.
+
+The 221-test suite, Ruff check/format, ty, lock check, package build, isolated wheel CLI smoke, diff check, and audited secret scan passed. Live deployed-controller and Modal behavior remain `unproven`.
+
+## 2026-08-28T17:34:23-07:00: Controller evidence-count correction
+
+Provenance: local follow-up validation after adding explicit resolved-storage identity coverage.
+
+The preceding entry's 221-test count is superseded by 222 passing tests. The added regression proves that an invocation whose resolved storage differs from the immutable request cannot claim admission.

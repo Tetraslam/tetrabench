@@ -7,6 +7,7 @@ from typing import Annotated, Protocol
 
 import typer
 from botocore.exceptions import BotoCoreError, ClientError
+from modal.exception import Error as ModalError
 from pydantic import ValidationError
 from rich.console import Console
 from rich.table import Table
@@ -16,8 +17,21 @@ from tetrabench.canonical_json import dumps_canonical_json
 from tetrabench.catalog import SectionName, get_section, load_catalog, select_tasks
 from tetrabench.config import load_project_config
 from tetrabench.context import resolve_context
+from tetrabench.controller import ModalControllerClient
+from tetrabench.lifecycle import (
+    CancellationConflictError,
+    CancellationService,
+    CancellationUnavailableError,
+    StatusService,
+)
 from tetrabench.plan import canonical_model_bytes, plan_digest, resolve_plan
-from tetrabench.s3 import create_s3_store
+from tetrabench.receipts import ReceiptConflictError, ReceiptStore
+from tetrabench.s3 import S3CasConflictError, create_s3_store
+from tetrabench.submission import (
+    SubmissionRefusedError,
+    SubmissionService,
+    prepare_submission,
+)
 
 app = typer.Typer(
     add_completion=False,
@@ -34,6 +48,17 @@ class _ReadAccessStore(Protocol):
 
 def _fail(error: Exception) -> None:
     err.print(f"[red]error:[/red] {error}")
+    raise typer.Exit(2)
+
+
+def _fail_command(error: Exception, *, json_output: bool) -> None:
+    if json_output:
+        _canonical_echo(
+            {"error": str(error), "schema_version": 1},
+            stderr=True,
+        )
+    else:
+        err.print(f"[red]error:[/red] {error}")
     raise typer.Exit(2)
 
 
@@ -236,6 +261,225 @@ def doctor(
     else:
         out.print("[dim]not attempted[/dim] storage provider checks (offline)")
     out.print("[yellow]unproven[/yellow] storage writes (not attempted)")
+
+
+@app.command()
+def submit(
+    section: SectionName,
+    profile: Annotated[str | None, typer.Option(help="User profile name.")] = None,
+    run_id: Annotated[str | None, typer.Option(help="Explicit safe run ID.")] = None,
+    json_output: Annotated[
+        bool,
+        typer.Option("--json", help="Emit canonical JSON to stdout."),
+    ] = False,
+) -> None:
+    """Publish a runnable request and spawn its deployed Modal controller."""
+    try:
+        prepared = prepare_submission(
+            Path.cwd(),
+            section,
+            profile,
+            run_id=run_id,
+        )
+        storage = prepared.plan.storage
+        controller_config = prepared.plan.controller
+        assert storage is not None and controller_config.kind == "modal"
+        service = SubmissionService(
+            create_s3_store(storage),
+            ModalControllerClient(
+                controller_config.app_name,
+                controller_config.function_name,
+            ),
+            ReceiptStore(),
+        )
+        receipt = service.submit(prepared)
+    except (
+        BotoCoreError,
+        ClientError,
+        ModalError,
+        OSError,
+        ReceiptConflictError,
+        S3CasConflictError,
+        SubmissionRefusedError,
+        ValueError,
+        ValidationError,
+    ) as error:
+        _fail_command(error, json_output=json_output)
+    if json_output:
+        typer.echo(canonical_model_bytes(receipt).decode("utf-8"))
+        return
+    call_id = receipt.attempts[-1].controller_calls[-1].call_id
+    out.print(f"[green]submitted[/green] {receipt.run_id}")
+    out.print(f"[bold]Request SHA-256:[/bold] {receipt.request_sha256}")
+    out.print(f"[bold]Modal call:[/bold] {call_id}")
+
+
+@app.command()
+def recover(
+    section: SectionName,
+    run_id: Annotated[str, typer.Option(help="Existing prepared run ID.")],
+    profile: Annotated[str | None, typer.Option(help="User profile name.")] = None,
+    json_output: Annotated[
+        bool,
+        typer.Option("--json", help="Emit canonical JSON to stdout."),
+    ] = False,
+) -> None:
+    """Explicitly spawn another call for an existing prepared admission."""
+    try:
+        prepared = prepare_submission(Path.cwd(), section, profile, run_id=run_id)
+        storage = prepared.plan.storage
+        controller_config = prepared.plan.controller
+        assert storage is not None and controller_config.kind == "modal"
+        receipt = SubmissionService(
+            create_s3_store(storage),
+            ModalControllerClient(
+                controller_config.app_name,
+                controller_config.function_name,
+            ),
+            ReceiptStore(),
+        ).recover(prepared)
+    except (
+        BotoCoreError,
+        ClientError,
+        ModalError,
+        OSError,
+        ReceiptConflictError,
+        S3CasConflictError,
+        SubmissionRefusedError,
+        ValueError,
+        ValidationError,
+    ) as error:
+        _fail_command(error, json_output=json_output)
+    if json_output:
+        typer.echo(canonical_model_bytes(receipt).decode("utf-8"))
+        return
+    call_id = receipt.attempts[-1].controller_calls[-1].call_id
+    out.print(f"[green]spawned recovery[/green] {receipt.run_id}")
+    out.print(f"[bold]Modal call:[/bold] {call_id}")
+
+
+def _status_service(profile: str | None) -> StatusService:
+    config = load_project_config(Path.cwd(), profile=profile)
+    if config.storage is None:
+        raise ValueError("status requires storage configuration")
+    if config.controller.kind != "modal":
+        raise ValueError("status currently supports the Modal controller only")
+    return StatusService(
+        create_s3_store(config.storage),
+        ReceiptStore(),
+        ModalControllerClient(
+            config.controller.app_name, config.controller.function_name
+        ),
+    )
+
+
+@app.command()
+def status(
+    run_id: str,
+    profile: Annotated[str | None, typer.Option(help="User profile name.")] = None,
+    json_output: Annotated[
+        bool,
+        typer.Option("--json", help="Emit canonical JSON to stdout."),
+    ] = False,
+) -> None:
+    """Combine durable S3 state with local and Modal execution evidence."""
+    try:
+        report = _status_service(profile).status(run_id)
+    except (
+        BotoCoreError,
+        ClientError,
+        ModalError,
+        OSError,
+        ValueError,
+        ValidationError,
+    ) as error:
+        _fail_command(error, json_output=json_output)
+    if json_output:
+        typer.echo(canonical_model_bytes(report).decode("utf-8"))
+    else:
+        out.print(f"[bold]Run:[/bold] {report.run_id}")
+        out.print(f"[bold]State:[/bold] {report.state}")
+        if report.outcome is not None:
+            out.print(f"[bold]Outcome:[/bold] {report.outcome}")
+        out.print(report.detail)
+    if report.state == "conflict":
+        raise typer.Exit(3)
+
+
+def _cancellation_service(profile: str | None) -> CancellationService:
+    config = load_project_config(Path.cwd(), profile=profile)
+    if config.storage is None:
+        raise ValueError("cancel requires storage configuration")
+    if config.controller.kind != "modal":
+        raise ValueError("cancel currently supports the Modal controller only")
+    return CancellationService(
+        create_s3_store(config.storage),
+        ModalControllerClient(
+            config.controller.app_name, config.controller.function_name
+        ),
+        None,
+    )
+
+
+@app.command()
+def cancel(
+    run_id: str,
+    profile: Annotated[str | None, typer.Option(help="User profile name.")] = None,
+    json_output: Annotated[
+        bool,
+        typer.Option("--json", help="Emit canonical JSON to stdout."),
+    ] = False,
+) -> None:
+    """CAS-cancel prepared runs; running cleanup needs the deployed observer."""
+    try:
+        result = _cancellation_service(profile).cancel(run_id)
+    except (
+        BotoCoreError,
+        ClientError,
+        ModalError,
+        OSError,
+        ReceiptConflictError,
+        S3CasConflictError,
+        CancellationConflictError,
+        CancellationUnavailableError,
+        SubmissionRefusedError,
+        ValueError,
+    ) as error:
+        _fail_command(error, json_output=json_output)
+    if json_output:
+        typer.echo(canonical_model_bytes(result).decode("utf-8"))
+    else:
+        out.print(f"[bold]Cancellation:[/bold] {result.state}")
+        out.print(f"[bold]Run:[/bold] {result.run_id}")
+    if not result.cleanup_complete:
+        raise typer.Exit(3)
+
+
+@app.command()
+def runs(
+    json_output: Annotated[
+        bool,
+        typer.Option("--json", help="Emit canonical JSON to stdout."),
+    ] = False,
+) -> None:
+    """List local recovery receipts without claiming durable run authority."""
+    try:
+        receipts = ReceiptStore().list()
+    except (OSError, ValueError, ValidationError) as error:
+        _fail_command(error, json_output=json_output)
+    if json_output:
+        _canonical_echo(
+            {
+                "receipts": [item.model_dump(mode="json") for item in receipts],
+                "schema_version": 1,
+            }
+        )
+        return
+    table = Table("Run", "Local evidence", "Request SHA-256")
+    for receipt in receipts:
+        evidence = receipt.attempts[-1].transitions[-1].type
+        table.add_row(receipt.run_id, evidence, receipt.request_sha256)
+    out.print(table)
 
 
 def main() -> None:

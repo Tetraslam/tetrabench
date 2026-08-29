@@ -3,10 +3,17 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+from datetime import UTC, datetime
 from types import MappingProxyType
 from typing import Annotated, Literal
 
-from pydantic import Field, field_serializer, field_validator, model_validator
+from pydantic import (
+    AfterValidator,
+    Field,
+    field_serializer,
+    field_validator,
+    model_validator,
+)
 
 from tetrabench.canonical_json import JsonValue, dumps_canonical_json, sha256_hex
 from tetrabench.models import (
@@ -29,6 +36,31 @@ MediaType = Annotated[
         pattern=r"^[a-z0-9!#$&^_.+-]+/[a-z0-9!#$&^_.+-]+$",
     ),
 ]
+
+
+def _validate_timestamp(value: str) -> str:
+    datetime.strptime(value, "%Y-%m-%dT%H:%M:%SZ")
+    return value
+
+
+Timestamp = Annotated[
+    str,
+    Field(
+        pattern=(
+            r"^[0-9]{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12][0-9]|3[01])"
+            r"T(?:[01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9]Z$"
+        )
+    ),
+    AfterValidator(_validate_timestamp),
+]
+AdmissionState = Literal[
+    "prepared", "running", "cancelling", "cancelled", "terminal", "failed"
+]
+
+
+def utc_now_timestamp() -> str:
+    """Return an integer-second RFC 3339 timestamp for canonical records."""
+    return datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
 def _canonical_digest(model: FrozenRecord) -> str:
@@ -112,6 +144,178 @@ class RequestRecord(FrozenRecord):
         if plan_files != manifest_files:
             raise ValueError("embedded plan and context manifest disagree")
         return self
+
+
+class AdmissionRevision(FrozenRecord):
+    """One immutable entry retained inside the mutable admission record."""
+
+    revision: Annotated[int, Field(ge=0, le=(1 << 53) - 1)]
+    state: AdmissionState
+    timestamp: Timestamp
+    owner_function_call_id: NonEmptyString | None = None
+    terminal_sha256: Sha256 | None = None
+
+    @model_validator(mode="after")
+    def validate_state_fields(self) -> AdmissionRevision:
+        if self.state == "prepared":
+            if self.owner_function_call_id is not None:
+                raise ValueError("prepared admission cannot have an owner")
+        elif self.state == "cancelled" and self.revision == 1:
+            # prepared -> cancelled has no controller owner.
+            pass
+        elif self.owner_function_call_id is None:
+            raise ValueError(f"{self.state} admission revision requires an owner")
+        if (self.state == "terminal") != (self.terminal_sha256 is not None):
+            raise ValueError("only terminal admission revisions bind a terminal digest")
+        return self
+
+
+class AdmissionRecord(FrozenRecord):
+    """Canonical CAS coordination state at one fixed per-run key.
+
+    The complete revision history is carried forward on every overwrite. It is
+    coordination evidence only; an immutable terminal object remains the proof
+    of a terminal run.
+    """
+
+    schema_version: SchemaVersion
+    revision: Annotated[int, Field(ge=0, le=(1 << 53) - 1)]
+    run_id: RunId
+    request_sha256: Sha256
+    plan_sha256: Sha256
+    state: AdmissionState
+    owner_function_call_id: NonEmptyString | None = None
+    terminal_sha256: Sha256 | None = None
+    created_at: Timestamp
+    updated_at: Timestamp
+    history: tuple[AdmissionRevision, ...]
+
+    @model_validator(mode="after")
+    def validate_history(self) -> AdmissionRecord:
+        if not self.history:
+            raise ValueError("admission history cannot be empty")
+        if tuple(item.revision for item in self.history) != tuple(
+            range(len(self.history))
+        ):
+            raise ValueError("admission revisions must be contiguous from zero")
+        first = self.history[0]
+        if (
+            first.state != "prepared"
+            or first.owner_function_call_id is not None
+            or first.terminal_sha256 is not None
+        ):
+            raise ValueError("admission history must begin prepared and unowned")
+        if self.revision != len(self.history) - 1:
+            raise ValueError("admission revision must match its history")
+        latest = self.history[-1]
+        if (
+            self.state,
+            self.owner_function_call_id,
+            self.terminal_sha256,
+            self.updated_at,
+        ) != (
+            latest.state,
+            latest.owner_function_call_id,
+            latest.terminal_sha256,
+            latest.timestamp,
+        ):
+            raise ValueError("admission fields must match the latest revision")
+        if self.created_at != first.timestamp:
+            raise ValueError("admission created_at must match revision zero")
+        timestamps = tuple(item.timestamp for item in self.history)
+        if timestamps != tuple(sorted(timestamps)):
+            raise ValueError("admission timestamps must not move backwards")
+        self._validate_transitions()
+        return self
+
+    def _validate_transitions(self) -> None:
+        allowed: dict[str, set[str]] = {
+            "prepared": {"running", "cancelled"},
+            "running": {"cancelling", "terminal", "failed"},
+            "cancelling": {"cancelled", "terminal", "failed"},
+            "failed": {"terminal"},
+            "cancelled": {"terminal"},
+            "terminal": set(),
+        }
+        owner: str | None = None
+        for previous, current in zip(self.history, self.history[1:], strict=False):
+            if current.state not in allowed[previous.state]:
+                raise ValueError(
+                    f"invalid admission transition {previous.state}->{current.state}"
+                )
+            if previous.state == "prepared" and current.state == "cancelled":
+                if current.owner_function_call_id is not None:
+                    raise ValueError("unclaimed cancellation cannot introduce an owner")
+            elif (
+                previous.state == "cancelled"
+                and previous.owner_function_call_id is None
+            ):
+                raise ValueError(
+                    "an unclaimed cancelled admission cannot become terminal"
+                )
+            else:
+                current_owner = current.owner_function_call_id
+                if owner is None:
+                    owner = current_owner
+                if current_owner != owner:
+                    raise ValueError("admission owner cannot change across revisions")
+
+
+def new_admission(
+    request: RequestRecord,
+    *,
+    timestamp: str,
+) -> AdmissionRecord:
+    revision = AdmissionRevision(
+        revision=0,
+        state="prepared",
+        timestamp=timestamp,
+    )
+    return AdmissionRecord(
+        schema_version=1,
+        revision=0,
+        run_id=request.run_id,
+        request_sha256=_canonical_digest(request),
+        plan_sha256=request.plan_sha256,
+        state="prepared",
+        created_at=timestamp,
+        updated_at=timestamp,
+        history=(revision,),
+    )
+
+
+def transition_admission(
+    admission: AdmissionRecord,
+    state: AdmissionState,
+    *,
+    timestamp: str,
+    owner_function_call_id: str | None = None,
+    terminal_sha256: str | None = None,
+) -> AdmissionRecord:
+    """Build and validate the next admission revision."""
+    owner = owner_function_call_id
+    if admission.owner_function_call_id is not None:
+        if owner is not None and owner != admission.owner_function_call_id:
+            raise ValueError("admission owner cannot change")
+        owner = admission.owner_function_call_id
+    revision = AdmissionRevision(
+        revision=admission.revision + 1,
+        state=state,
+        timestamp=timestamp,
+        owner_function_call_id=owner,
+        terminal_sha256=terminal_sha256,
+    )
+    return AdmissionRecord.model_validate(
+        admission.model_dump()
+        | {
+            "revision": revision.revision,
+            "state": revision.state,
+            "owner_function_call_id": revision.owner_function_call_id,
+            "terminal_sha256": revision.terminal_sha256,
+            "updated_at": revision.timestamp,
+            "history": (*admission.history, revision),
+        }
+    )
 
 
 def _freeze_json(value: JsonValue) -> object:
