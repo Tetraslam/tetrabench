@@ -599,8 +599,8 @@ def test_real_harbor_clean_verifier_forge_sidecar_end_to_end(
     TrialResult.model_validate_json((trial / "result.json").read_text())
     result = json.loads((trial / "result.json").read_text())
     assert result["verifier_environment_mode"] == "separate"
-    assert (trial / "verifier/reward.txt").read_bytes() == b"1\n"
     diagnostics = json.loads((trial / "verifier/diagnostics.json").read_text())
+    assert (trial / "verifier/reward.txt").read_bytes() == b"1\n", diagnostics
     assert result["verifier_result"]["rewards"] == {"reward": 1.0}, diagnostics
     assert diagnostics["ok"] is True
     runtime = diagnostics["runtime"]
