@@ -10,7 +10,7 @@ from typer.testing import CliRunner
 
 from tetrabench.canonical_json import loads_canonical_json
 from tetrabench.cli import app
-from tetrabench.lifecycle import RunStatus
+from tetrabench.lifecycle import RecoveryResult, RunStatus
 from tetrabench.s3 import S3Store
 
 ROOT = Path(__file__).parents[1]
@@ -18,8 +18,14 @@ runner = CliRunner()
 
 
 class _DoctorClient:
-    def __init__(self, head_error: ClientError | None = None) -> None:
+    def __init__(
+        self,
+        head_error: ClientError | None = None,
+        *,
+        location: object = "iad",
+    ) -> None:
         self.head_error = head_error
+        self.location = location
         self.operations: list[tuple[str, dict[str, Any]]] = []
 
     def head_bucket(self, **kwargs: Any) -> dict[str, Any]:
@@ -27,6 +33,10 @@ class _DoctorClient:
         if self.head_error is not None:
             raise self.head_error
         return {}
+
+    def get_bucket_location(self, **kwargs: Any) -> dict[str, Any]:
+        self.operations.append(("get_bucket_location", kwargs))
+        return {"LocationConstraint": self.location}
 
     def list_objects_v2(self, **kwargs: Any) -> dict[str, Any]:
         self.operations.append(("list_objects_v2", kwargs))
@@ -155,9 +165,10 @@ def test_doctor_offline_json_is_canonical_without_provider_client(monkeypatch) -
     assert report["mode"] == "offline"
     checks = report["checks"]
     assert isinstance(checks, list)
-    assert checks[-3:] == [
+    assert checks[-4:] == [
         {"name": "storage_bucket", "status": "not_attempted"},
         {"name": "storage_prefix", "status": "not_attempted"},
+        {"name": "admission_coordination", "status": "not_attempted"},
         {"name": "storage_writes", "status": "unproven"},
     ]
 
@@ -173,7 +184,7 @@ def test_doctor_online_checks_selected_provider_without_mutation(
     display: str,
 ) -> None:
     user_path = _profile_file(tmp_path, provider)
-    client = _DoctorClient()
+    client = _DoctorClient(location="us-west-2" if provider == "aws" else "iad")
     selected_configs: list[Any] = []
 
     def make_store(config) -> S3Store:
@@ -193,11 +204,14 @@ def test_doctor_online_checks_selected_provider_without_mutation(
         in result.stdout
     )
     assert "unproven storage writes (not attempted)" in result.stdout
+    assert "bucket location" in result.stdout
+    assert "safe mutable admission coordination" in result.stdout
     assert result.stderr == ""
     assert len(selected_configs) == 1
     assert selected_configs[0].provider == provider
     assert client.operations == [
         ("head_bucket", {"Bucket": "doctor-bucket"}),
+        ("get_bucket_location", {"Bucket": "doctor-bucket"}),
         (
             "list_objects_v2",
             {"Bucket": "doctor-bucket", "Prefix": "tenant/v1/", "MaxKeys": 1},
@@ -227,7 +241,10 @@ def test_doctor_json_is_canonical_machine_output(tmp_path: Path, monkeypatch) ->
     assert report["mode"] == "online"
     assert report["profile"] == "online"
     assert report["storage"] == {
+        "admission_safe": True,
         "bucket": "doctor-bucket",
+        "bucket_location": "iad",
+        "location_type": "tigris-single-region",
         "prefix": "tenant/v1",
         "provider": "tigris",
         "provider_display": "Tigris",
@@ -238,8 +255,46 @@ def test_doctor_json_is_canonical_machine_output(tmp_path: Path, monkeypatch) ->
         "name": "storage_writes",
         "status": "unproven",
     }
+    assert checks[-2] == {"name": "admission_coordination", "status": "ok"}
     assert result.stdout.endswith("\n")
     assert result.stderr == ""
+
+
+def test_doctor_online_reports_global_bucket_as_readable_but_admission_unsafe(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    user_path = _profile_file(tmp_path, "tigris")
+    client = _DoctorClient(location="global")
+    monkeypatch.chdir(ROOT)
+    monkeypatch.setattr("tetrabench.config.default_user_config_path", lambda: user_path)
+    monkeypatch.setattr(
+        "tetrabench.cli.create_s3_store",
+        lambda config: S3Store(config, client),
+    )
+
+    result = runner.invoke(
+        app,
+        ["doctor", "--profile", "online", "--online", "--json"],
+    )
+
+    assert result.exit_code == 0
+    report = loads_canonical_json(result.stdout.removesuffix("\n").encode())
+    assert isinstance(report, dict)
+    storage = report["storage"]
+    checks = report["checks"]
+    assert isinstance(storage, dict)
+    assert isinstance(checks, list)
+    assert storage["bucket_location"] == "global"
+    assert storage["admission_safe"] is False
+    statuses: dict[str, object] = {}
+    for item in checks:
+        assert isinstance(item, dict)
+        name = item["name"]
+        assert isinstance(name, str)
+        statuses[name] = item["status"]
+    assert statuses["admission_coordination"] == "unsafe"
+    assert not any(name.startswith("put") for name, _kwargs in client.operations)
 
 
 @pytest.mark.parametrize(
@@ -429,3 +484,94 @@ def test_runs_json_is_canonical_local_receipt_cache(monkeypatch) -> None:
         "receipts": [],
         "schema_version": 1,
     }
+
+
+def test_recover_requires_confirmation_before_service_call(monkeypatch) -> None:
+    called = False
+
+    def service(_profile):
+        nonlocal called
+        called = True
+        raise AssertionError("service must not be constructed")
+
+    monkeypatch.setattr("tetrabench.cli._recovery_service", service)
+    result = runner.invoke(app, ["recover", "run-1"], input="n\n")
+
+    assert result.exit_code == 1
+    assert not called
+    assert "no cloud mutation attempted" in result.stderr
+
+
+def test_recover_json_requires_yes_without_service_call(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "tetrabench.cli._recovery_service",
+        lambda _profile: (_ for _ in ()).throw(AssertionError("must not construct")),
+    )
+    result = runner.invoke(app, ["recover", "run-1", "--json"])
+
+    assert result.exit_code == 2
+    assert result.stdout == ""
+    assert loads_canonical_json(result.stderr.removesuffix("\n").encode()) == {
+        "error": "recover --json requires --yes",
+        "schema_version": 1,
+    }
+
+
+def test_recover_yes_json_emits_canonical_result(monkeypatch) -> None:
+    class Service:
+        @staticmethod
+        def recover(run_id: str) -> RecoveryResult:
+            return RecoveryResult(
+                run_id=run_id,
+                state="spawned",
+                prior_owner_function_call_id="fc-old",
+                successor_function_call_id="fc-new",
+                terminal_proof_observed=False,
+                cleanup_complete=True,
+                sweeps=2,
+                detail="recovered",
+            )
+
+    monkeypatch.setattr("tetrabench.cli._recovery_service", lambda _profile: Service())
+    result = runner.invoke(app, ["recover", "run-1", "--yes", "--json"])
+
+    assert result.exit_code == 0
+    assert result.stderr == ""
+    payload = loads_canonical_json(result.stdout.removesuffix("\n").encode())
+    assert isinstance(payload, dict)
+    assert payload["state"] == "spawned"
+    assert payload["successor_function_call_id"] == "fc-new"
+
+
+@pytest.mark.parametrize("json_output", [False, True])
+def test_recover_exits_unsuccessfully_until_cleanup_completes(
+    monkeypatch, json_output: bool
+) -> None:
+    class Service:
+        @staticmethod
+        def recover(run_id: str) -> RecoveryResult:
+            return RecoveryResult(
+                run_id=run_id,
+                state="terminal",
+                prior_owner_function_call_id="fc-old",
+                terminal_proof_observed=True,
+                cleanup_complete=False,
+                sweeps=1,
+                detail="terminal proof observed; child cleanup failed",
+            )
+
+    monkeypatch.setattr("tetrabench.cli._recovery_service", lambda _profile: Service())
+    arguments = ["recover", "run-1", "--yes"]
+    if json_output:
+        arguments.append("--json")
+
+    result = runner.invoke(app, arguments)
+
+    assert result.exit_code == 3
+    if json_output:
+        payload = loads_canonical_json(result.stdout.removesuffix("\n").encode())
+        assert isinstance(payload, dict)
+        assert payload["state"] == "terminal"
+        assert payload["cleanup_complete"] is False
+    else:
+        assert "child cleanup failed" in result.stdout

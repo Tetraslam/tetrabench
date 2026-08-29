@@ -114,6 +114,9 @@ class _MemoryStore:
         self.events: list[AttemptEvent] = []
         self.terminal: TerminalRecord | None = None
 
+    def require_coordination_safe(self):
+        return None
+
     def read_request(self, run_id: str, request_sha256: str, request_key: str, /):
         if (run_id, request_sha256, request_key) != (
             self.request.run_id,

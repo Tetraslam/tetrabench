@@ -224,3 +224,83 @@ Provenance: user-provided checkpoint findings and local Python 3.12 validation.
 Invalid source-only smoke `--hold-seconds` values now fail at the argparse boundary with concise stderr and exit status 2 before configuration, credentials, S3, or Modal are consulted. Subprocess regressions exercise the actual script entrypoint for negative, oversized, and non-integer values. The systems-design record now reflects E-039 nested Harbor child and named-Volume evidence plus E-041 live cancellation and repeated cleanup; forced interruption/preemption replay remains `unproven`.
 
 All 292 tests passed, including the real attached-Docker Harbor fixture. Ruff check and format, ty, `uv lock --check`, wheel/sdist build, isolated-wheel CLI/version/metadata and source-only exclusion checks, `git diff --check`, and an audited detect-secrets scan passed. The scan findings remain committed SHA-256 fixtures and explicit non-secret Secret-name/negative-test strings. No dependency or credential behavior changed; `botocore[crt]` was not added.
+
+## 2026-08-29T00:36:08-07:00: Explicit detached-controller recovery state
+
+Provenance: user-provided recovery protocol and local implementation review.
+
+`recovering` is the durable handoff state for an owner whose Modal FunctionCall is proven terminal but whose stale Harbor children are not yet proven quiescent. Recovery may enter it only from owned `running` or `failed`, never from terminal or cancellation states and never after a running or inspection-unknown owner. Two consecutive empty child sweeps permit `recovering→prepared`; that transition clears the current owner while the immutable revision history retains prior owner evidence. A successor obtains authority only through the existing `prepared→running` claim. Terminal proof dominates at every boundary, CAS losers reread authority, cleanup failure stays resumable in `recovering`, and local recovery intent/spawn receipts remain evidence rather than authority. This decision is D-050.
+
+## 2026-08-29T00:52:42-07:00: Recovery cleanup and replay correction
+
+Provenance: user-provided recovery review findings on 2026-08-29.
+
+Terminal authority stops successor work but does not prove Harbor child cleanup. Every terminal observation during recovery must still complete bounded quiescence; failure remains explicit and cleanup can be retried without spawning. Recovery on an already terminal run is cleanup-only and does not mutate terminal or admission authority. The prepared handoff does not make Modal spawn exactly once: concurrent callers may spawn multiple FunctionCalls, while only one fresh `prepared→running` CAS claimant owns the controller and may run Harbor. A new physical attempt that finds the same owner already running fails closed before Harbor; explicit recovery must later prove that owner terminal and clean its children. Actual Modal preemption behavior remains `unproven`. This correction is D-051 and supersedes D-030, D-031, and D-050 where more specific.
+
+## 2026-08-29T03:13:25-07:00: E-043 forced-controller recovery
+
+Provenance: retained baseline Modal/Tigris resources, direct Modal FunctionCall termination without tetrabench cancellation intent, same-region fresh-process recovery, fresh cross-region final verification, named-Volume inspection, Modal billing, and final local validation.
+
+E-043's forced-interruption portion passed after the owner reached failed with a tagged child still visible. Admission remained active and status reported attention with no local receipt. A fresh empty-state process recovered through `failed→recovering→prepared`; two sweeps quiesced the stale child, and a successor claimed admission. Distinct old and winning attempts remained in the named Volume. Terminal publication followed all 14 artifacts, carried reward `1.0`, and advanced admission revision 6 to terminal. A second fresh empty-state process reread status and native Harbor results from S3, found no receipt, and confirmed both controller calls terminal with no tagged children. Final Modal inspection found no active container. Full identifiers remain in the retained private evidence path below.
+
+The final run took 121 seconds from prepared admission to terminal. The full discovery session cost `$0.04201218` across the baseline controller, Harbor, and temporary smoke-driver Apps; Tigris did not report separate cost. Every temporary Tigris key was deleted, while private run and Volume evidence remain under the existing smoke prefix. The retained report and executable verification helpers are under `~/.local/share/opencode/tetrabench-research/modal-tigris-recovery/2026-08-29/`.
+
+Live evidence exposed three recovery boundaries. Tigris Global cross-region reads returned stale admission revision zero for much longer than the documented typical sub-second window, so the mutating recovery ran in a fresh `us-east` process within the controller's consistency region; a later west-coast process verified final S3 authority. Direct `terminate_containers=True` continued tearing down the old container after its FunctionCall became terminal and could kill an immediate successor, so recovery now waits 30 seconds before mutation or spawn. Modal reused interrupted controller containers with open Volume files, so successors commit the mounted Volume before attempt setup and avoid the redundant reload that Modal rejects in that state. Child cleanup now polls listed and persisted sandboxes before treating them as running or terminating them. Cleanup observations pause between sweeps, and bounded phase/error diagnostics remain free of provider messages.
+
+Final validation passed with 329 tests, including the real attached-Docker Harbor fixture, plus Ruff check/format, ty, `uv lock --check`, wheel/sdist build, isolated-wheel CLI/metadata/source-only exclusion, `git diff --check`, and an audited changed-file detect-secrets scan. Findings were existing non-secret Secret-name fixtures and the deliberate exception-message redaction test. True provider-initiated preemption and all live AWS behavior remain `unproven`.
+
+## 2026-08-29T03:47:15-07:00: Recovery and provider-topology correction
+
+Provenance: user correction, Tigris bucket-location and consistency documentation, local provider fakes, and read-only live inspection of the retained Tigris organization.
+
+The preceding E-043 entry proves forced interruption followed by explicit recovery; it does not prove provider-initiated Modal preemption. Terminal owner proof gates one bounded 30-second settling window. Repeated child sweeps establish quiescence, while durable recovery keeps a stopped cleanup attempt resumable.
+
+Mutable admission coordination now requires an online bucket-location preflight before submit, recovery, or cancellation mutates provider state. Standard regional AWS buckets are accepted. Tigris Single-region and Multi-region locations are accepted; Global, Dual-region, missing, and unknown locations are rejected. Tigris retains endpoint `https://t3.storage.dev` and SDK region `auto`. Status and result reads remain available for legacy Global-bucket runs.
+
+Read-only live inspection found only Global buckets in the retained Tigris organization and confirmed the baseline location as `global`. No bucket was created or migrated, so live Single-region Tigris consistency remains `unproven`. A source-only opt-in probe can exercise conditional create and a two-writer stale-ETag race against an existing accepted AWS or Tigris bucket without recording credentials or object identity.
+
+## 2026-08-29T03:53:52-07:00: E-044 validation
+
+Provenance: final local validation and isolated installed-wheel inspection.
+
+All 347 tests passed, including the real attached-Docker Harbor fixture. Ruff check and format, ty, `uv lock --check`, wheel/sdist build, isolated-wheel installation, version/metadata and source-only probe exclusion, and `git diff --check` passed. Changed-file secret scanning reported only existing explicit Secret-name test fixtures; the provider probe accepts ambient credentials only and records neither credentials nor object identity.
+
+## 2026-08-29T03:56:18-07:00: E-044 validation-count correction
+
+Provenance: final regression added at the S3 mutation boundary and a repeated full local validation.
+
+The preceding E-044 validation count is superseded by 348 passing tests. The added regression proves that direct `S3Store.create_admission` cannot bypass an unsafe bucket-topology preflight. Ruff check and format, ty, `uv lock --check`, wheel/sdist build, and `git diff --check` passed again.
+
+## 2026-08-29T04:07:43-07:00: Consistency-gate and probe correction
+
+Provenance: user-provided consistency-gate/probe findings and local implementation review. No provider or live IAM mutation was authorized.
+
+D-053 is narrowed to mutable admission and complete run-mutation entrypoints. Admission create/update remains intrinsically gated, and submit, recovery, cancellation, and controller execution preflight before creating any new run object. Generic immutable publication remains valid on Global Tigris with bounded eventual-read semantics, including retained legacy evidence. An AWS bucket-location response accepts only documented null, legacy `EU`, or pinned-SDK region values; an empty string fails closed. Moving coordination requires a newly provisioned Single-region bucket followed by copy/cutover, not an in-place location migration.
+
+The source-only probe now uses distinct clients synchronized at the stale-ETag race, attempts deletion after every conditional-create attempt including ambiguous timeout, and boundedly verifies object absence. Probe-work and cleanup failures remain separately inspectable. Normal submitter/controller identities add `GetBucketLocation` but remain no-delete; only a temporary probe-prefix credential needs delete. Tests and policy documentation change, but no live resource does.
+
+## 2026-08-29T04:10:53-07:00: E-045 local validation
+
+Provenance: full local Python 3.12 validation after the consistency-gate/probe correction. No provider was called and no live resource or IAM policy was changed.
+
+All 359 tests passed, including the real attached-Docker Harbor fixture. Ruff check and format, ty, `uv lock --check`, wheel/sdist build, isolated-wheel installation plus CLI version and distribution metadata checks, `git diff --check`, and a changed-file detect-secrets scan passed. The probe remains source-only and excluded from the wheel by the existing package fixture.
+
+## 2026-08-29T04:29:53-07:00: E-046 Single-region coordination cutover
+
+Provenance: authenticated Tigris CLI and S3 APIs, Modal 1.5.4 deployment and billing APIs, current uncommitted source, a fresh empty-state verifier process, native Harbor 0.22 models, and final local Python 3.12 validation.
+
+A new uniquely named private Tigris Single-region `iad` bucket is now the authoritative tetrabench coordination and artifact baseline. The retained Global bucket and its objects were neither modified nor copied; a safe `legacy-global` user profile preserves read access while `baseline` selects the new bucket and prefix with the retained App, Volume, and Secret names. The authenticated local credential provider required the Botocore CRT extra, so `botocore[crt]==1.43.83` and its locked `awscrt` dependency were added.
+
+Separate policies and keys were created for the no-delete controller and disposable probe. Both received `GetBucketLocation`; object permissions were prefix-scoped. Tigris accepted but did not enforce the attempted `s3:prefix` condition on `ListBucket`, so listing remains bucket-wide. The probe passed `iad` admission, immediate GET/HEAD/LIST, conditional create, a synchronized two-client update race with one winner, and verified HEAD/LIST cleanup with zero residue. Its key and policy were deleted. A separate temporary no-delete submitter key/policy drove deployment and the smoke, then was deleted.
+
+The retained Modal Secret was replaced without printing values, and the current source controller was redeployed to the retained App/Environment/Volume. The final smoke returned from its launcher in 10.21 seconds and reached fresh-process terminal proof 65.43 seconds after launch. Its winning attempt published 14 artifacts before terminal, completed one Harbor trial with reward `1.0`, retained its named-Volume attempt, recorded the expected nested-child lifecycle, and left zero active child or controller containers. Modal billed `$0.00136689` to the controller and Harbor Apps in that hourly interval; Tigris reported no separate cost. Full identifiers and provider evidence remain under `~/.local/share/opencode/tetrabench-research/tigris-single-region-cutover/2026-08-29/`.
+
+Final validation passed with 359 tests, including the real attached-Docker Harbor fixture, plus Ruff check/format, ty, `uv lock --check`, wheel/sdist build, and `git diff --check`. AWS live behavior and actual provider-initiated Modal preemption remain `unproven`.
+
+## 2026-08-29T04:51:48-07:00: E-047 final recovery/cutover correction
+
+Provenance: user-provided final findings, local Python 3.12 validation, package inspection, and a bounded full-changed-content secret scan.
+
+Terminal-state recovery now applies the same terminal/admission/request/plan binding checks as status before any child sweep. A mismatch raises conflict without cleanup mutation. The provider probe cleans up only after a successful create or an ambiguous transport outcome; a definitive create precondition rejection leaves the pre-existing object untouched. Public current-state evidence no longer carries raw execution identifiers, while retained private evidence paths preserve the full records. Recovery wording now names the implemented terminal owner proof, one bounded settling window, and repeated child sweeps. P6 remains incomplete because the broader security review has not been performed.
+
+All 363 tests passed, including the real attached-Docker Harbor fixture. Ruff check and format, ty, `uv lock --check`, wheel/sdist build, isolated-wheel CLI/version/metadata/content checks, and `git diff --check` passed. No detect-secrets or gitleaks executable was available, so no dependency was installed solely for scanning. A bounded standard-library scanner read all 27 changed and untracked files (about 1.05 MB) and checked common provider/token/private-key/credential-URL patterns, generic secret assignments, and high-entropy literals. Its sole initial match was the deliberate synthetic provider-secret fixture used to prove exception redaction; after auditing that exact value, the allowlisted scan reported zero findings. The scan did not inspect Git history, ignored files, binary content, or provider-side secret stores.

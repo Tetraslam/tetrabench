@@ -54,7 +54,13 @@ Timestamp = Annotated[
     AfterValidator(_validate_timestamp),
 ]
 AdmissionState = Literal[
-    "prepared", "running", "cancelling", "cancelled", "terminal", "failed"
+    "prepared",
+    "running",
+    "recovering",
+    "cancelling",
+    "cancelled",
+    "terminal",
+    "failed",
 ]
 
 
@@ -159,7 +165,7 @@ class AdmissionRevision(FrozenRecord):
     def validate_state_fields(self) -> AdmissionRevision:
         if self.state == "prepared":
             if self.owner_function_call_id is not None:
-                raise ValueError("prepared admission cannot have an owner")
+                raise ValueError("prepared admission cannot have a current owner")
         elif self.state == "cancelled" and self.revision == 1:
             # prepared -> cancelled has no controller owner.
             pass
@@ -231,9 +237,10 @@ class AdmissionRecord(FrozenRecord):
     def _validate_transitions(self) -> None:
         allowed: dict[str, set[str]] = {
             "prepared": {"running", "cancelled"},
-            "running": {"cancelling", "terminal", "failed"},
+            "running": {"recovering", "cancelling", "terminal", "failed"},
+            "recovering": {"prepared", "terminal"},
             "cancelling": {"cancelled", "terminal", "failed"},
-            "failed": {"terminal"},
+            "failed": {"recovering", "terminal"},
             "cancelled": {"terminal"},
             "terminal": set(),
         }
@@ -243,7 +250,13 @@ class AdmissionRecord(FrozenRecord):
                 raise ValueError(
                     f"invalid admission transition {previous.state}->{current.state}"
                 )
-            if previous.state == "prepared" and current.state == "cancelled":
+            if previous.state == "recovering" and current.state == "prepared":
+                if current.owner_function_call_id is not None:
+                    raise ValueError(
+                        "recovered prepared admission must clear current owner"
+                    )
+                owner = None
+            elif previous.state == "prepared" and current.state == "cancelled":
                 if current.owner_function_call_id is not None:
                     raise ValueError("unclaimed cancellation cannot introduce an owner")
             elif (
@@ -291,10 +304,15 @@ def transition_admission(
     timestamp: str,
     owner_function_call_id: str | None = None,
     terminal_sha256: str | None = None,
+    clear_owner: bool = False,
 ) -> AdmissionRecord:
     """Build and validate the next admission revision."""
-    owner = owner_function_call_id
-    if admission.owner_function_call_id is not None:
+    if clear_owner and state != "prepared":
+        raise ValueError("current owner can only be cleared when preparing recovery")
+    if clear_owner and owner_function_call_id is not None:
+        raise ValueError("cannot clear and set the admission owner together")
+    owner = None if clear_owner else owner_function_call_id
+    if admission.owner_function_call_id is not None and not clear_owner:
         if owner is not None and owner != admission.owner_function_call_id:
             raise ValueError("admission owner cannot change")
         owner = admission.owner_function_call_id

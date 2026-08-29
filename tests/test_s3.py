@@ -45,6 +45,7 @@ from tetrabench.s3 import (
     S3ConflictError,
     S3IntegrityError,
     S3Store,
+    UnsafeCoordinationTopologyError,
     create_s3_client,
 )
 from tetrabench.storage import admission_key, event_key, request_key, terminal_key
@@ -78,6 +79,7 @@ class FakeS3Client:
 
     def __init__(self) -> None:
         self.provider = "aws"
+        self.location: object = "us-west-2"
         self.objects: dict[str, _StoredObject] = {}
         self.operations: list[tuple[str, str]] = []
         self.list_calls = 0
@@ -160,6 +162,10 @@ class FakeS3Client:
     def head_bucket(self, **kwargs: Any) -> Mapping[str, Any]:
         self.operations.append(("head_bucket", kwargs["Bucket"]))
         return {}
+
+    def get_bucket_location(self, **kwargs: Any) -> Mapping[str, Any]:
+        self.operations.append(("get_bucket_location", kwargs["Bucket"]))
+        return {"LocationConstraint": self.location}
 
     def head_object(self, **kwargs: Any) -> Mapping[str, Any]:
         key = kwargs["Key"]
@@ -269,6 +275,7 @@ def store(request: pytest.FixtureRequest) -> Iterator[tuple[S3Store, FakeS3Clien
     )
     client = FakeS3Client()
     client.provider = request.param
+    client.location = "us-west-2" if request.param == "aws" else "iad"
     yield S3Store(config, client, sleep=lambda _seconds: None), client
 
 
@@ -380,6 +387,150 @@ def test_client_construction_uses_provider_specific_botocore_options(
     assert not {"aws_access_key_id", "aws_secret_access_key"} & options.keys()
 
 
+@pytest.mark.parametrize(
+    ("raw_location", "normalized_location"),
+    [(None, "us-east-1"), ("EU", "eu-west-1"), ("ap-southeast-2", "ap-southeast-2")],
+)
+def test_aws_regional_bucket_locations_are_admission_safe(
+    raw_location: object,
+    normalized_location: str,
+) -> None:
+    client = FakeS3Client()
+    client.location = raw_location
+    store = S3Store(
+        AwsStorageConfig(provider="aws", bucket="bucket", region="us-west-2"),
+        client,
+    )
+
+    topology = store.require_coordination_safe()
+
+    assert topology.bucket_location == normalized_location
+    assert topology.location_type == "aws-region"
+    assert topology.admission_safe
+    assert client.operations == [("get_bucket_location", "bucket")]
+
+
+def test_empty_aws_bucket_location_fails_closed_without_mutation() -> None:
+    client = FakeS3Client()
+    client.location = ""
+    store = S3Store(
+        AwsStorageConfig(provider="aws", bucket="bucket", region="us-west-2"),
+        client,
+    )
+
+    with pytest.raises(UnsafeCoordinationTopologyError, match="pinned SDK"):
+        store.require_coordination_safe()
+
+    assert client.operations == [("get_bucket_location", "bucket")]
+    assert client.objects == {}
+
+
+def test_unknown_aws_bucket_location_fails_closed_without_mutation() -> None:
+    client = FakeS3Client()
+    client.location = "global"
+    store = S3Store(
+        AwsStorageConfig(provider="aws", bucket="bucket", region="us-west-2"),
+        client,
+    )
+
+    with pytest.raises(UnsafeCoordinationTopologyError, match="pinned SDK"):
+        store.require_coordination_safe()
+
+    assert client.operations == [("get_bucket_location", "bucket")]
+    assert client.objects == {}
+
+
+@pytest.mark.parametrize(
+    ("location", "location_type", "admission_safe"),
+    [
+        ("global", "tigris-global", False),
+        ("auto", "tigris-global", False),
+        ("iad", "tigris-single-region", True),
+        ("usa", "tigris-multi-region", True),
+        ("eur", "tigris-multi-region", True),
+        ("iad,sjc", "tigris-dual-region", False),
+        ("unknown", "unknown", False),
+        (None, "unknown", False),
+    ],
+)
+def test_tigris_bucket_location_controls_admission_safety(
+    location: object,
+    location_type: str,
+    admission_safe: bool,
+) -> None:
+    client = FakeS3Client()
+    client.location = location
+    store = S3Store(
+        TigrisStorageConfig(provider="tigris", bucket="bucket"),
+        client,
+    )
+
+    topology = store.inspect_coordination_topology()
+
+    assert topology.location_type == location_type
+    assert topology.admission_safe is admission_safe
+    if admission_safe:
+        assert store.require_coordination_safe() is topology
+    else:
+        with pytest.raises(UnsafeCoordinationTopologyError):
+            store.require_coordination_safe()
+    assert client.operations == [("get_bucket_location", "bucket")]
+    assert not any(operation == "put" for operation, _value in client.operations)
+
+
+def test_admission_store_mutation_cannot_bypass_unsafe_topology() -> None:
+    client = FakeS3Client()
+    client.location = "global"
+    store = S3Store(
+        TigrisStorageConfig(provider="tigris", bucket="bucket"),
+        client,
+    )
+
+    with pytest.raises(UnsafeCoordinationTopologyError, match="Global"):
+        store.create_admission(_admission())
+
+    assert client.operations == [("get_bucket_location", "bucket")]
+    assert client.objects == {}
+
+
+def test_admission_update_cannot_bypass_unsafe_topology() -> None:
+    client = FakeS3Client()
+    client.location = "global"
+    store = S3Store(
+        TigrisStorageConfig(provider="tigris", bucket="bucket"),
+        client,
+    )
+    prepared = _admission()
+    running = transition_admission(
+        prepared,
+        "running",
+        timestamp="2026-08-28T20:00:01Z",
+        owner_function_call_id="fc-1",
+    )
+
+    with pytest.raises(UnsafeCoordinationTopologyError, match="Global"):
+        store.update_admission(AdmissionRead(prepared, '"etag"'), running)
+
+    assert client.operations == [("get_bucket_location", "bucket")]
+    assert client.objects == {}
+
+
+def test_global_tigris_can_publish_generic_immutable_content() -> None:
+    client = FakeS3Client()
+    client.location = "global"
+    store = S3Store(
+        TigrisStorageConfig(provider="tigris", bucket="bucket"),
+        client,
+    )
+
+    descriptor = store.publish_content(b"legacy immutable evidence")
+
+    assert client.objects[descriptor.key].body == b"legacy immutable evidence"
+    assert not any(
+        operation[0] == "get_bucket_location" for operation in client.operations
+    )
+
+
 def test_content_bytes_are_checksummed_verified_and_idempotent(
     store: tuple[S3Store, FakeS3Client],
 ) -> None:
@@ -459,7 +610,10 @@ def test_admission_create_read_and_stale_etag_conflict(
 
     assert s3.read_admission("run-1") == created
     key = admission_key("run-1", prefix="tenant/v1")
-    assert client.operations[0] == ("put", key)
+    assert client.operations[:2] == [
+        ("get_bucket_location", "bucket"),
+        ("put", key),
+    ]
     with pytest.raises(S3CasConflictError):
         s3.create_admission(prepared)
 

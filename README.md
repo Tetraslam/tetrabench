@@ -14,16 +14,43 @@ isolation, Volume boundaries, context verification, terminal-last publication,
 no-follow bounded artifact collection, bounded failure evidence, and real
 child-observer orchestration with fakes. Modal 1.5.4 App construction and the
 installed distribution metadata are exercised against the real local SDK.
-Tigris conditional create, stale-ETag rejection, update, and concurrent
-single-winner behavior have been proven live on a private copy-on-write fork.
-A deployed Modal controller has completed three detached fixture smokes against
-a private Tigris prefix. The final run retained its named-Volume job tree,
-published a 14-artifact terminal with reward `1.0`, and left no child sandbox
-running. A separate bounded smoke cancelled a running controller after observing
-its real Harbor child, reached cancelled admission, and left no running call or
-child. AWS and forced replay remain unproven. The checked-in benchmark sections
-still contain no tasks, so `submit` refuses them; the source-only fixture helper
-is the only exercised cloud submission path.
+A new private Tigris Single-region `iad` bucket is the authoritative coordination
+baseline. Live evidence covers location admission, immediate GET/HEAD/LIST,
+conditional create and concurrent single-winner update, verified probe cleanup,
+and a fresh-process detached Harbor oracle smoke with reward `1.0`. The retained
+Global bucket is legacy immutable evidence only; tetrabench rejects it for
+mutable admission coordination.
+A deployed Modal controller has completed detached execution, cancellation, and
+forced-interruption recovery smokes against a private Tigris prefix. The recovery
+smoke terminated a running owner without publishing cancellation intent, observed
+its stale Harbor child, and recovered from a fresh empty-state process. The
+successor retained distinct old and new named-Volume attempts, published a
+14-artifact terminal with reward `1.0`, and left no tagged child or controller
+call running. The Single-region cutover smoke likewise published 14 artifacts
+terminal-last, retained its named-Volume attempt, and left no active controller
+or nested Harbor child. AWS and true provider preemption remain unproven. The
+checked-in benchmark sections still contain no tasks, so `submit` refuses them; the
+source-only fixture helper is the only exercised cloud submission path.
+
+Explicit detached-controller recovery is locally and live verified. It refuses
+running or inspection-unknown owners and cancellation admission states.
+After Modal proves the old owner stopped, recovery CASes admission to
+`recovering`, repeatedly sweeps stale children to quiescence, clears only the
+current owner by returning to `prepared`, and may spawn a successor call. Rare
+concurrent recoveries can spawn multiple calls after that handoff; only the fresh
+`prepared→running` CAS winner may run Harbor. The complete revision history
+retains old and new owners. Cleanup failure remains resumable without spawning.
+Immutable terminal proof appearing at any boundary stops successor work but
+still requires bounded child quiescence; recovery on an already terminal run is
+cleanup-only and succeeds only after cleanup completes. The live forced-
+interruption run exercised this path on Modal. Terminal owner proof gates
+recovery. A bounded 30-second settling window succeeded in that smoke; the
+window is empirical, not a safety proof. Repeated child sweeps establish
+quiescence, and interrupted cleanup remains recoverable. The successor commits
+the mounted Volume before attempt setup, preserving interrupted-owner files
+without a reload that Modal rejects while old file descriptors remain open.
+Child cleanup polls listed and persisted sandboxes so terminal handles are not
+treated as running or terminated twice.
 
 Python 3.12 or newer is required.
 
@@ -74,7 +101,8 @@ uv run tetrabench controller info --profile PROFILE --json
 uv run tetrabench controller deploy --profile PROFILE
 uv run tetrabench controller deploy --profile PROFILE --yes --json
 uv run tetrabench submit systems-design
-uv run tetrabench recover systems-design --run-id RUN_ID
+uv run tetrabench recover RUN_ID
+uv run tetrabench recover RUN_ID --yes --json
 uv run tetrabench status RUN_ID
 uv run tetrabench status RUN_ID --json
 uv run tetrabench cancel RUN_ID
@@ -90,10 +118,9 @@ canonical JSON on stderr when `--json` is set.
 selection, section READMEs, and selected context files. This default mode is
 offline: it does not construct a provider client, read credentials, or call
 Modal or storage APIs. `doctor --online` additionally constructs the selected
-storage provider client, calls `HeadBucket`, and lists at most one key under
-the configured prefix. It never calls a mutation API. A successful check proves
-only that those reads worked at that time; writes remain `unproven` and are not
-attempted.
+storage provider client, calls `HeadBucket` and `GetBucketLocation`, and lists
+at most one key under the configured prefix. It reports the bucket location and
+whether mutable admission coordination is safe. It never calls a mutation API.
 
 ## Local detached control
 
@@ -109,10 +136,25 @@ FunctionCall ID as local evidence. The CLI never claims admission ownership.
 Every spawned controller must CAS prepared to running with its actual call ID;
 before that CAS it must validate the full run/request/plan invocation against
 the immutable request and admission. Only the winner may enter Harbor. `recover`
-is an explicit operator action and spawns only while admission is still
-prepared. A missing or corrupt receipt is a status warning. S3 conflicts
-dominate, and an immutable terminal object dominates admission, receipt, and
-Modal output.
+is an explicit operator action. It asks for confirmation before cloud mutation;
+`--yes` skips the prompt, and JSON recovery requires `--yes`. A prepared orphan
+spawns directly. An owned running or failed admission first requires terminal
+Modal call inspection, advances to `recovering`, and reaches `prepared` only
+after two consecutive child sweeps are empty. A cleanup error leaves recovery
+resumable without spawning. Concurrent callers may spawn more than one
+FunctionCall while admission is prepared, but only the fresh
+`prepared→running` CAS claimant may run Harbor; losing calls exit before work.
+A terminal observed before claim also makes the call exit before work. A new
+owner cannot claim `recovering`. A new physical attempt with the pre-existing
+owner ID exits before Harbor; explicit recovery must prove that owner terminal
+and clean its children before preparing a successor. Actual Modal preemption
+behavior remains unproven.
+
+Recovery receipts append `recovery-intended` before spawn and `spawn-returned`
+after Modal returns the call ID. Missing or corrupt receipts do not grant or
+remove authority. `status` reports `recovering` as attention and tells the
+operator to rerun recovery if cleanup stopped. S3 conflicts dominate, and an
+immutable terminal object dominates admission, receipts, and Modal output.
 
 Cancellation uses admission CAS and needs no event-write permission. Prepared
 runs advance directly to cancelled. Running runs advance to cancelling while
@@ -210,6 +252,54 @@ Tigris fixes its endpoint to `https://t3.storage.dev` and its region to `auto`:
 provider = "tigris"
 bucket = "private-benchmark-artifacts"
 ```
+
+Before admission create/update and before a higher-level `submit`, `recover`,
+`cancel`, or controller mutation sequence can publish a new run object,
+tetrabench reads the bucket location. AWS accepts the documented null
+`us-east-1` response, legacy `EU`, and regions known to the pinned SDK; an empty
+string is invalid. Tigris Single-region (`iad`, for example) and Multi-region
+(`usa` or `eur`) buckets are accepted. Tigris Global and Dual-region buckets are
+rejected for mutable coordination because their cross-region consistency is
+eventual. Missing or unknown locations also fail closed.
+
+The gate does not prohibit generic immutable content publication. A retained
+Global Tigris bucket may continue storing and serving content-addressed objects
+and legacy run evidence under bounded eventual-read semantics. Status and
+result reads remain available there. Moving mutable coordination to a safe
+topology requires provisioning a new Single-region bucket, copying retained
+objects as needed, and cutting clients over. It is not an in-place bucket
+location migration.
+
+The retained Global baseline was inspected live and is correctly classified as
+unsafe for admission mutation. A separate private Single-region `iad` bucket is
+now authoritative for coordination; no legacy object was copied or changed.
+The source-only probe passed there with immediate GET, HEAD, and LIST after
+conditional create, a synchronized two-client one-winner update race, and
+verified HEAD/LIST absence after deletion. It performs those mutations only when
+explicitly enabled:
+
+```console
+uv run python tools/provider_consistency_probe.py \
+  --provider tigris --bucket BUCKET --allow-mutation
+```
+
+### Storage IAM requirements
+
+Both normal v1 identities need `s3:GetBucketLocation` on the bucket so every
+admission path can fail closed before mutation. The submitter also needs the
+existing bucket-list/object-read permissions used by status and conflict checks,
+plus `s3:PutObject` for context, request, and admission keys. The controller
+needs the existing bucket-list/object-read permissions plus `s3:PutObject` for
+admission, event, artifact, and terminal keys. Neither normal identity receives
+`s3:DeleteObject`.
+
+The opt-in consistency probe is separate operational evidence. Use a temporary,
+probe-prefix-scoped credential with `s3:GetBucketLocation`, `s3:ListBucket`,
+`s3:PutObject`, `s3:GetObject`, and `s3:DeleteObject`, then remove the credential
+and policy. Tigris currently accepts but does not enforce an `s3:prefix`
+condition on `ListBucket`, so listing is bucket-wide; object get/put/delete
+permissions remain prefix-scoped. No live IAM resource is changed by
+tetrabench's tests or configuration.
 
 Docker planning requires both explicit local controller and Docker execution:
 

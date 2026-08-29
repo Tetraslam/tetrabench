@@ -33,11 +33,13 @@ from tetrabench.records import (
     utc_now_timestamp,
     validate_run_id,
 )
-from tetrabench.s3 import AdmissionRead, S3CasConflictError
+from tetrabench.s3 import AdmissionRead, CoordinationTopology, S3CasConflictError
 from tetrabench.storage import request_key
 
 
 class SubmissionStore(Protocol):
+    def require_coordination_safe(self) -> CoordinationTopology: ...
+
     def publish_content(
         self,
         data: bytes,
@@ -127,14 +129,37 @@ class SubmissionService:
 
     def submit(self, prepared: PreparedSubmission) -> SubmissionReceipt:
         self._validate_prepared(prepared)
+        self._store.require_coordination_safe()
         with self._receipts.lock(prepared.request.run_id):
             return self._submit_locked(prepared, recovery=False)
 
     def recover(self, prepared: PreparedSubmission) -> SubmissionReceipt:
         """Explicitly spawn another call while durable admission is prepared."""
         self._validate_prepared(prepared)
+        self._store.require_coordination_safe()
         with self._receipts.lock(prepared.request.run_id):
             return self._submit_locked(prepared, recovery=True)
+
+    def recover_request(self, request: RequestRecord) -> str:
+        """Spawn from an already-published immutable request and prepared admission."""
+        self._validate_recovery_request(request)
+        self._store.require_coordination_safe()
+        durable = self._store.read_admission(request.run_id)
+        if durable is None:
+            raise SubmissionRefusedError("recovery requires a prepared admission")
+        self._validate_prepared_admission(request, durable.record)
+        receipt: SubmissionReceipt | None
+        try:
+            receipt = self._record_intent(request, recovery=True)
+        except (OSError, ReceiptConflictError, TypeError, ValueError):
+            receipt = None
+        call_id = self._spawn(request)
+        if receipt is not None:
+            try:
+                self._record_spawn(receipt, call_id)
+            except (OSError, ReceiptConflictError, TypeError, ValueError):
+                pass
+        return call_id
 
     @staticmethod
     def _validate_prepared(prepared: PreparedSubmission) -> None:
@@ -152,6 +177,35 @@ class SubmissionService:
         ):
             raise SubmissionRefusedError(
                 "submission requires detached Modal execution and storage"
+            )
+
+    @staticmethod
+    def _validate_recovery_request(request: RequestRecord) -> None:
+        plan = request.plan
+        if not plan.runnable or not plan.trials:
+            raise SubmissionRefusedError("recovery requires a nonempty runnable plan")
+        if (
+            plan.storage is None
+            or plan.controller.kind != "modal"
+            or plan.execution.kind != "modal"
+        ):
+            raise SubmissionRefusedError(
+                "recovery requires detached Modal execution and storage"
+            )
+
+    @staticmethod
+    def _validate_prepared_admission(
+        request: RequestRecord, admission: AdmissionRecord
+    ) -> None:
+        request_sha256 = sha256_hex(canonical_model_bytes(request))
+        if (
+            admission.request_sha256 != request_sha256
+            or admission.plan_sha256 != request.plan_sha256
+        ):
+            raise SubmissionRefusedError("durable admission belongs to another request")
+        if admission.state != "prepared":
+            raise SubmissionRefusedError(
+                f"durable admission is {admission.state}; no controller was spawned"
             )
 
     def _submit_locked(
@@ -200,22 +254,32 @@ class SubmissionService:
                         "admission create conflicted but no record is readable; "
                         "submission is ambiguous and was not retried"
                     ) from None
-        admission = durable.record
-        if (
-            admission.request_sha256 != request_sha256
-            or admission.plan_sha256 != request.plan_sha256
-        ):
-            raise SubmissionRefusedError("durable admission belongs to another request")
-        if admission.state != "prepared":
-            raise SubmissionRefusedError(
-                f"durable admission is {admission.state}; no controller was spawned"
-            )
+        self._validate_prepared_admission(request, durable.record)
         self._after_step("admission-prepared")
 
-        attempt_id = f"submit-{uuid.uuid4().hex}"
+        return self._record_and_spawn(request, recovery=recovery)
+
+    def _record_and_spawn(
+        self, request: RequestRecord, *, recovery: bool
+    ) -> SubmissionReceipt:
+        receipt = self._record_intent(request, recovery=recovery)
+        call_id = self._spawn(request)
+        return self._record_spawn(receipt, call_id)
+
+    def _record_intent(
+        self, request: RequestRecord, *, recovery: bool
+    ) -> SubmissionReceipt:
+        request_sha256 = sha256_hex(canonical_model_bytes(request))
+
+        attempt_id = f"{'recover' if recovery else 'submit'}-{uuid.uuid4().hex}"
         attempt = PhysicalSubmissionAttempt(
             attempt_id=attempt_id,
-            transitions=(SubmissionTransition(sequence=0, type="admission-observed"),),
+            transitions=(
+                SubmissionTransition(
+                    sequence=0,
+                    type="recovery-intended" if recovery else "admission-observed",
+                ),
+            ),
         )
         receipt = self._receipts.read(request.run_id)
         if receipt is None:
@@ -242,8 +306,11 @@ class SubmissionService:
             receipt = append_submission_attempt(receipt, attempt)
         self._receipts.write(receipt)
         self._after_step("receipt-recorded")
+        return receipt
 
-        storage = prepared.plan.storage
+    def _spawn(self, request: RequestRecord) -> str:
+        request_sha256 = sha256_hex(canonical_model_bytes(request))
+        storage = request.plan.storage
         assert storage is not None
         invocation = ControllerInvocation(
             schema_version=1,
@@ -259,7 +326,11 @@ class SubmissionService:
         )
         call_id = self._controller.spawn(invocation)
         self._after_step("spawned")
+        return call_id
 
+    def _record_spawn(
+        self, receipt: SubmissionReceipt, call_id: str
+    ) -> SubmissionReceipt:
         receipt = record_spawn_return(
             receipt,
             ControllerCallReceipt(call_id=call_id),

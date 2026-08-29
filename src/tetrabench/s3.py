@@ -5,12 +5,14 @@ from __future__ import annotations
 import base64
 import hashlib
 import os
+import re
 import stat
 import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
+from functools import lru_cache
 from pathlib import Path
-from typing import Any, BinaryIO, Protocol, cast
+from typing import Any, BinaryIO, Literal, Protocol, cast
 
 import boto3
 from boto3.s3.transfer import TransferConfig
@@ -69,6 +71,8 @@ class S3Client(Protocol):
 
     def head_bucket(self, **kwargs: Any) -> Mapping[str, Any]: ...
 
+    def get_bucket_location(self, **kwargs: Any) -> Mapping[str, Any]: ...
+
     def head_object(self, **kwargs: Any) -> Mapping[str, Any]: ...
 
     def get_object(self, **kwargs: Any) -> Mapping[str, Any]: ...
@@ -88,12 +92,141 @@ class S3CasConflictError(RuntimeError):
     """A conditional admission write lost to another writer."""
 
 
+class UnsafeCoordinationTopologyError(RuntimeError):
+    """The bucket cannot safely host mutable admission coordination."""
+
+
 @dataclass(frozen=True, slots=True)
 class AdmissionRead:
     """One admission body paired with the opaque ETag that read it."""
 
     record: AdmissionRecord
     etag: str
+
+
+@dataclass(frozen=True, slots=True)
+class CoordinationTopology:
+    """Provider bucket placement and its mutable-coordination admission result."""
+
+    provider: Literal["aws", "tigris"]
+    bucket_location: str
+    location_type: Literal[
+        "aws-region",
+        "tigris-global",
+        "tigris-single-region",
+        "tigris-multi-region",
+        "tigris-dual-region",
+        "unknown",
+    ]
+    admission_safe: bool
+    detail: str
+
+
+_TIGRIS_SINGLE_REGIONS = frozenset(
+    {"ams", "fra", "iad", "lhr", "nrt", "ord", "sin", "sjc"}
+)
+_TIGRIS_MULTI_REGIONS = frozenset({"eur", "usa"})
+
+
+@lru_cache(maxsize=1)
+def _known_aws_regions() -> frozenset[str]:
+    session = boto3.Session()
+    return frozenset(
+        region
+        for partition in session.get_available_partitions()
+        for region in session.get_available_regions(
+            "s3", partition_name=partition, allow_non_regional=False
+        )
+    )
+
+
+def _coordination_topology(
+    provider: Literal["aws", "tigris"], raw_location: object
+) -> CoordinationTopology:
+    if provider == "aws":
+        location = "us-east-1" if raw_location is None else raw_location
+        if location == "EU":
+            location = "eu-west-1"
+        if isinstance(location, str) and location in _known_aws_regions():
+            return CoordinationTopology(
+                provider=provider,
+                bucket_location=location,
+                location_type="aws-region",
+                admission_safe=True,
+                detail="AWS regional bucket supports mutable admission coordination",
+            )
+        return CoordinationTopology(
+            provider=provider,
+            bucket_location=location if isinstance(location, str) else "unknown",
+            location_type="unknown",
+            admission_safe=False,
+            detail="AWS bucket location is unknown to the pinned SDK",
+        )
+
+    if not isinstance(raw_location, str) or not raw_location:
+        return CoordinationTopology(
+            provider=provider,
+            bucket_location="unknown",
+            location_type="unknown",
+            admission_safe=False,
+            detail="Tigris bucket location is missing or unknown",
+        )
+    location = raw_location.lower()
+    if location in {"auto", "global"}:
+        return CoordinationTopology(
+            provider=provider,
+            bucket_location=location,
+            location_type="tigris-global",
+            admission_safe=False,
+            detail=(
+                "Tigris Global buckets are eventually consistent across regions and "
+                "cannot host mutable admission coordination"
+            ),
+        )
+    if "," in location:
+        regions = location.split(",")
+        if (
+            len(regions) == 2
+            and len(set(regions)) == 2
+            and all(region in _TIGRIS_SINGLE_REGIONS for region in regions)
+        ):
+            return CoordinationTopology(
+                provider=provider,
+                bucket_location=location,
+                location_type="tigris-dual-region",
+                admission_safe=False,
+                detail=(
+                    "Tigris Dual-region buckets are eventually consistent across "
+                    "regions and cannot host mutable admission coordination"
+                ),
+            )
+    if location in _TIGRIS_MULTI_REGIONS:
+        return CoordinationTopology(
+            provider=provider,
+            bucket_location=location,
+            location_type="tigris-multi-region",
+            admission_safe=True,
+            detail="Tigris Multi-region bucket supports mutable admission coordination",
+        )
+    if location in _TIGRIS_SINGLE_REGIONS:
+        return CoordinationTopology(
+            provider=provider,
+            bucket_location=location,
+            location_type="tigris-single-region",
+            admission_safe=True,
+            detail=(
+                "Tigris Single-region bucket supports mutable admission coordination"
+            ),
+        )
+    return CoordinationTopology(
+        provider=provider,
+        bucket_location=(
+            location if re.fullmatch(r"[a-z0-9,-]+", location) else "unknown"
+        ),
+        location_type="unknown",
+        admission_safe=False,
+        detail="Tigris bucket location is not a supported known topology",
+    )
 
 
 def create_s3_client(config: StorageConfig) -> S3Client:
@@ -234,6 +367,7 @@ class S3Store:
         self._verification_attempts = verification_attempts
         self._verification_delay_seconds = verification_delay_seconds
         self._multipart_threshold = multipart_threshold
+        self._coordination_topology: CoordinationTopology | None = None
         self._transfer_config = TransferConfig(
             multipart_threshold=multipart_threshold,
             multipart_chunksize=multipart_chunk_size,
@@ -246,15 +380,34 @@ class S3Store:
         """Return the resolved storage identity used for all object keys."""
         return self._storage
 
-    def check_read_access(self) -> None:
-        """Check bucket and namespace access without mutating provider state."""
+    def check_read_access(self) -> CoordinationTopology:
+        """Check bucket, location, and namespace access without provider mutation."""
         self._client.head_bucket(Bucket=self._bucket)
+        topology = self.inspect_coordination_topology()
         namespace = f"{self._prefix}/" if self._prefix else ""
         self._client.list_objects_v2(
             Bucket=self._bucket,
             Prefix=namespace,
             MaxKeys=1,
         )
+        return topology
+
+    def inspect_coordination_topology(self) -> CoordinationTopology:
+        """Read and classify the provider's bucket location."""
+        if self._coordination_topology is None:
+            response = self._client.get_bucket_location(Bucket=self._bucket)
+            self._coordination_topology = _coordination_topology(
+                self._storage.provider,
+                response.get("LocationConstraint"),
+            )
+        return self._coordination_topology
+
+    def require_coordination_safe(self) -> CoordinationTopology:
+        """Fail before mutation unless the bucket has strong coordination semantics."""
+        topology = self.inspect_coordination_topology()
+        if not topology.admission_safe:
+            raise UnsafeCoordinationTopologyError(topology.detail)
+        return topology
 
     def publish_content(
         self,
@@ -478,6 +631,7 @@ class S3Store:
     def _put_admission(
         self, admission: AdmissionRecord, **condition: str
     ) -> AdmissionRead:
+        self.require_coordination_safe()
         key = admission_key(admission.run_id, prefix=self._prefix)
         data = canonical_model_bytes(admission)
         digest = sha256_hex(data)

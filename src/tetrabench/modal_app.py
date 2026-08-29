@@ -150,6 +150,7 @@ def build_modal_controller(
         ).run(invocation, function_call_id=function_call_id)
         return {
             "attempt_id": result.attempt_id,
+            "detail": result.detail,
             "run_id": result.run_id,
             "state": result.state,
             "terminal_sha256": result.terminal_sha256,

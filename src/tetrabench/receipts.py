@@ -23,7 +23,7 @@ from tetrabench.records import RunId
 
 class SubmissionTransition(FrozenRecord):
     sequence: Annotated[int, Field(ge=0, le=(1 << 53) - 1)]
-    type: Literal["admission-observed", "spawn-returned"]
+    type: Literal["admission-observed", "recovery-intended", "spawn-returned"]
 
 
 class ControllerCallReceipt(FrozenRecord):
@@ -38,9 +38,14 @@ class PhysicalSubmissionAttempt(FrozenRecord):
 
     @model_validator(mode="after")
     def validate_history(self) -> PhysicalSubmissionAttempt:
-        expected = ("admission-observed", "spawn-returned")
         events = tuple(item.type for item in self.transitions)
-        if not events or events != expected[: len(events)]:
+        valid = {
+            ("admission-observed",),
+            ("admission-observed", "spawn-returned"),
+            ("recovery-intended",),
+            ("recovery-intended", "spawn-returned"),
+        }
+        if events not in valid:
             raise ValueError("submission transitions must be an ordered event prefix")
         if tuple(item.sequence for item in self.transitions) != tuple(
             range(len(self.transitions))
@@ -222,7 +227,10 @@ def record_spawn_return(
     call: ControllerCallReceipt,
 ) -> SubmissionReceipt:
     attempt = receipt.attempts[-1]
-    if tuple(item.type for item in attempt.transitions) != ("admission-observed",):
+    if tuple(item.type for item in attempt.transitions) not in {
+        ("admission-observed",),
+        ("recovery-intended",),
+    }:
         raise ReceiptConflictError(
             "latest receipt attempt is not awaiting spawn return"
         )

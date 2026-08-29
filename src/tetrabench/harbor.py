@@ -239,13 +239,17 @@ class ModalChildObserver:
             )
         except modal.exception.NotFoundError:
             return {}
-        return {
-            sandbox.object_id: sandbox
-            for sandbox in self._sandbox_type.list(
-                app_id=app.app_id,
-                tags={RUN_LABEL: run_id},
-            )
-        }
+        running: dict[str, Any] = {}
+        for sandbox in self._sandbox_type.list(
+            app_id=app.app_id,
+            tags={RUN_LABEL: run_id},
+        ):
+            try:
+                if sandbox.poll() is None:
+                    running[sandbox.object_id] = sandbox
+            except modal.exception.NotFoundError:
+                continue
+        return running
 
     def sweep(self, run_id: str):
         # Imported lazily to avoid a lifecycle -> harbor import cycle.
@@ -254,7 +258,14 @@ class ModalChildObserver:
         listed = self._listed(run_id)
         handles = dict(listed)
         for sandbox_id in self._identities.list_child_ids(run_id):
-            handles.setdefault(sandbox_id, self._sandbox_type.from_id(sandbox_id))
+            if sandbox_id in handles:
+                continue
+            sandbox = self._sandbox_type.from_id(sandbox_id)
+            try:
+                if sandbox.poll() is None:
+                    handles[sandbox_id] = sandbox
+            except modal.exception.NotFoundError:
+                continue
         terminated: list[str] = []
         for sandbox_id, sandbox in handles.items():
             try:

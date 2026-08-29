@@ -23,6 +23,9 @@ from tetrabench.lifecycle import (
     CancellationConflictError,
     CancellationService,
     CancellationUnavailableError,
+    RecoveryConflictError,
+    RecoveryRefusedError,
+    RecoveryService,
     StatusService,
 )
 from tetrabench.modal_app import (
@@ -31,7 +34,12 @@ from tetrabench.modal_app import (
 )
 from tetrabench.plan import canonical_model_bytes, plan_digest, resolve_plan
 from tetrabench.receipts import ReceiptConflictError, ReceiptStore
-from tetrabench.s3 import S3CasConflictError, create_s3_store
+from tetrabench.s3 import (
+    CoordinationTopology,
+    S3CasConflictError,
+    UnsafeCoordinationTopologyError,
+    create_s3_store,
+)
 from tetrabench.submission import (
     SubmissionRefusedError,
     SubmissionService,
@@ -50,7 +58,7 @@ err = Console(stderr=True)
 
 
 class _ReadAccessStore(Protocol):
-    def check_read_access(self) -> None: ...
+    def check_read_access(self) -> CoordinationTopology: ...
 
 
 def _fail(error: Exception) -> None:
@@ -198,6 +206,7 @@ def doctor(
 ) -> None:
     """Validate local inputs and optionally check read-only storage access."""
     root = Path.cwd()
+    topology: CoordinationTopology | None = None
     try:
         config = load_project_config(root, profile=profile)
         catalog = load_catalog(root, config.catalog_path)
@@ -225,7 +234,7 @@ def doctor(
                 )
             try:
                 store: _ReadAccessStore = create_s3_store(storage)
-                store.check_read_access()
+                topology = store.check_read_access()
             except ClientError as error:
                 raise ValueError(
                     _storage_error(
@@ -246,7 +255,12 @@ def doctor(
     storage_report: dict[str, object] | None = None
     if storage is not None:
         storage_report = {
+            "admission_safe": topology.admission_safe if topology is not None else None,
             "bucket": storage.bucket,
+            "bucket_location": (
+                topology.bucket_location if topology is not None else None
+            ),
+            "location_type": topology.location_type if topology is not None else None,
             "prefix": storage.prefix,
             "provider": storage.provider,
             "provider_display": _provider_display(storage.provider),
@@ -261,6 +275,14 @@ def doctor(
                     {"name": "cloud_controller", "status": "not_attempted"},
                     {"name": "storage_bucket", "status": storage_status},
                     {"name": "storage_prefix", "status": storage_status},
+                    {
+                        "name": "admission_coordination",
+                        "status": (
+                            "ok"
+                            if topology is not None and topology.admission_safe
+                            else ("unsafe" if topology is not None else "not_attempted")
+                        ),
+                    },
                     {"name": "storage_writes", "status": "unproven"},
                 ],
                 "mode": "online" if online else "offline",
@@ -279,6 +301,18 @@ def doctor(
         prefix = f"s3://{storage.bucket}/{storage.prefix}".rstrip("/")
         out.print(f"[green]ok[/green] {display} bucket read access: {storage.bucket}")
         out.print(f"[green]ok[/green] {display} prefix list access: {prefix}")
+        assert topology is not None
+        out.print(
+            f"[green]ok[/green] {display} bucket location: "
+            f"{topology.bucket_location} ({topology.location_type})"
+        )
+        if topology.admission_safe:
+            out.print("[green]safe[/green] mutable admission coordination")
+        else:
+            out.print(
+                "[yellow]unsafe[/yellow] mutable admission coordination: "
+                f"{topology.detail}"
+            )
     else:
         out.print("[dim]not attempted[/dim] storage provider checks (offline)")
     out.print("[yellow]unproven[/yellow] storage writes (not attempted)")
@@ -382,6 +416,7 @@ def submit(
         ReceiptConflictError,
         S3CasConflictError,
         SubmissionRefusedError,
+        UnsafeCoordinationTopologyError,
         ValueError,
         ValidationError,
     ) as error:
@@ -395,45 +430,82 @@ def submit(
     out.print(f"[bold]Modal call:[/bold] {call_id}")
 
 
+def _recovery_service(profile: str | None) -> RecoveryService:
+    config = load_project_config(Path.cwd(), profile=profile)
+    if config.storage is None:
+        raise ValueError("recover requires storage configuration")
+    if config.controller.kind != "modal":
+        raise ValueError("recover currently supports the Modal controller only")
+    store = create_s3_store(config.storage)
+    controller = _modal_client(config, profile)
+    receipts = ReceiptStore()
+    spec = controller_deployment_spec(config, profile)
+    return RecoveryService(
+        store,
+        controller,
+        ModalChildObserver(
+            S3ChildIdentitySource(store),
+            environment_name=spec.environment_name,
+        ),
+        SubmissionService(store, controller, receipts),
+    )
+
+
 @app.command()
 def recover(
-    section: SectionName,
-    run_id: Annotated[str, typer.Option(help="Existing prepared run ID.")],
+    run_id: str,
     profile: Annotated[str | None, typer.Option(help="User profile name.")] = None,
+    yes: Annotated[
+        bool,
+        typer.Option("--yes", help="Confirm detached-controller recovery."),
+    ] = False,
     json_output: Annotated[
         bool,
         typer.Option("--json", help="Emit canonical JSON to stdout."),
     ] = False,
 ) -> None:
-    """Explicitly spawn another call for an existing prepared admission."""
+    """Recover a terminal detached controller after stale-child cleanup."""
+    if json_output and not yes:
+        _fail_command(
+            ValueError("recover --json requires --yes"),
+            json_output=True,
+        )
+    if not yes:
+        out.print(
+            "Recovery may CAS durable admission, terminate stale Harbor children, "
+            "and spawn a Modal controller call. Concurrent recovery may spawn another "
+            "call, but admission CAS selects one owner."
+        )
+        if not typer.confirm(f"Recover run {run_id}?", default=False):
+            err.print("recovery cancelled; no cloud mutation attempted")
+            raise typer.Exit(1)
     try:
-        prepared = prepare_submission(Path.cwd(), section, profile, run_id=run_id)
-        storage = prepared.plan.storage
-        controller_config = prepared.plan.controller
-        assert storage is not None and controller_config.kind == "modal"
-        receipt = SubmissionService(
-            create_s3_store(storage),
-            _modal_client(load_project_config(Path.cwd(), profile=profile), profile),
-            ReceiptStore(),
-        ).recover(prepared)
+        result = _recovery_service(profile).recover(run_id)
     except (
         BotoCoreError,
         ClientError,
         ModalError,
         OSError,
         ReceiptConflictError,
+        RecoveryConflictError,
+        RecoveryRefusedError,
         S3CasConflictError,
         SubmissionRefusedError,
+        UnsafeCoordinationTopologyError,
         ValueError,
         ValidationError,
     ) as error:
         _fail_command(error, json_output=json_output)
     if json_output:
-        typer.echo(canonical_model_bytes(receipt).decode("utf-8"))
-        return
-    call_id = receipt.attempts[-1].controller_calls[-1].call_id
-    out.print(f"[green]spawned recovery[/green] {receipt.run_id}")
-    out.print(f"[bold]Modal call:[/bold] {call_id}")
+        typer.echo(canonical_model_bytes(result).decode("utf-8"))
+    else:
+        out.print(f"[bold]Recovery:[/bold] {result.state}")
+        out.print(f"[bold]Run:[/bold] {result.run_id}")
+        out.print(result.detail)
+        if result.successor_function_call_id is not None:
+            out.print(f"[bold]Modal call:[/bold] {result.successor_function_call_id}")
+    if not result.cleanup_complete:
+        raise typer.Exit(3)
 
 
 def _status_service(profile: str | None) -> StatusService:
@@ -522,6 +594,7 @@ def cancel(
         CancellationConflictError,
         CancellationUnavailableError,
         SubmissionRefusedError,
+        UnsafeCoordinationTopologyError,
         ValueError,
     ) as error:
         _fail_command(error, json_output=json_output)

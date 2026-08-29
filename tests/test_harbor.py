@@ -59,6 +59,9 @@ class _SandboxHandle:
         self.active = active
         self.waits = []
 
+    def poll(self):
+        return None if self.object_id in self.active else 137
+
     def terminate(self, *, wait):
         self.waits.append(wait)
         self.active.discard(self.object_id)
@@ -67,12 +70,13 @@ class _SandboxHandle:
 class _SandboxApi:
     def __init__(self):
         self.active = {"sb-persisted", "sb-tagged"}
+        self.listed = set(self.active)
         self.handles = {}
         self.list_calls = []
 
     def list(self, *, app_id, tags):
         self.list_calls.append((app_id, tags))
-        return [self.from_id(item) for item in sorted(self.active)]
+        return [self.from_id(item) for item in sorted(self.listed)]
 
     def from_id(self, sandbox_id):
         return self.handles.setdefault(
@@ -140,6 +144,23 @@ def test_missing_harbor_app_is_an_empty_child_set() -> None:
 
     assert result.remaining_child_ids == ()
     assert result.evidence == "terminated 0 child sandbox(es); 0 remain visible"
+
+
+def test_persisted_terminal_child_is_not_terminated_again() -> None:
+    sandboxes = _SandboxApi()
+    sandboxes.active.clear()
+    sandboxes.listed.clear()
+    observer = ModalChildObserver(
+        S3ChildIdentitySource(_EventStore()),
+        environment_name="tetrabench-default",
+        app_lookup=lambda *_args, **_kwargs: SimpleNamespace(app_id="ap-harbor"),
+        sandbox_type=sandboxes,
+    )
+
+    result = observer.sweep("run-1")
+
+    assert result.remaining_child_ids == ()
+    assert sandboxes.handles["sb-persisted"].waits == []
 
 
 def test_required_child_labels_are_distinct() -> None:

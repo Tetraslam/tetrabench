@@ -7,6 +7,7 @@ import os
 import posixpath
 import stat
 import threading
+import time
 import uuid
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
@@ -104,6 +105,8 @@ class ControllerVolume(Protocol):
 
 
 class ControllerRuntimeStore(Protocol):
+    def require_coordination_safe(self): ...
+
     def read_request(
         self, run_id: str, request_sha256: str, request_key: str, /
     ) -> RequestRecord: ...
@@ -187,6 +190,10 @@ class ControllerCancelled(RuntimeError):
     pass
 
 
+class ChildCleanupError(RuntimeError):
+    pass
+
+
 def parse_controller_invocation(payload: bytes, digest: str) -> ControllerInvocation:
     """Verify the complete canonical invocation before constructing any client."""
     from tetrabench.plan import parse_canonical_model
@@ -246,6 +253,12 @@ def _bounded_error_type(error: BaseException) -> str:
 
 
 def _failure_code(error: BaseException) -> str:
+    if isinstance(error, ChildCleanupError):
+        return (
+            "child-not-quiescent"
+            if str(error) == "not-quiescent"
+            else "child-cleanup-error"
+        )
     if isinstance(error, ControllerIdentityError):
         return "identity-rejected"
     if isinstance(error, OSError):
@@ -352,10 +365,14 @@ class ControllerRuntime:
         controller_root: Path = CONTROLLER_ROOT,
         attempt_id: Callable[[], str] | None = None,
         cleanup_sweeps: int = 5,
+        cleanup_delay_seconds: float = 0.5,
+        sleep: Callable[[float], None] = time.sleep,
         artifact_limits: ArtifactCollectionLimits | None = None,
     ) -> None:
         if cleanup_sweeps < 2:
             raise ValueError("replay cleanup requires at least two sweeps")
+        if cleanup_delay_seconds < 0:
+            raise ValueError("replay cleanup delay must be non-negative")
         self._store = store
         self._volume = volume
         self._runner = runner
@@ -363,6 +380,8 @@ class ControllerRuntime:
         self._root = controller_root
         self._attempt_id = attempt_id or (lambda: f"attempt-{uuid.uuid4().hex}")
         self._cleanup_sweeps = cleanup_sweeps
+        self._cleanup_delay_seconds = cleanup_delay_seconds
+        self._sleep = sleep
         self._artifact_limits = artifact_limits or ArtifactCollectionLimits()
         self._admission = ControllerAdmissionService(store)
 
@@ -372,6 +391,7 @@ class ControllerRuntime:
         *,
         function_call_id: str,
     ) -> ControllerRuntimeResult:
+        self._store.require_coordination_safe()
         with credential_free_harbor_environment():
             return self._run_credential_free(
                 invocation,
@@ -446,8 +466,9 @@ class ControllerRuntime:
                     ),
                 )
             self._check_cancellation(invocation.run_id, function_call_id)
+            phase = "interrupted-volume-commit"
+            self._volume.commit()
             phase = "attempt-setup"
-            self._volume.reload()
             attempts_root = self._root / "runs" / invocation.run_id / "attempts"
             prior_attempts = (
                 tuple(sorted(path.name for path in attempts_root.iterdir()))
@@ -456,9 +477,11 @@ class ControllerRuntime:
             )
             cleanup_evidence: tuple[str, ...] = ()
             if prior_attempts:
+                phase = "prior-child-cleanup"
                 cleanup_evidence = self._quiesce_children(invocation.run_id)
                 self._check_cancellation(invocation.run_id, function_call_id)
 
+            phase = "attempt-setup"
             attempt_id = validate_attempt_id(self._attempt_id())
             paths = attempt_paths(self._root, invocation.run_id, attempt_id)
             paths.root.mkdir(parents=True, exist_ok=False)
@@ -602,6 +625,13 @@ class ControllerRuntime:
                 detail="cancellation observed before run work",
             )
         except BaseException as error:
+            error_code = _failure_code(error)
+            print(
+                "tetrabench controller failed "
+                f"phase={phase} error={type(error).__name__} code={error_code}"
+                + (f" detail={error}" if isinstance(error, ChildCleanupError) else ""),
+                flush=True,
+            )
             if paths is not None and attempt_id is not None:
                 self._publish_failure_evidence(
                     invocation,
@@ -645,13 +675,18 @@ class ControllerRuntime:
     def _quiesce_children(self, run_id: str) -> tuple[str, ...]:
         empty = 0
         evidence: list[str] = []
-        for _ in range(self._cleanup_sweeps):
-            result = self._observer.sweep(run_id)
+        for sweep_index in range(self._cleanup_sweeps):
+            try:
+                result = self._observer.sweep(run_id)
+            except BaseException as error:
+                raise ChildCleanupError(f"observer-{type(error).__name__}") from error
             evidence.append(result.evidence)
             empty = empty + 1 if not result.remaining_child_ids else 0
             if empty >= 2:
                 return tuple(evidence)
-        raise RuntimeError("Harbor child cleanup did not reach empty quiescence")
+            if sweep_index + 1 < self._cleanup_sweeps:
+                self._sleep(self._cleanup_delay_seconds)
+        raise ChildCleanupError("not-quiescent")
 
     def _materialize(
         self,

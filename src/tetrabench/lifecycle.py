@@ -22,13 +22,20 @@ from tetrabench.records import (
     utc_now_timestamp,
     validate_run_id,
 )
-from tetrabench.s3 import AdmissionRead, S3CasConflictError, S3IntegrityError
+from tetrabench.s3 import (
+    AdmissionRead,
+    CoordinationTopology,
+    S3CasConflictError,
+    S3IntegrityError,
+)
 from tetrabench.storage import request_key
 
 
 class LifecycleStore(Protocol):
     @property
     def storage(self) -> ResolvedStorageConfig: ...
+
+    def require_coordination_safe(self) -> CoordinationTopology: ...
 
     def read_run_state(self, run_id: str) -> RunReadState: ...
 
@@ -47,13 +54,11 @@ class ActiveAdmissionBindingError(RuntimeError):
     """An active admission is not bound to its immutable request and storage."""
 
 
-def validate_active_admission(
+def _validate_admission_request_binding(
     store: LifecycleStore,
     admission: AdmissionRecord,
 ) -> RequestRecord:
-    """Read and validate the immutable authority behind an active admission."""
-    if admission.state not in {"prepared", "running", "cancelling"}:
-        raise ValueError("active admission validation requires an active state")
+    """Read and validate the immutable authority bound by an admission."""
     storage = store.storage
     request = store.read_request(
         admission.run_id,
@@ -76,6 +81,51 @@ def validate_active_admission(
     return request
 
 
+def validate_active_admission(
+    store: LifecycleStore,
+    admission: AdmissionRecord,
+) -> RequestRecord:
+    """Read and validate the immutable authority behind an active admission."""
+    if admission.state not in {
+        "prepared",
+        "running",
+        "recovering",
+        "cancelling",
+        "failed",
+    }:
+        raise ValueError("active admission validation requires an active state")
+    return _validate_admission_request_binding(store, admission)
+
+
+def _terminal_admission_conflicts(
+    store: LifecycleStore,
+    terminal: TerminalRunState,
+    admission: AdmissionRecord | None,
+) -> tuple[str, ...]:
+    """Return the status/recovery conflicts for terminal cleanup authority."""
+    if admission is None:
+        return ()
+    reasons: list[str] = []
+    try:
+        _validate_admission_request_binding(store, admission)
+    except (
+        ActiveAdmissionBindingError,
+        OSError,
+        S3IntegrityError,
+        TypeError,
+        ValueError,
+    ) as error:
+        reasons.append(f"invalid terminal admission binding: {error}")
+    if admission.request_sha256 != terminal.terminal.request_sha256:
+        reasons.append("admission and terminal bind different requests")
+    if (
+        admission.state == "terminal"
+        and admission.terminal_sha256 != terminal.terminal_sha256
+    ):
+        reasons.append("admission and terminal digests disagree")
+    return tuple(reasons)
+
+
 class RunStatus(FrozenRecord):
     schema_version: Literal[1] = 1
     run_id: RunId
@@ -84,6 +134,7 @@ class RunStatus(FrozenRecord):
         "conflict",
         "prepared",
         "running",
+        "recovering",
         "cancelling",
         "cancelled",
         "failed",
@@ -92,7 +143,15 @@ class RunStatus(FrozenRecord):
     ]
     outcome: Literal["succeeded", "failed", "cancelled"] | None = None
     admission_state: (
-        Literal["prepared", "running", "cancelling", "cancelled", "terminal", "failed"]
+        Literal[
+            "prepared",
+            "running",
+            "recovering",
+            "cancelling",
+            "cancelled",
+            "terminal",
+            "failed",
+        ]
         | None
     ) = None
     admission_revision: int | None = None
@@ -143,9 +202,14 @@ class StatusService:
         if admission_error is not None:
             conflict_reasons.append(admission_error)
         admission = admission_read.record if admission_read is not None else None
-        if admission is not None and admission.state in {
+        if isinstance(durable, TerminalRunState):
+            conflict_reasons.extend(
+                _terminal_admission_conflicts(self._store, durable, admission)
+            )
+        elif admission is not None and admission.state in {
             "prepared",
             "running",
+            "recovering",
             "cancelling",
         }:
             try:
@@ -158,16 +222,6 @@ class StatusService:
                 ValueError,
             ) as error:
                 conflict_reasons.append(f"invalid active admission binding: {error}")
-        if isinstance(durable, TerminalRunState) and admission is not None:
-            if admission.request_sha256 != durable.terminal.request_sha256:
-                conflict_reasons.append(
-                    "admission and terminal bind different requests"
-                )
-            if (
-                admission.state == "terminal"
-                and admission.terminal_sha256 != durable.terminal_sha256
-            ):
-                conflict_reasons.append("admission and terminal digests disagree")
         if conflict_reasons:
             return RunStatus(
                 run_id=run_id,
@@ -210,26 +264,38 @@ class StatusService:
         if admission.state == "terminal":
             warnings.append("admission names a terminal that is not yet visible")
             state = "pending_or_unknown"
+            detail = "admission terminal acknowledgement is not yet visible as proof"
+        elif admission.state == "recovering":
+            state = "attention"
+            detail = (
+                "detached-controller recovery is quiescing stale children; "
+                "rerun recover to resume if cleanup stopped"
+            )
+            warnings.append(detail)
         else:
             state = admission.state
+            detail = (
+                f"durable admission is {admission.state}; no terminal proof is visible"
+            )
         call_state = None
         if admission.owner_function_call_id is not None:
             call_state = self._controller.inspect(admission.owner_function_call_id)
-        if call_state is not None and call_state.state in {
-            "succeeded",
-            "failed",
-            "expired",
-        }:
+        if (
+            admission.state != "recovering"
+            and call_state is not None
+            and call_state.state
+            in {
+                "succeeded",
+                "failed",
+                "expired",
+            }
+        ):
             detail = (
                 f"controller call is {call_state.state} but no terminal proof "
                 "is visible"
             )
             warnings.append(detail)
             state = "attention"
-        else:
-            detail = (
-                f"durable admission is {admission.state}; no terminal proof is visible"
-            )
         return RunStatus(
             run_id=run_id,
             state=state,
@@ -252,6 +318,295 @@ class ChildSweepResult(FrozenRecord):
 
 class ChildCleanupObserver(Protocol):
     def sweep(self, run_id: str) -> ChildSweepResult: ...
+
+
+class RecoverySpawner(Protocol):
+    def recover_request(self, request: RequestRecord) -> str: ...
+
+
+class RecoveryResult(FrozenRecord):
+    schema_version: Literal[1] = 1
+    run_id: RunId
+    state: Literal["spawned", "prepared", "recovering", "terminal"]
+    prior_owner_function_call_id: NonEmptyString | None = None
+    successor_function_call_id: NonEmptyString | None = None
+    terminal_proof_observed: bool
+    cleanup_complete: bool
+    sweeps: int
+    detail: NonEmptyString
+
+
+class RecoveryConflictError(RuntimeError):
+    """Recovery raced incompatible durable authority."""
+
+
+class RecoveryRefusedError(RuntimeError):
+    """The run is not eligible for detached-controller recovery."""
+
+
+class RecoveryService:
+    """Recover a detached controller only after its prior owner has stopped."""
+
+    def __init__(
+        self,
+        store: LifecycleStore,
+        controller: DetachedControllerClient,
+        children: ChildCleanupObserver,
+        submission: RecoverySpawner,
+        *,
+        sweep_limit: int = 5,
+        sleep: Callable[[float], None] = time.sleep,
+        delay_seconds: float = 0.2,
+        owner_settle_seconds: float = 30.0,
+        timestamp: Callable[[], str] = utc_now_timestamp,
+    ) -> None:
+        if sweep_limit < 2:
+            raise ValueError("recovery requires at least two child sweeps")
+        if delay_seconds < 0:
+            raise ValueError("delay_seconds must be non-negative")
+        if owner_settle_seconds < 0:
+            raise ValueError("owner settle time must be non-negative")
+        self._store = store
+        self._controller = controller
+        self._children = children
+        self._submission = submission
+        self._sweep_limit = sweep_limit
+        self._sleep = sleep
+        self._delay_seconds = delay_seconds
+        self._owner_settle_seconds = owner_settle_seconds
+        self._timestamp = timestamp
+
+    def recover(self, run_id: str) -> RecoveryResult:
+        run_id = validate_run_id(run_id)
+        self._store.require_coordination_safe()
+        for _attempt in range(5):
+            terminal = self._read_terminal(run_id)
+            if terminal is not None:
+                return self._terminal_result(run_id, terminal)
+            observed = self._store.read_admission(run_id)
+            if observed is None:
+                raise RecoveryConflictError("admission record is missing")
+            admission = observed.record
+            if admission.state in {"terminal", "cancelling", "cancelled"}:
+                raise RecoveryRefusedError(
+                    f"cannot recover admission state {admission.state}"
+                )
+            request = self._read_bound_request(admission)
+            if admission.state == "prepared":
+                call_id = self._submission.recover_request(request)
+                return RecoveryResult(
+                    run_id=run_id,
+                    state="spawned",
+                    successor_function_call_id=call_id,
+                    terminal_proof_observed=False,
+                    cleanup_complete=True,
+                    sweeps=0,
+                    detail=(
+                        "spawned a controller call for prepared admission; "
+                        "admission CAS selects the sole controller owner"
+                    ),
+                )
+            if admission.state in {"running", "failed"}:
+                owner = admission.owner_function_call_id
+                if owner is None:
+                    raise RecoveryConflictError(
+                        "owned admission has no controller owner"
+                    )
+                owner_state = self._controller.inspect(owner)
+                if owner_state.state == "running":
+                    raise RecoveryRefusedError("controller owner is still running")
+                if owner_state.state == "inspection_failed":
+                    raise RecoveryRefusedError(
+                        "controller owner inspection is unknown; "
+                        "recovery made no mutation"
+                    )
+                self._sleep(self._owner_settle_seconds)
+                terminal = self._read_terminal(run_id)
+                if terminal is not None:
+                    return self._terminal_result(run_id, terminal)
+                try:
+                    observed = self._store.update_admission(
+                        observed,
+                        transition_admission(
+                            admission, "recovering", timestamp=self._timestamp()
+                        ),
+                    )
+                except S3CasConflictError:
+                    continue
+                admission = observed.record
+            if admission.state != "recovering":
+                raise RecoveryRefusedError(
+                    f"cannot recover admission state {admission.state}"
+                )
+            result = self._finish_recovery(observed, request)
+            if result is not None:
+                return result
+        raise RecoveryConflictError("admission kept changing during recovery")
+
+    def _finish_recovery(
+        self, observed: AdmissionRead, request: RequestRecord
+    ) -> RecoveryResult | None:
+        admission = observed.record
+        owner = admission.owner_function_call_id
+        sweeps = 0
+        consecutive_empty = 0
+        while sweeps < self._sweep_limit and consecutive_empty < 2:
+            terminal = self._read_terminal(admission.run_id)
+            if terminal is not None:
+                return self._terminal_result(admission.run_id, terminal)
+            try:
+                result = self._children.sweep(admission.run_id)
+            except Exception as error:
+                return RecoveryResult(
+                    run_id=admission.run_id,
+                    state="recovering",
+                    prior_owner_function_call_id=owner,
+                    terminal_proof_observed=False,
+                    cleanup_complete=False,
+                    sweeps=sweeps,
+                    detail=f"child cleanup failed: {type(error).__name__}",
+                )
+            sweeps += 1
+            consecutive_empty = (
+                consecutive_empty + 1 if not result.remaining_child_ids else 0
+            )
+            if consecutive_empty < 2 and sweeps < self._sweep_limit:
+                self._sleep(self._delay_seconds)
+        if consecutive_empty < 2:
+            return RecoveryResult(
+                run_id=admission.run_id,
+                state="recovering",
+                prior_owner_function_call_id=owner,
+                terminal_proof_observed=False,
+                cleanup_complete=False,
+                sweeps=sweeps,
+                detail="stale child cleanup did not reach quiescence",
+            )
+        terminal = self._read_terminal(admission.run_id)
+        if terminal is not None:
+            return self._terminal_result(admission.run_id, terminal)
+        current = self._store.read_admission(admission.run_id)
+        if current is None:
+            raise RecoveryConflictError("admission disappeared during recovery")
+        if current.etag != observed.etag or current.record.state != "recovering":
+            if current.record.state == "terminal":
+                terminal = self._read_terminal(admission.run_id)
+                if terminal is not None:
+                    return self._terminal_result(admission.run_id, terminal)
+            if current.record.state == "prepared":
+                return RecoveryResult(
+                    run_id=admission.run_id,
+                    state="prepared",
+                    prior_owner_function_call_id=owner,
+                    terminal_proof_observed=False,
+                    cleanup_complete=True,
+                    sweeps=sweeps,
+                    detail="another recovery prepared the successor admission",
+                )
+            return None
+        try:
+            self._store.update_admission(
+                current,
+                transition_admission(
+                    current.record,
+                    "prepared",
+                    timestamp=self._timestamp(),
+                    clear_owner=True,
+                ),
+            )
+        except S3CasConflictError:
+            refreshed = self._store.read_admission(admission.run_id)
+            if refreshed is not None and refreshed.record.state == "prepared":
+                return RecoveryResult(
+                    run_id=admission.run_id,
+                    state="prepared",
+                    prior_owner_function_call_id=owner,
+                    terminal_proof_observed=False,
+                    cleanup_complete=True,
+                    sweeps=sweeps,
+                    detail="another recovery won the prepare CAS",
+                )
+            return None
+        terminal = self._read_terminal(admission.run_id)
+        if terminal is not None:
+            return self._terminal_result(admission.run_id, terminal)
+        call_id = self._submission.recover_request(request)
+        return RecoveryResult(
+            run_id=admission.run_id,
+            state="spawned",
+            prior_owner_function_call_id=owner,
+            successor_function_call_id=call_id,
+            terminal_proof_observed=False,
+            cleanup_complete=True,
+            sweeps=sweeps,
+            detail=(
+                "stale children quiesced and a controller call was spawned; "
+                "concurrent calls must race for sole admission ownership"
+            ),
+        )
+
+    def _read_bound_request(self, admission: AdmissionRecord) -> RequestRecord:
+        try:
+            return validate_active_admission(self._store, admission)
+        except (OSError, S3IntegrityError, TypeError, ValueError) as error:
+            raise RecoveryConflictError(
+                f"invalid recovery admission binding: {error}"
+            ) from error
+
+    def _read_terminal(self, run_id: str) -> TerminalRunState | None:
+        durable = self._store.read_run_state(run_id)
+        if isinstance(durable, ConflictRunState):
+            raise RecoveryConflictError("; ".join(durable.reasons))
+        return durable if isinstance(durable, TerminalRunState) else None
+
+    def _terminal_result(
+        self, run_id: str, terminal: TerminalRunState
+    ) -> RecoveryResult:
+        current = self._store.read_admission(run_id)
+        conflicts = _terminal_admission_conflicts(
+            self._store,
+            terminal,
+            current.record if current is not None else None,
+        )
+        if conflicts:
+            raise RecoveryConflictError("; ".join(conflicts))
+        owner = current.record.owner_function_call_id if current is not None else None
+        sweeps = 0
+        consecutive_empty = 0
+        failure: str | None = None
+        while sweeps < self._sweep_limit and consecutive_empty < 2:
+            try:
+                result = self._children.sweep(run_id)
+            except Exception as error:
+                failure = f"child cleanup failed: {type(error).__name__}"
+                break
+            sweeps += 1
+            consecutive_empty = (
+                consecutive_empty + 1 if not result.remaining_child_ids else 0
+            )
+            if consecutive_empty < 2 and sweeps < self._sweep_limit:
+                self._sleep(self._delay_seconds)
+        cleanup_complete = consecutive_empty >= 2
+        if failure is None and not cleanup_complete:
+            failure = "stale child cleanup did not reach quiescence"
+        return RecoveryResult(
+            run_id=run_id,
+            state="terminal",
+            prior_owner_function_call_id=owner,
+            terminal_proof_observed=True,
+            cleanup_complete=cleanup_complete,
+            sweeps=sweeps,
+            detail=(
+                "immutable terminal proof observed and child cleanup reached "
+                "quiescence; "
+                "no controller was spawned"
+                if cleanup_complete
+                else (
+                    f"immutable terminal proof observed; {failure}; "
+                    "no controller was spawned"
+                )
+            ),
+        )
 
 
 class CancellationResult(FrozenRecord):
@@ -301,6 +656,7 @@ class CancellationService:
 
     def cancel(self, run_id: str) -> CancellationResult:
         run_id = validate_run_id(run_id)
+        self._store.require_coordination_safe()
         for _attempt in range(3):
             durable = self._store.read_run_state(run_id)
             if isinstance(durable, ConflictRunState):
@@ -378,6 +734,10 @@ class CancellationService:
                     terminal_proof_observed=False,
                     cleanup_complete=False,
                     sweeps=0,
+                )
+            if admission.state == "recovering":
+                raise CancellationConflictError(
+                    "detached-controller recovery is already in progress"
                 )
             if admission.state == "running":
                 if self._children is None:

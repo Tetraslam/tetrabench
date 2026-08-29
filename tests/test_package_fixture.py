@@ -19,6 +19,9 @@ def test_fixture_is_source_only_and_absent_from_installed_wheel(tmp_path: Path) 
     source = next(tmp_path.glob("*.tar.gz"))
     with zipfile.ZipFile(wheel) as archive:
         assert not any("fixtures/harbor_task" in name for name in archive.namelist())
+        assert not any(
+            "provider_consistency_probe" in name for name in archive.namelist()
+        )
     with tarfile.open(source, "r:gz") as archive:
         names = archive.getnames()
         assert any(

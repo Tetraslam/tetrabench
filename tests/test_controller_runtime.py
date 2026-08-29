@@ -30,7 +30,11 @@ from tetrabench.records import (
     new_admission,
     transition_admission,
 )
-from tetrabench.s3 import AdmissionRead, S3CasConflictError
+from tetrabench.s3 import (
+    AdmissionRead,
+    S3CasConflictError,
+    UnsafeCoordinationTopologyError,
+)
 from tetrabench.storage import content_object_key
 
 
@@ -119,6 +123,16 @@ class _Volume:
         self.operations.append("volume:reload")
 
 
+class _DirtyVolume(_Volume):
+    def __init__(self, operations: list[str]) -> None:
+        super().__init__(operations)
+        self.dirty = True
+
+    def commit(self) -> None:
+        super().commit()
+        self.dirty = False
+
+
 class _Observer:
     def __init__(
         self,
@@ -158,6 +172,13 @@ class _Store:
         self.fail_terminal_publish = False
         self.after_stream_read = None
         self._lock = threading.Lock()
+        self.coordination_safe = True
+
+    def require_coordination_safe(self):
+        self.operations.append("s3:preflight")
+        if not self.coordination_safe:
+            raise UnsafeCoordinationTopologyError("unsafe topology")
+        return None
 
     def read_request(self, run_id, request_sha256, request_key, /):
         self.operations.append("s3:request")
@@ -283,6 +304,22 @@ def test_claim_precedes_runner_and_success_publishes_terminal_last(
     )
 
 
+def test_unsafe_topology_stops_controller_before_any_run_side_effect(
+    tmp_path: Path,
+) -> None:
+    runtime, store, operations, invocation = _runtime(tmp_path)
+    store.coordination_safe = False
+
+    with pytest.raises(UnsafeCoordinationTopologyError, match="unsafe topology"):
+        runtime.run(invocation, function_call_id="fc-1")
+
+    assert operations == ["s3:preflight"]
+    assert not (tmp_path / "runs").exists()
+    assert store.events == []
+    assert store.terminals == []
+    assert store.admission.record.state == "prepared"
+
+
 def test_duplicate_loser_performs_no_volume_or_runner_work(tmp_path: Path) -> None:
     runtime, store, operations, invocation = _runtime(tmp_path)
     store.admission = AdmissionRead(
@@ -367,7 +404,51 @@ def test_runner_failure_publishes_available_evidence_but_no_terminal(
     assert "s3:event:controller-failed" in operations
 
 
-def test_replay_cleans_prior_children_before_unique_attempt(tmp_path: Path) -> None:
+def test_not_quiescent_cleanup_code_is_consistent_at_every_publication_site(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    operations: list[str] = []
+    request = _request()
+    store = _Store(request, operations)
+
+    class CancellingRunner(_FakeHarborRunner):
+        def run(self, *args, **kwargs):
+            result = super().run(*args, **kwargs)
+            store.admission = AdmissionRead(
+                transition_admission(
+                    store.admission.record,
+                    "cancelling",
+                    timestamp=store.admission.record.updated_at,
+                ),
+                "etag-2",
+            )
+            return result
+
+    runtime = ControllerRuntime(
+        store,
+        _Volume(operations),
+        CancellingRunner(operations),
+        _Observer(operations, [("sb-stale",)] * 5),
+        controller_root=tmp_path,
+        attempt_id=lambda: "attempt-one",
+        cleanup_delay_seconds=0,
+    )
+
+    result = runtime.run(_invocation(request), function_call_id="fc-1")
+
+    assert result.state == "failed"
+    output = capsys.readouterr().out
+    assert "code=child-not-quiescent" in output
+    failure_path = attempt_paths(tmp_path, "run-1", "attempt-one").failure
+    assert json.loads(failure_path.read_text())["error_code"] == ("child-not-quiescent")
+    failure_event = next(
+        event for event in store.events if event.type == "controller-failed"
+    )
+    assert failure_event.payload["error_code"] == "child-not-quiescent"
+
+
+def test_same_owner_automatic_replay_exits_without_harbor(tmp_path: Path) -> None:
     runtime, store, operations, invocation = _runtime(tmp_path)
     store.admission = AdmissionRead(
         transition_admission(
@@ -381,11 +462,67 @@ def test_replay_cleans_prior_children_before_unique_attempt(tmp_path: Path) -> N
     old = tmp_path / "runs/run-1/attempts/attempt-old"
     old.mkdir(parents=True)
     result = runtime.run(invocation, function_call_id="fc-1")
-    assert result.attempt_id == "attempt-one"
+
+    assert result.state == "skipped"
+    assert "automatic replay exits before Harbor" in result.detail
     assert old.is_dir()
-    assert (old.parent / "attempt-one").is_dir()
-    assert operations.index("observer:sweep") < operations.index("runner")
-    assert "s3:event:replay-reconciled" in operations
+    assert not (old.parent / "attempt-one").exists()
+    assert "observer:sweep" not in operations
+    assert "runner" not in operations
+
+
+def test_fresh_successor_waits_for_stale_child_listing_to_quiesce(
+    tmp_path: Path,
+) -> None:
+    operations: list[str] = []
+    sleeps: list[float] = []
+    request = _request()
+    store = _Store(request, operations)
+    old = tmp_path / "runs/run-1/attempts/attempt-old"
+    old.mkdir(parents=True)
+    runtime = ControllerRuntime(
+        store,
+        _Volume(operations),
+        _FakeHarborRunner(operations),
+        _Observer(operations, [("sb-old",), ("sb-old",), (), ()]),
+        controller_root=tmp_path,
+        attempt_id=lambda: "attempt-successor",
+        cleanup_delay_seconds=0.25,
+        sleep=sleeps.append,
+    )
+
+    result = runtime.run(_invocation(request), function_call_id="fc-successor")
+
+    assert result.state == "terminal"
+    assert operations.count("observer:sweep") == 4
+    assert sleeps == [0.25, 0.25, 0.25]
+    assert old.is_dir()
+    assert (old.parent / "attempt-successor").is_dir()
+
+
+def test_fresh_successor_commits_interrupted_owner_files_before_attempt_setup(
+    tmp_path: Path,
+) -> None:
+    operations: list[str] = []
+    request = _request()
+    store = _Store(request, operations)
+    old = tmp_path / "runs/run-1/attempts/attempt-old"
+    old.mkdir(parents=True)
+    runtime = ControllerRuntime(
+        store,
+        _DirtyVolume(operations),
+        _FakeHarborRunner(operations),
+        _Observer(operations),
+        controller_root=tmp_path,
+        attempt_id=lambda: "attempt-successor",
+        cleanup_delay_seconds=0,
+    )
+
+    result = runtime.run(_invocation(request), function_call_id="fc-successor")
+
+    assert result.state == "terminal"
+    assert operations.index("volume:commit") < operations.index("observer:sweep")
+    assert old.is_dir()
 
 
 def test_output_symlink_is_rejected_without_following_escape(tmp_path: Path) -> None:
@@ -535,19 +672,24 @@ def test_uncertain_terminal_publish_emits_no_later_immutable_writes(
     )
 
 
-@pytest.mark.parametrize("admission_state", ["failed", "cancelling", "cancelled"])
+@pytest.mark.parametrize(
+    "admission_state", ["prepared", "failed", "cancelling", "cancelled"]
+)
 def test_startup_reconciles_terminal_before_claim_or_attempt(
     tmp_path: Path,
     admission_state: str,
 ) -> None:
     runtime, store, operations, invocation = _runtime(tmp_path)
+    prepared = store.admission.record
     running = transition_admission(
-        store.admission.record,
+        prepared,
         "running",
         timestamp="2026-08-28T00:00:01Z",
         owner_function_call_id="fc-old",
     )
-    if admission_state == "failed":
+    if admission_state == "prepared":
+        record = prepared
+    elif admission_state == "failed":
         record = transition_admission(
             running, "failed", timestamp="2026-08-28T00:00:02Z"
         )
@@ -584,7 +726,9 @@ def test_startup_reconciles_terminal_before_claim_or_attempt(
     result = runtime.run(invocation, function_call_id="fc-new")
 
     assert result.state == "terminal"
-    assert store.admission.record.state == "terminal"
+    assert store.admission.record.state == (
+        "prepared" if admission_state == "prepared" else "terminal"
+    )
     assert "runner" not in operations
     assert "s3:cas:running" not in operations
     assert not (tmp_path / "runs/run-1/attempts/attempt-one").exists()

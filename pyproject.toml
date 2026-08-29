@@ -6,6 +6,7 @@ readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     "boto3==1.43.83",
+    "botocore[crt]==1.43.83",
     "harbor[modal]==0.22.0",
     "modal==1.5.4",
     "platformdirs>=4.11.5",

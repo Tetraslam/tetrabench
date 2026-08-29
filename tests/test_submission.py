@@ -18,7 +18,11 @@ from tetrabench.records import (
     ContextManifest,
     RequestRecord,
 )
-from tetrabench.s3 import AdmissionRead, S3CasConflictError
+from tetrabench.s3 import (
+    AdmissionRead,
+    S3CasConflictError,
+    UnsafeCoordinationTopologyError,
+)
 from tetrabench.storage import content_object_key
 from tetrabench.submission import (
     PreparedSubmission,
@@ -33,6 +37,13 @@ class _MemorySubmissionStore:
         self.admission: AdmissionRead | None = None
         self._revision = 0
         self._lock = threading.Lock()
+        self.coordination_safe = True
+
+    def require_coordination_safe(self):
+        if not self.coordination_safe:
+            self.operations.append("preflight-rejected")
+            raise UnsafeCoordinationTopologyError("unsafe topology")
+        return None
 
     def publish_content(
         self,
@@ -265,3 +276,17 @@ def test_service_rejects_empty_plan_before_receipt_s3_or_modal(tmp_path: Path) -
     assert store.operations == []
     assert controller.spawned == []
     assert receipts.read("run-empty") is None
+
+
+def test_unsafe_topology_rejects_before_any_submission_mutation(tmp_path: Path) -> None:
+    store = _MemorySubmissionStore()
+    store.coordination_safe = False
+    controller = FakeDetachedController()
+    receipts = ReceiptStore(tmp_path)
+
+    with pytest.raises(UnsafeCoordinationTopologyError, match="unsafe topology"):
+        SubmissionService(store, controller, receipts).submit(_prepared())
+
+    assert store.operations == ["preflight-rejected"]
+    assert controller.spawned == []
+    assert receipts.read("run-1") is None

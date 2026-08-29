@@ -31,7 +31,11 @@ from tetrabench.records import (
     new_admission,
     transition_admission,
 )
-from tetrabench.s3 import AdmissionRead, S3CasConflictError
+from tetrabench.s3 import (
+    AdmissionRead,
+    S3CasConflictError,
+    UnsafeCoordinationTopologyError,
+)
 
 
 def _request() -> RequestRecord:
@@ -100,6 +104,13 @@ class _CasStore:
         self.request = request or _request()
         self._lock = threading.Lock()
         self.operations: list[str] = []
+        self.coordination_safe = True
+
+    def require_coordination_safe(self):
+        self.operations.append("preflight")
+        if not self.coordination_safe:
+            raise UnsafeCoordinationTopologyError("unsafe topology")
+        return None
 
     def read_admission(self, run_id: str) -> AdmissionRead | None:
         assert run_id == "run-1"
@@ -153,6 +164,17 @@ def test_duplicate_spawned_controllers_have_one_admission_winner() -> None:
     )
 
 
+def test_controller_claim_rejects_unsafe_topology_before_run_mutation() -> None:
+    store = _CasStore(_prepared_admission())
+    store.coordination_safe = False
+
+    with pytest.raises(UnsafeCoordinationTopologyError, match="unsafe topology"):
+        ControllerAdmissionService(store).claim(_invocation(), "fc-1")
+
+    assert store.operations == ["preflight"]
+    assert store.value.record.state == "prepared"
+
+
 def test_controller_starting_after_prepared_cancellation_exits_before_harbor() -> None:
     cancelled = transition_admission(
         _prepared_admission(),
@@ -165,6 +187,45 @@ def test_controller_starting_after_prepared_cancellation_exits_before_harbor() -
 
     assert not decision.admitted
     assert decision.state == "cancelled"
+    assert "exit before Harbor" in decision.detail
+
+
+def test_same_owner_new_physical_attempt_fails_closed_before_harbor() -> None:
+    running = transition_admission(
+        _prepared_admission(),
+        "running",
+        timestamp="2026-08-28T20:00:01Z",
+        owner_function_call_id="fc-owner",
+    )
+
+    decision = ControllerAdmissionService(_CasStore(running)).claim(
+        _invocation(), "fc-owner"
+    )
+
+    assert not decision.admitted
+    assert decision.state == "running"
+    assert "automatic replay exits before Harbor" in decision.detail
+
+
+def test_new_owner_cannot_claim_recovering_admission() -> None:
+    running = transition_admission(
+        _prepared_admission(),
+        "running",
+        timestamp="2026-08-28T20:00:01Z",
+        owner_function_call_id="fc-old",
+    )
+    recovering = transition_admission(
+        running,
+        "recovering",
+        timestamp="2026-08-28T20:00:02Z",
+    )
+
+    decision = ControllerAdmissionService(_CasStore(recovering)).claim(
+        _invocation(), "fc-new"
+    )
+
+    assert not decision.admitted
+    assert decision.state == "recovering"
     assert "exit before Harbor" in decision.detail
 
 

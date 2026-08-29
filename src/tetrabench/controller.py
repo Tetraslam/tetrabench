@@ -32,7 +32,7 @@ from tetrabench.records import (
     transition_admission,
     utc_now_timestamp,
 )
-from tetrabench.s3 import AdmissionRead, S3CasConflictError
+from tetrabench.s3 import AdmissionRead, CoordinationTopology, S3CasConflictError
 from tetrabench.storage import request_key
 
 
@@ -72,6 +72,8 @@ class DetachedControllerClient(Protocol):
 
 
 class ControllerAdmissionStore(Protocol):
+    def require_coordination_safe(self) -> CoordinationTopology: ...
+
     def read_request(
         self, run_id: str, request_sha256: str, request_key: str, /
     ) -> RequestRecord: ...
@@ -93,6 +95,7 @@ class ControllerStartDecision(FrozenRecord):
     state: Literal[
         "prepared",
         "running",
+        "recovering",
         "cancelling",
         "cancelled",
         "terminal",
@@ -142,6 +145,7 @@ class ControllerAdmissionService:
         invocation: ControllerInvocation,
         function_call_id: str,
     ) -> ControllerStartDecision:
+        self._store.require_coordination_safe()
         invocation, request = self._validate_invocation(invocation)
         observed = self._store.read_admission(invocation.run_id)
         if observed is None:
@@ -161,9 +165,13 @@ class ControllerAdmissionService:
             return ControllerStartDecision(
                 run_id=invocation.run_id,
                 function_call_id=function_call_id,
-                admitted=True,
+                admitted=False,
                 state="running",
-                detail="this FunctionCall already owns the admission",
+                detail=(
+                    "this FunctionCall already owns a prior physical attempt; "
+                    "automatic replay exits before Harbor and requires explicit "
+                    "recovery"
+                ),
             )
         if record.state != "prepared":
             return ControllerStartDecision(
@@ -184,19 +192,14 @@ class ControllerAdmissionService:
         except S3CasConflictError:
             winner = self._store.read_admission(invocation.run_id)
             state = winner.record.state if winner is not None else "missing"
-            owner = winner.record.owner_function_call_id if winner is not None else None
             if winner is not None:
                 self._validate_bindings(invocation, request, winner.record)
             return ControllerStartDecision(
                 run_id=invocation.run_id,
                 function_call_id=function_call_id,
-                admitted=state == "running" and owner == function_call_id,
+                admitted=False,
                 state=state,
-                detail=(
-                    "this FunctionCall owns the concurrently committed revision"
-                    if state == "running" and owner == function_call_id
-                    else "another writer won admission; exit before Harbor"
-                ),
+                detail="another writer won admission; exit before Harbor",
             )
         return ControllerStartDecision(
             run_id=invocation.run_id,
@@ -214,6 +217,7 @@ class ControllerAdmissionService:
         function_call_id: str,
     ) -> str:
         """Authorize terminal publication, publish proof last, then CAS it."""
+        self._store.require_coordination_safe()
         invocation, request = self._validate_invocation(invocation)
         observed = self._store.read_admission(invocation.run_id)
         if observed is None:
@@ -252,6 +256,7 @@ class ControllerAdmissionService:
         terminal: TerminalRecord,
     ) -> tuple[str, bool]:
         """Acknowledge already-validated terminal proof without republishing it."""
+        self._store.require_coordination_safe()
         invocation, request = self._validate_invocation(invocation)
         if (
             terminal.run_id != invocation.run_id
@@ -287,7 +292,13 @@ class ControllerAdmissionService:
                         "admission terminal digest conflicts with terminal proof"
                     )
                 return True
-            if record.state not in {"running", "cancelling", "cancelled", "failed"}:
+            if record.state not in {
+                "running",
+                "recovering",
+                "cancelling",
+                "cancelled",
+                "failed",
+            }:
                 return False
             if record.owner_function_call_id is None:
                 return False
@@ -372,6 +383,7 @@ class ControllerAdmissionService:
 
     def mark_failed(self, run_id: str, *, function_call_id: str) -> None:
         """Record controller failure only when no terminal proof was published."""
+        self._store.require_coordination_safe()
         for _attempt in range(3):
             observed = self._store.read_admission(run_id)
             if observed is None:
