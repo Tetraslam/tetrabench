@@ -495,6 +495,7 @@ def test_run_interrupt_preserves_visible_native_evidence(
     assert (output / "harbor-job/config.json").read_text() == "partial"
 
 
+@pytest.mark.docker
 def test_run_real_harbor_docker_from_temporary_catalog(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

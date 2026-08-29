@@ -299,6 +299,7 @@ def _docker_available() -> bool:
         return False
 
 
+@pytest.mark.docker
 def test_real_harbor_local_docker_fixture_end_to_end(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

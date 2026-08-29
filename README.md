@@ -52,7 +52,17 @@ without a reload that Modal rejects while old file descriptors remain open.
 Child cleanup polls listed and persisted sandboxes so terminal handles are not
 treated as running or terminated twice.
 
-Python 3.12 or newer is required.
+Python 3.12 is required. Package metadata rejects Python 3.13 and newer.
+
+## Continuous integration
+
+GitHub Actions runs on pushes to `master` and pull requests with read-only
+repository access. The Python 3.12 job checks the lockfile, installs locked
+dependencies, runs Ruff and ty, requires the Docker daemon and both marked
+Docker tests, runs the full pytest suite, builds both distributions, smoke-tests
+an isolated wheel installation, and audits all locked dependency groups. A
+separate job scans the full Git history with a digest-pinned Gitleaks image and
+redacts findings.
 
 S3 reads and publications use bounded visibility checks. They detect every
 request, event-sequence, terminal, and dependency conflict visible during that

@@ -1,0 +1,131 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+permissions:
+  contents: read
+
+env:
+  UV_PYTHON: "3.12"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Python 3.12
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          version: "0.11.21"
+          enable-cache: true
+
+      - name: Check lockfile
+        run: uv lock --check
+
+      - name: Install locked dependencies
+        run: uv sync --locked --all-groups
+
+      - name: Lint
+        run: uv run ruff check .
+
+      - name: Check formatting
+        run: uv run ruff format --check .
+
+      - name: Type-check
+        run: uv run ty check
+
+      - name: Check Docker daemon
+        run: docker info
+
+      - name: Run required Docker tests
+        run: uv run pytest --strict-markers -m docker
+
+      - name: Run full test suite
+        run: uv run pytest --strict-markers
+
+      - name: Build wheel and source distribution
+        run: uv build
+
+      - name: Smoke-test installed wheel
+        shell: bash
+        run: |
+          set -euo pipefail
+          smoke_dir="$(mktemp -d)"
+          trap 'rm -rf "$smoke_dir"' EXIT
+          wheel="$(printf '%s\n' dist/*.whl)"
+          uv export --quiet --locked --no-dev --no-emit-project \
+            --output-file "$smoke_dir/requirements.txt"
+          uv venv --python 3.12 --seed "$smoke_dir/venv"
+          uv pip install --python "$smoke_dir/venv/bin/python" \
+            --require-hashes --no-deps -r "$smoke_dir/requirements.txt"
+          uv pip install --python "$smoke_dir/venv/bin/python" --no-deps "$wheel"
+          "$smoke_dir/venv/bin/python" -m pip check
+          "$smoke_dir/venv/bin/tetrabench" --version
+          "$smoke_dir/venv/bin/python" - <<'PY'
+          from importlib.metadata import distribution
+
+          from packaging.specifiers import SpecifierSet
+
+          package = distribution("tetrabench")
+          files = {str(path) for path in package.files or ()}
+          scripts = {entry.name: entry.value for entry in package.entry_points}
+          assert package.version == "0.1.0"
+          assert SpecifierSet(package.metadata["Requires-Python"]) == SpecifierSet(
+              ">=3.12,<3.13"
+          )
+          assert scripts["tetrabench"] == "tetrabench.cli:main"
+          assert {
+              "tetrabench/__init__.py",
+              "tetrabench/cli.py",
+              "tetrabench/records.py",
+          } <= files
+          assert not any(path.startswith("tests/") for path in files)
+          assert not any(path.startswith("tools/") for path in files)
+          PY
+
+      - name: Audit all locked dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          requirements="$(mktemp)"
+          trap 'rm -f "$requirements"' EXIT
+          uv export --quiet --locked --all-groups --no-emit-project > "$requirements"
+          uv run pip-audit --strict --require-hashes --disable-pip -r "$requirements"
+
+  secrets:
+    name: Full-history secret scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out full history
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Scan with Gitleaks
+        run: >-
+          docker run --rm
+          --volume "$PWD:/repo:ro"
+          --workdir /repo
+          ghcr.io/gitleaks/gitleaks@sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f
+          detect --source=/repo --redact --verbose --no-banner
+        # ghcr.io/gitleaks/gitleaks:v8.30.1

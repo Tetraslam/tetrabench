@@ -390,3 +390,25 @@ Provenance: user-provided final mode finding, local Python 3.12 mode-race regres
 This entry corrects earlier artifact-pull wording where private-tree and fail-closed claims could imply isolation from a malicious process running as the same UID. Tetrabench's enforceable boundary is descriptor-rooted exclusive no-follow creation and pathname/symlink overwrite defense. Artifact finalization now reapplies exact `0600` to each file and exact `0700` to each destination directory, then checks retained type, identity, and exact mode through `fstat` before final fsync/close. Failure unwind attempts the same restoration for safely retained partial evidence without replacing its original error. A same-UID process remains authoritative and may mutate the tree during or after pull; post-return immutability is not promised. D-062 records the correction.
 
 E-056 passed with 449 tests, including both real Docker paths and regressions for mid-pull root/directory/file widening, corrupt partial-evidence restoration, and post-`fchmod` mode-change rejection. Ruff check/format, ty, `uv lock --check`, wheel/sdist build, `git diff --check`, and a fresh isolated-wheel version/artifact-help plus import/metadata smoke passed. No provider call occurred.
+
+## 2026-08-29T07:19:33-07:00: GitHub Actions CI baseline
+
+Provenance: user contract; official GitHub release refs for checkout v7.0.1, setup-python v7.0.0, and setup-uv v10.0.1; the official Gitleaks v8.30.1 GHCR manifest; local Python 3.12, Docker, actionlint, pip-audit, packaging, and Gitleaks validation.
+
+One least-privilege workflow now covers pushes to `master` and pull requests. It cancels superseded branch runs, uses only Python 3.12, installs from `uv.lock`, requires the two explicitly marked real-Docker tests before the complete suite, builds wheel and sdist, installs the wheel over a hash-checked locked runtime export in an isolated environment, and checks its entrypoint, metadata, and package contents. The runtime dependency export is audited without dependency resolution. A separate job fetches full history and runs the official Gitleaks image by immutable digest with redacted output. Third-party actions are pinned to release-resolved commit SHAs. No repository or cloud secret, write permission, or artifact upload is used.
+
+E-057 passed locally with 449 tests and two separately required Docker tests. Ruff check/format, ty, lock and locked-sync checks, wheel/sdist build, isolated wheel install and entrypoint/metadata/content checks, actionlint, and diff checks passed. pip-audit found no known vulnerability in the locked runtime export. Gitleaks v8.30.1 scanned all 16 commits and found no leak after an audited ignore for one historical documentation phrase misclassified as a generic API key; findings remained redacted. The first hosted GitHub Actions run is pending because these changes are intentionally uncommitted.
+
+## 2026-08-29T07:22:12-07:00: CI baseline wording correction
+
+Provenance: immediate editorial review of the preceding append-only entry.
+
+The CI job installs from `uv.lock`, requires both Docker-marked tests before the complete suite, builds both distributions, and installs the wheel over a hash-checked runtime export. It then checks the installed entrypoint, metadata, and package contents. pip-audit examines that same locked runtime export without resolving dependencies. Release-resolved commit SHAs pin the actions, while the Gitleaks image uses the official v8.30.1 manifest digest. The workflow receives read-only repository permission and no repository or cloud secret. The preceding entry's final semicolon means the same Gitleaks finding output remained redacted; it does not establish a separate causal qualification.
+
+## 2026-08-29T07:32:25-07:00: CI dependency and wheel-metadata review correction
+
+Provenance: user-provided CI review findings and full local workflow parity on Python 3.12.
+
+The dependency gate now generates one deterministic hash-bearing requirements document with `uv export --locked --all-groups --no-emit-project` and passes it to pip-audit without resolution. This covers runtime, development, build tooling, and their selected transitive dependencies without a duplicate runtime-only audit. Two independent exports were byte-identical; the 1,019-line document had SHA-256 `c8d0a1cf6053e3c5c362e1f5f4c7e09d34872a970e3be23845c1aec647c731fe`, and pip-audit found no known vulnerability.
+
+The isolated installed-wheel smoke reads `Requires-Python` from distribution metadata and compares `packaging.specifiers.SpecifierSet` values against `>=3.12,<3.13`, so equivalent ordering is accepted while changed semantics fail. All 449 tests passed, including both separately required Docker tests. Lock/sync, Ruff check/format, ty, Docker daemon, wheel/sdist build, isolated install and metadata/content checks, actionlint, `git diff --check`, and Gitleaks over all 16 commits also passed. The existing Harbor deprecation and deliberate retained-evidence pytest cleanup warnings remain unchanged. The first hosted run remains pending because the workflow is uncommitted.
