@@ -379,7 +379,7 @@ class ControllerAdmissionService:
             record = observed.record
             owns_active = (
                 record.owner_function_call_id == function_call_id
-                and record.state in {"running", "cancelling"}
+                and record.state == "running"
             )
             if not owns_active:
                 return

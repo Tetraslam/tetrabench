@@ -340,6 +340,36 @@ def test_cancel_running_preserves_owner_polls_then_sweeps_and_finalizes() -> Non
     assert children.operations == ["sweep", "sweep", "sweep"]
 
 
+class _DelayedTerminalController(FakeDetachedController):
+    def __init__(self, running_checks: int) -> None:
+        super().__init__()
+        self._running_checks = running_checks
+
+    def inspect(self, call_id: str) -> ControllerCallState:
+        self.operations.append(("inspect", call_id))
+        if self._running_checks:
+            self._running_checks -= 1
+            return ControllerCallState(call_id=call_id, state="running")
+        return ControllerCallState(call_id=call_id, state="failed")
+
+
+def test_cancel_default_poll_window_allows_provider_shutdown_delay() -> None:
+    store = _Store(_running())
+    controller = _DelayedTerminalController(running_checks=5)
+
+    result = CancellationService(
+        store,
+        controller,
+        _Children([(), ()]),
+        sleep=lambda _delay: None,
+        timestamp=lambda: "2026-08-28T20:00:02Z",
+    ).cancel("run-1")
+
+    assert result.state == "cancelled"
+    assert result.controller_terminal_observed
+    assert store.admission.record.state == "cancelled"
+
+
 class _TerminalRaceStore(_Store):
     def __init__(self, admission: AdmissionRecord, terminal: TerminalRecord) -> None:
         super().__init__(admission)

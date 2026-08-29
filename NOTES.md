@@ -206,3 +206,21 @@ Provenance: user-provided review findings, pinned Modal 1.5.4 exception inherita
 Provenance: local Python 3.12 validation after the live-smoke review correction.
 
 All 283 tests passed, including the real attached-Docker Harbor fixture. Ruff check and format, ty, `uv lock --check`, wheel/sdist build, an isolated wheel install with CLI/version/metadata/content inspection, and `git diff --check` passed. No live provider call or dependency change occurred.
+
+## 2026-08-28T21:28:00-07:00: Bounded live cancellation
+
+Provenance: retained baseline Tigris/Modal resources, one prepared cancellation, three bounded real Harbor cancellation runs, fresh-process verification, Modal billing, and local Python 3.12 validation.
+
+E-041 passed. Final run `cancel-live-20260828-003` was observed in running admission with one persisted and tag-visible Harbor child before a fresh process invoked the real cancellation CLI. Admission retained `prepared→running→cancelling→cancelled`; the owner FunctionCall reached Modal's failed terminal state; two cancellation sweeps reached empty; repeated verifier sweeps remained empty; no immutable terminal existed; and both baseline Apps reported zero tasks and zero active containers. Prepared run `cancel-prepared-20260828-001` cancelled before spawn with no cloud compute.
+
+Live evidence exposed two defects. The terminated controller could race durable cancelling intent to failed from its exception handler, so failure marking is now limited to running admission. Modal shutdown also exceeded the former 0.5-second owner poll window, so the bounded default is now ten seconds and remains resumable. A source-only helper copies the oracle fixture and inserts a validated 0–300-second hold without mutating the fixture, benchmark catalogs, or wheel.
+
+The final one-shot cancellation took 7.38 seconds. All three discovery/retry runs cost `$0.00147863` in Modal's 21:00 billing interval. The temporary submitter key was deleted; the existing controller key/policy and private run evidence were retained. All 289 tests, Ruff check/format, ty, lock check, wheel/sdist build, source-only wheel exclusion, diff check, and an audited secret scan passed. Forced replay/preemption remains `unproven`.
+
+## 2026-08-29T00:21:39-07:00: E-041 checkpoint correction
+
+Provenance: user-provided checkpoint findings and local Python 3.12 validation.
+
+Invalid source-only smoke `--hold-seconds` values now fail at the argparse boundary with concise stderr and exit status 2 before configuration, credentials, S3, or Modal are consulted. Subprocess regressions exercise the actual script entrypoint for negative, oversized, and non-integer values. The systems-design record now reflects E-039 nested Harbor child and named-Volume evidence plus E-041 live cancellation and repeated cleanup; forced interruption/preemption replay remains `unproven`.
+
+All 292 tests passed, including the real attached-Docker Harbor fixture. Ruff check and format, ty, `uv lock --check`, wheel/sdist build, isolated-wheel CLI/version/metadata and source-only exclusion checks, `git diff --check`, and an audited detect-secrets scan passed. The scan findings remain committed SHA-256 fixtures and explicit non-secret Secret-name/negative-test strings. No dependency or credential behavior changed; `botocore[crt]` was not added.

@@ -242,6 +242,26 @@ def test_cancelled_admission_cannot_publish_terminal_proof() -> None:
     assert "publish-terminal" not in store.operations
 
 
+def test_controller_failure_does_not_overwrite_cancellation_intent() -> None:
+    running = transition_admission(
+        _prepared_admission(),
+        "running",
+        timestamp="2026-08-28T20:00:01Z",
+        owner_function_call_id="fc-1",
+    )
+    cancelling = transition_admission(
+        running, "cancelling", timestamp="2026-08-28T20:00:02Z"
+    )
+    store = _CasStore(cancelling)
+
+    ControllerAdmissionService(
+        store, timestamp=lambda: "2026-08-28T20:00:03Z"
+    ).mark_failed("run-1", function_call_id="fc-1")
+
+    assert store.value.record.state == "cancelling"
+    assert "cas:failed" not in store.operations
+
+
 def test_stale_invocation_cannot_claim_admission() -> None:
     store = _CasStore(_prepared_admission())
     invocation = _invocation().model_copy(update={"plan_sha256": "f" * 64})

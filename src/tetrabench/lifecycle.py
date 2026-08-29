@@ -280,10 +280,10 @@ class CancellationService:
         controller: DetachedControllerClient,
         children: ChildCleanupObserver | None,
         *,
-        controller_checks: int = 5,
+        controller_checks: int = 50,
         sweep_limit: int = 5,
         sleep: Callable[[float], None] = time.sleep,
-        delay_seconds: float = 0.1,
+        delay_seconds: float = 0.2,
         timestamp: Callable[[], str] = utc_now_timestamp,
     ) -> None:
         if controller_checks <= 0 or sweep_limit < 2:

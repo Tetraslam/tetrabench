@@ -19,9 +19,11 @@ single-winner behavior have been proven live on a private copy-on-write fork.
 A deployed Modal controller has completed three detached fixture smokes against
 a private Tigris prefix. The final run retained its named-Volume job tree,
 published a 14-artifact terminal with reward `1.0`, and left no child sandbox
-running. AWS, forced replay, and live cancellation remain unproven. The
-checked-in benchmark sections still contain no tasks, so `submit` refuses them;
-the source-only fixture helper is the only exercised cloud submission path.
+running. A separate bounded smoke cancelled a running controller after observing
+its real Harbor child, reached cancelled admission, and left no running call or
+child. AWS and forced replay remain unproven. The checked-in benchmark sections
+still contain no tasks, so `submit` refuses them; the source-only fixture helper
+is the only exercised cloud submission path.
 
 Python 3.12 or newer is required.
 
@@ -119,6 +121,10 @@ sweeps children, and advances to cancelled only after the call is terminal and
 two consecutive sweeps are empty. The profile-scoped observer combines child
 IDs from immutable attempt events with run-tagged `Sandbox.list` results under
 Harbor's `__harbor__` App, terminates with wait, and repeats bounded sweeps.
+The controller preserves a cancelling admission instead of replacing it with
+failed when provider shutdown interrupts its exception path. Cancellation polls
+the owner for up to ten seconds and can be resumed safely if provider shutdown
+takes longer.
 Modal API, authentication, and other inspection failures do not prove that the
 owner call stopped. Terminal proof can be published only by the exact owner
 while admission is running or cancelling, after revalidating the immutable
