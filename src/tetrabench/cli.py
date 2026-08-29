@@ -261,12 +261,28 @@ def run(
         "outcome": result.outcome,
         "reward": result.reward,
         "schema_version": 1,
+        "summary": result.summary.model_dump(mode="json"),
     }
     if json_output:
         _canonical_echo(report)
     else:
         out.print(f"[bold]Outcome:[/bold] {result.outcome}")
-        out.print(f"[bold]Reward:[/bold] {result.reward or 'unavailable'}")
+        if result.summary.policy == "binary":
+            out.print(
+                f"[bold]Pass rate:[/bold] {result.summary.aggregate} "
+                f"({result.summary.pass_count}/{result.summary.sample_count})"
+            )
+        else:
+            out.print(f"[bold]Reward:[/bold] {result.reward or 'unavailable'}")
+        task_table = Table("Task", "Samples", "Passed", "Aggregate")
+        for task in result.summary.tasks:
+            task_table.add_row(
+                task.task_id,
+                str(task.sample_count),
+                str(task.pass_count) if task.pass_count is not None else "-",
+                task.aggregate or "unavailable",
+            )
+        out.print(task_table)
         out.print(f"[bold]Harbor job:[/bold] {result.job_directory}")
     if result.outcome != "succeeded":
         raise typer.Exit(1)
@@ -748,7 +764,25 @@ def result(
             out.print(f"[bold]Admission:[/bold] {report.admission_state}")
         if report.outcome is not None:
             out.print(f"[bold]Outcome:[/bold] {report.outcome}")
-            out.print(f"[bold]Reward:[/bold] {report.reward or 'unavailable'}")
+            if report.summary is not None and report.summary.policy == "binary":
+                out.print(
+                    f"[bold]Pass rate:[/bold] {report.summary.aggregate} "
+                    f"({report.summary.pass_count}/{report.summary.sample_count})"
+                )
+            else:
+                out.print(f"[bold]Reward:[/bold] {report.reward or 'unavailable'}")
+            if report.summary_status == "legacy_unavailable":
+                out.print("[bold]Summary:[/bold] unavailable (legacy)")
+            if report.summary is not None:
+                task_table = Table("Task", "Samples", "Passed", "Aggregate")
+                for task in report.summary.tasks:
+                    task_table.add_row(
+                        task.task_id,
+                        str(task.sample_count),
+                        str(task.pass_count) if task.pass_count is not None else "-",
+                        task.aggregate or "unavailable",
+                    )
+                out.print(task_table)
         if report.artifacts:
             table = Table("Artifact", "Bytes", "SHA-256", "Media type")
             for artifact in report.artifacts:
@@ -838,14 +872,23 @@ def runs(
         if json_output:
             typer.echo(canonical_model_bytes(report).decode("utf-8"))
         else:
-            table = Table("Run", "State", "Admission", "Outcome", "Reward")
+            table = Table("Run", "State", "Admission", "Outcome", "Aggregate")
             for item in report.runs:
+                if item.summary is not None and item.summary.policy == "binary":
+                    aggregate = (
+                        f"Pass rate {item.summary.aggregate} "
+                        f"({item.summary.pass_count}/{item.summary.sample_count})"
+                    )
+                else:
+                    aggregate = (
+                        f"Reward {item.reward}" if item.reward is not None else "-"
+                    )
                 table.add_row(
                     item.run_id,
                     item.state,
                     item.admission_state or "-",
                     item.outcome or "-",
-                    item.reward or "-",
+                    aggregate,
                 )
             out.print(table)
             for item in report.malformed_keys:

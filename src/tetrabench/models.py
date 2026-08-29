@@ -16,6 +16,7 @@ from pydantic import (
 )
 
 SchemaVersion = Literal[1]
+RewardPolicy = Literal["numeric", "binary"]
 MAX_HARBOR_ATTEMPTS = 32
 MAX_HARBOR_CONCURRENCY = 64
 MAX_HARBOR_TASKS = 256
@@ -189,6 +190,7 @@ class HarborConfig(StrictModel):
 class CatalogTask(StrictModel):
     id: TaskId
     harbor_task: NonEmptyString
+    reward_policy: RewardPolicy = "numeric"
 
     @model_validator(mode="after")
     def validate_harbor_task(self) -> CatalogTask:
@@ -464,6 +466,7 @@ class ResolvedContextFile(FrozenRecord):
 class ResolvedTrial(FrozenRecord):
     task_id: TaskId
     harbor_task: NonEmptyString
+    reward_policy: RewardPolicy = "numeric"
 
     @model_validator(mode="after")
     def validate_harbor_task(self) -> ResolvedTrial:
@@ -504,8 +507,23 @@ class ResolvedPlan(FrozenRecord):
             raise ValueError(f"plan contains more than {MAX_HARBOR_TASKS} trials")
         if len(task_ids) != len(set(task_ids)):
             raise ValueError("trial task IDs must be unique")
+        policies = {trial.reward_policy for trial in self.trials}
+        if len(policies) > 1:
+            raise ValueError("a section cannot mix reward policies")
+        policy_fields = {
+            "reward_policy" in trial.model_fields_set for trial in self.trials
+        }
+        if len(policy_fields) > 1:
+            raise ValueError("a plan cannot mix legacy and explicit reward policies")
         if not self.trials and self.runnable:
             raise ValueError("a plan with zero trials is not runnable")
         if self.runnable == bool(self.not_runnable_reasons):
             raise ValueError("runnable and not_runnable_reasons disagree")
         return self
+
+
+def is_legacy_reward_plan(plan: ResolvedPlan) -> bool:
+    """Whether every trial predates the persisted reward-policy field."""
+    return bool(plan.trials) and all(
+        "reward_policy" not in trial.model_fields_set for trial in plan.trials
+    )

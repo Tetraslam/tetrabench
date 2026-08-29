@@ -15,7 +15,7 @@ from pydantic import (
     model_validator,
 )
 
-from tetrabench.canonical_json import JsonValue, dumps_canonical_json, sha256_hex
+from tetrabench.canonical_json import JsonValue, sha256_hex
 from tetrabench.models import (
     FrozenRecord,
     NonEmptyString,
@@ -71,9 +71,9 @@ def utc_now_timestamp() -> str:
 
 
 def _canonical_digest(model: FrozenRecord) -> str:
-    return sha256_hex(
-        dumps_canonical_json(model.model_dump(mode="json", by_alias=True))
-    )
+    from tetrabench.plan import canonical_model_bytes
+
+    return sha256_hex(canonical_model_bytes(model))
 
 
 class ContentObject(FrozenRecord):
@@ -127,7 +127,9 @@ class RequestRecord(FrozenRecord):
 
     @model_validator(mode="after")
     def validate_embedded_digests(self) -> RequestRecord:
-        if _canonical_digest(self.plan) != self.plan_sha256:
+        from tetrabench.plan import plan_digest
+
+        if plan_digest(self.plan) != self.plan_sha256:
             raise ValueError("plan_sha256 does not match embedded plan")
         if _canonical_digest(self.context_manifest) != self.context_manifest_sha256:
             raise ValueError(

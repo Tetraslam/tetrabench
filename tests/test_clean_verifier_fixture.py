@@ -656,7 +656,9 @@ def test_real_harbor_clean_verifier_forge_sidecar_end_to_end(
     tmp_path: Path,
 ) -> None:
     assert _docker_available(), "Docker daemon is required for the test suite"
-    fixture_result = run_local_composition(FIXTURE, tmp_path / "run")
+    fixture_result = run_local_composition(
+        FIXTURE, tmp_path / "run", reward_policy="binary"
+    )
     assert fixture_result.terminal.outcome == "succeeded"
     run = fixture_result.invocation_root / "jobs/harbor-job"
     JobConfig.model_validate_json((run / "config.json").read_text())
@@ -671,8 +673,10 @@ def test_real_harbor_clean_verifier_forge_sidecar_end_to_end(
     result = json.loads((trial / "result.json").read_text())
     assert result["verifier_environment_mode"] == "separate"
     diagnostics = json.loads((trial / "verifier/diagnostics.json").read_text())
-    assert (trial / "verifier/reward.txt").read_bytes() == b"1\n", diagnostics
-    assert result["verifier_result"]["rewards"] == {"reward": 1.0}, diagnostics
+    assert (trial / "verifier/reward.json").read_bytes() == b'{"reward":1}\n', (
+        diagnostics
+    )
+    assert result["verifier_result"]["rewards"] == {"reward": 1}, diagnostics
     assert diagnostics["ok"] is True
     runtime = diagnostics["runtime"]
     assert runtime["orchestrator"] == {"gid": 0, "uid": 0}

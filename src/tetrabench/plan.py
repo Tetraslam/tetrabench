@@ -21,11 +21,22 @@ from tetrabench.models import (
     ResolvedPlan,
     ResolvedTaskSelection,
     ResolvedTrial,
+    is_legacy_reward_plan,
 )
 
 
 def canonical_model_bytes(model: BaseModel) -> bytes:
-    return dumps_canonical_json(model.model_dump(mode="json", by_alias=True))
+    value = model.model_dump(mode="json", by_alias=True)
+    plan = model if isinstance(model, ResolvedPlan) else getattr(model, "plan", None)
+    if isinstance(plan, ResolvedPlan) and is_legacy_reward_plan(plan):
+        trials = (
+            value["trials"]
+            if isinstance(model, ResolvedPlan)
+            else value["plan"]["trials"]
+        )
+        for trial in trials:
+            trial.pop("reward_policy", None)
+    return dumps_canonical_json(value)
 
 
 def parse_canonical_model[ModelT: BaseModel](
@@ -64,7 +75,12 @@ def resolved_plan_from_selection(
 ) -> ResolvedPlan:
     """Build one plan from an already selected catalog and sealed context snapshot."""
     trials = tuple(
-        ResolvedTrial(task_id=task.id, harbor_task=task.harbor_task) for task in tasks
+        ResolvedTrial(
+            task_id=task.id,
+            harbor_task=task.harbor_task,
+            reward_policy=task.reward_policy,
+        )
+        for task in tasks
     )
     empty_reason = f"section {section_name!r} contains no selected tasks"
     reasons = () if trials else (empty_reason,)

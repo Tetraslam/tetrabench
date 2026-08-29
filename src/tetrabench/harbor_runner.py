@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from decimal import Decimal
 from pathlib import Path
 from typing import Any, Literal, Protocol
 
@@ -10,6 +9,7 @@ from tetrabench.controller_runtime import AttemptPaths, HarborRunResult
 from tetrabench.harbor import ATTEMPT_LABEL, PLAN_LABEL, RUN_LABEL
 from tetrabench.harbor_api import Harbor022Api, NativeJobArtifacts
 from tetrabench.records import RequestRecord
+from tetrabench.rewards import summarize_rewards
 
 
 class HarborApi(Protocol):
@@ -129,21 +129,6 @@ def _native_evidence(artifacts: NativeJobArtifacts) -> tuple[str, ...]:
     )
 
 
-def _standard_reward(artifacts: NativeJobArtifacts) -> str | None:
-    values: list[Decimal] = []
-    for trial in artifacts.trials:
-        verifier = trial.result.verifier_result
-        if verifier is None or verifier.rewards is None:
-            continue
-        value = verifier.rewards.get("reward")
-        if isinstance(value, bool) or not isinstance(value, (int, float)):
-            continue
-        values.append(Decimal(str(value)))
-    if not values:
-        return None
-    return str(sum(values) / len(values))
-
-
 class HarborRunner:
     """Synchronous controller adapter for Harbor's asynchronous public API."""
 
@@ -177,13 +162,15 @@ class HarborRunner:
         result = self._api.execute(config)
         job_directory = paths.jobs / config.job_name
         artifacts = self._api.validate_native_artifacts(job_directory, result, config)
+        summary = summarize_rewards(request.plan, paths.context, artifacts)
         return HarborRunResult(
             outcome=_outcome(artifacts.result),
             job_directory=artifacts.job_directory,
             config_path=artifacts.config_path,
             lock_path=artifacts.lock_path,
             result_path=artifacts.result_path,
-            reward=_standard_reward(artifacts),
+            reward=summary.aggregate,
+            summary=summary,
             evidence=_native_evidence(artifacts),
             atif_paths=tuple(
                 path for trial in artifacts.trials for path in trial.atif_paths

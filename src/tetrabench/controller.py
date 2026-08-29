@@ -329,7 +329,11 @@ class ControllerAdmissionService:
                 invocation.request_sha256,
                 invocation.request_key,
             )
-            request = RequestRecord.model_validate(request.model_dump(mode="python"))
+            from tetrabench.plan import parse_canonical_model
+
+            request = parse_canonical_model(
+                canonical_model_bytes(request), RequestRecord
+            )
         except (TypeError, ValueError) as error:
             raise ControllerIdentityError(
                 "controller request, plan, or manifest validation failed"

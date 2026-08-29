@@ -31,6 +31,7 @@ FORBIDDEN_NAMES = {
     "events.jsonl",
     "forge-export",
     "reward.txt",
+    "reward.json",
     "snapshot.json",
 }
 EXPECTED_CONFIG = {
@@ -703,7 +704,7 @@ def main() -> int:
     except Exception as exc:
         diagnostics = {"error": str(exc), "ok": False}
     args.diagnostics.write_bytes(canonical(diagnostics) + b"\n")
-    args.reward.write_text(f"{reward}\n", encoding="utf-8")
+    args.reward.write_bytes(canonical({"reward": reward}) + b"\n")
     return 0
 
 

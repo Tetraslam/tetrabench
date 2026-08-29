@@ -608,3 +608,21 @@ All 607 tests passed, including all three Docker tests separately and again in t
 Provenance: GitHub Actions run [33272641566](https://github.com/Tetraslam/tetrabench/actions/runs/33272641566) for commit `e40b0cca4cab4c0aa3a45a97110a87a2e99a6491`.
 
 The hosted Python 3.12 job passed the three required Docker tests, the full 607-test suite, lock and locked sync, Ruff, ty, Bandit, package build and isolated-wheel smoke, and the all-groups dependency audit. The independent full-history Gitleaks job passed. This closes the hosted clean-verifier false failure while retaining both TCP-denial gates.
+
+## 2026-08-29T13:57:10-07:00: E-068 binary reward and summary prerequisite
+
+Provenance: user-provided reward/summary contract, pinned Harbor 0.22 persisted config/result behavior, focused adversarial tests, repeated real local Docker execution, and complete local CI/security/package parity. No catalog task, provider call, detached run, commit, or live resource was created or changed.
+
+Catalog tasks now carry numeric or binary reward policy into immutable resolved trials and plan/request identity. Retained plans without the field parse as numeric while preserving their original canonical bytes and digest. Native artifacts retain the persisted TrialConfig and strict raw reward dictionaries, allowing path-based mapping without trial-name interpretation and validation before controller success. All primary, diagnostic, and step-verifier values must be exact finite int/float values excluding booleans. Numeric attempts reject mixed missing/present primary rewards within one task. Binary attempts require primary integer `0` or `1`; the clean verifier now writes canonical `reward.json`, while reward.txt remains float-producing and invalid for binary policy.
+
+Frozen trial, task, and section summaries use deterministic task/trial ordering, exact decimal strings, exact binary counts, and homogeneous policies. New controller-result schema v2 binds the summary to run, request, plan, attempt, and outcome. Cancellation retains it. Remote readers validate identity and summary arithmetic before success; only old schema-v1 results paired with old plans use the legacy native numeric fallback. Local and remote human output label binary aggregates as pass rate with counts, and JSON carries the complete summary.
+
+All 633 tests passed, including all three Docker tests separately and again in the full suite. `uv lock --check`, locked all-group sync, Ruff check and format, ty, Bandit, actionlint, wheel/sdist build, isolated locked-runtime wheel installation and metadata/content smoke, all-groups pip-audit, `git diff --check`, and redacted Gitleaks over all 25 commits passed. Detached Modal proof remains `unproven` because the retained storage credentials are expired.
+
+## 2026-08-29T14:17:48-07:00: E-068 reward-summary model correction
+
+Provenance: user-provided remaining P1 contract, direct Pydantic record construction, canonical controller-result byte tampering through the remote reader, and complete local Python 3.12 validation. No provider call, detached run, commit, or live resource was created or changed.
+
+`SectionRewardSummary` now independently rejects every binary trial value except exact string `"0"` or `"1"`, including nested instances constructed without their own validators. Each binary task requires exactly its trial count, counts passes from exact `"1"` strings, and derives its canonical pass rate from those counts. Section sample count, pass count, and pass rate similarly derive from all trials. Self-consistent counts and rates that disagree with the trial samples fail closed. Decimal strings across numeric trial and aggregate fields remain finite and canonically normalized, rejecting negative zero, trailing decimal zero, leading-zero, and exponent forms.
+
+All 682 tests passed, including all three Docker tests separately and again in the full suite. Direct-record and remote tamper matrices cover `2`, negative and decimal zero forms, decimal one, leading-zero forms, exponent forms, and coherent count/rate mismatches. `uv lock --check`, locked all-group sync, Ruff check and format, ty, Bandit, actionlint, wheel/sdist build, isolated locked-runtime wheel installation and metadata/content smoke, all-groups pip-audit, `git diff --check`, and redacted Gitleaks over all 25 commits passed.

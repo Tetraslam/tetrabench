@@ -497,8 +497,9 @@ most 8 distinct fault schedules.
    detached Modal, then run automatic selected-fixture sealing through live
    Modal. Renew scoped storage credentials first. Do not create a catalog task
    before these prerequisites pass.
-2. Implement binary native-reward validation and section pass-rate summaries.
-   Freeze the pinned agent and verifier images, manifest schemas, fault
+2. Binary native-reward validation and section pass-rate summaries are locally
+   complete. Prove them through detached Modal, then freeze the pinned agent and
+   verifier images, manifest schemas, fault
    scheduler, exploit-audit checks, budgets, and admission evidence format.
 3. Implement and admit systems tasks in this order: `authority-fencing`,
    `atomic-outbox`, `lifecycle-reconciliation`, `online-migration`, then

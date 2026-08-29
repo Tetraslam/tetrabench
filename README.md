@@ -43,6 +43,18 @@ Direct-IP and hostname TCP connection attempts must both fail, and either
 connection succeeding forces reward `0`. Detached Modal proof remains unproven
 because the retained storage credentials are expired.
 
+Catalog tasks now bind `reward_policy = "numeric" | "binary"` into resolved-plan
+identity. Existing catalogs default to numeric, and retained plans without the
+field preserve their old canonical identity. After Harbor validates native job
+artifacts, tetrabench maps every attempt to one resolved task by its persisted
+materialized task path and validates every primary and diagnostic reward as an
+exact finite integer or float, never a boolean. Binary tasks require primary
+integer `0` or `1` on every attempt; `reward.txt` produces a float and therefore
+cannot satisfy that policy. Binary summaries independently require exact string
+`"0"` or `"1"` trial values and derive every task and section count and pass rate
+from those samples. Numeric summaries use canonical finite decimal strings. The
+clean-verifier fixture now writes `reward.json`.
+
 Detached submission now derives every regular file under each selected
 catalog task directory and seals that complete fixture into the immutable
 context before it constructs an S3 or Modal service. The source-only fixture
@@ -166,8 +178,11 @@ does not exist; tetrabench creates it with mode `0700` and leaves the native
 `harbor-job` directory there. Once that private reservation succeeds,
 tetrabench never removes it on failure or interruption. Empty, partial, or
 concurrently changed output remains owned evidence.
-The final report contains Harbor's outcome, standard mean `reward` as a decimal
-string, and native job path. Failed or cancelled outcomes exit nonzero. Ctrl-C
+The final report contains Harbor's outcome, a canonical task/trial section
+summary, and native job path. Numeric sections label their aggregate `Reward`;
+binary sections label it `Pass rate` and show passed/sample counts. JSON includes
+the complete ordered summary with exact decimal strings. Failed or cancelled
+outcomes exit nonzero. Ctrl-C
 exits 130 and retains the output directory as partial native evidence. The
 checked-in catalogs are empty, so they continue to refuse execution until tasks
 are deliberately added.
@@ -261,10 +276,16 @@ request and all run/request/plan bindings.
 `result` reads the selected AWS or Tigris profile directly. It requires no
 local receipt and constructs no Modal client. The report distinguishes
 `unknown`, `nonterminal`, `terminal`, and `conflict`, validates terminal,
-admission, request, plan, and storage bindings, and shows outcome, standard
-reward when the native Harbor result provides one, and the complete terminal
+admission, request, plan, storage, and controller-summary bindings, and shows
+outcome, the canonical section summary, and the complete terminal
 inventory. Unknown exits 4, conflict exits 3, and failed or cancelled authority
 exits 1. Successful and still-running states exit 0.
+
+New controller-result schema v2 binds run, request, plan, attempt, outcome, and
+summary. Remote reads reject malformed identity or arithmetic before reporting
+success. Retained schema-v1 controller results are accepted only with plans that
+predate reward policies; those use the native numeric fallback and report the
+structured summary as unavailable and legacy. New binary plans never fall back.
 
 `runs` retains local receipt listing by default. `runs --remote --profile
 PROFILE` paginates the configured `runs/` prefix, derives unique run IDs only

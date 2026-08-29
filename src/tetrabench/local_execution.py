@@ -23,6 +23,7 @@ from tetrabench.harbor import (
 from tetrabench.harbor_runner import HarborRunner
 from tetrabench.plan import canonical_model_bytes, plan_digest, resolve_plan
 from tetrabench.records import RequestRecord
+from tetrabench.rewards import SectionRewardSummary
 
 LOCAL_RUN_ID = "local-run"
 
@@ -31,6 +32,7 @@ LOCAL_RUN_ID = "local-run"
 class LocalExecutionResult:
     outcome: Literal["succeeded", "failed", "cancelled"]
     reward: str | None
+    summary: SectionRewardSummary
     job_directory: Path
 
 
@@ -137,8 +139,11 @@ def run_local(
             environment_import_path=ENVIRONMENT_IMPORT_PATH,
             labels=labels,
         )
+    if result.summary is None:
+        raise ValueError("Harbor runner did not return a canonical reward summary")
     return LocalExecutionResult(
         outcome=result.outcome,
         reward=result.reward,
+        summary=result.summary,
         job_directory=result.job_directory,
     )

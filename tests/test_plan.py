@@ -6,7 +6,7 @@ import pytest
 from pydantic import ValidationError
 
 from tetrabench.canonical_json import dumps_canonical_json, sha256_hex
-from tetrabench.models import ResolvedPlan
+from tetrabench.models import ResolvedPlan, is_legacy_reward_plan
 from tetrabench.plan import (
     canonical_model_bytes,
     parse_canonical_model,
@@ -77,3 +77,30 @@ def test_plan_has_no_secret_value_fields(monkeypatch: pytest.MonkeyPatch) -> Non
 
     assert b"must-not-serialize" not in data
     assert b"secret_value" not in data
+
+
+def test_old_plan_without_reward_policy_retains_legacy_numeric_identity() -> None:
+    legacy = ResolvedPlan.model_validate(
+        {
+            "schema_version": 1,
+            "section": "integration",
+            "controller": {"kind": "local"},
+            "execution": {"kind": "docker"},
+            "storage": None,
+            "selection": {},
+            "harbor": {},
+            "context": (),
+            "trials": ({"task_id": "task", "harbor_task": "task"},),
+            "runnable": True,
+            "not_runnable_reasons": (),
+        }
+    )
+    value = legacy.model_dump(mode="json")
+    value["trials"][0].pop("reward_policy")
+    old_bytes = dumps_canonical_json(value)
+    plan = parse_canonical_model(old_bytes, ResolvedPlan)
+
+    assert plan.trials[0].reward_policy == "numeric"
+    assert is_legacy_reward_plan(plan)
+    assert canonical_model_bytes(plan) == old_bytes
+    assert plan_digest(plan) == sha256_hex(old_bytes)

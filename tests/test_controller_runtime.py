@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import threading
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -18,7 +19,7 @@ from tetrabench.controller_runtime import (
 )
 from tetrabench.lifecycle import ChildSweepResult
 from tetrabench.models import ResolvedPlan
-from tetrabench.plan import canonical_model_bytes, plan_digest
+from tetrabench.plan import canonical_model_bytes, parse_canonical_model, plan_digest
 from tetrabench.records import (
     ArtifactInventoryEntry,
     ContentObject,
@@ -31,6 +32,12 @@ from tetrabench.records import (
     new_admission,
     transition_admission,
 )
+from tetrabench.rewards import (
+    ControllerResultV2,
+    SectionRewardSummary,
+    TaskRewardSummary,
+    TrialReward,
+)
 from tetrabench.s3 import (
     AdmissionRead,
     S3CasConflictError,
@@ -39,7 +46,9 @@ from tetrabench.s3 import (
 from tetrabench.storage import content_object_key
 
 
-def _request(*, context: bytes | None = None) -> RequestRecord:
+def _request(
+    *, context: bytes | None = None, explicit_policy: bool = False
+) -> RequestRecord:
     files = ()
     plan_context = ()
     if context is not None:
@@ -65,6 +74,9 @@ def _request(*, context: bytes | None = None) -> RequestRecord:
                 "sha256": digest,
             },
         )
+    trial = {"task_id": "task", "harbor_task": "task.module"}
+    if explicit_policy:
+        trial["reward_policy"] = "numeric"
     plan = ResolvedPlan.model_validate(
         {
             "schema_version": 1,
@@ -84,7 +96,7 @@ def _request(*, context: bytes | None = None) -> RequestRecord:
             "selection": {},
             "harbor": {},
             "context": plan_context,
-            "trials": ({"task_id": "task", "harbor_task": "task.module"},),
+            "trials": (trial,),
             "runnable": True,
             "not_runnable_reasons": (),
         }
@@ -467,6 +479,94 @@ def test_native_artifact_validation_failure_blocks_controller_success(
     assert store.terminals == []
     assert store.admission.record.state == "failed"
     assert "s3:terminal" not in operations
+
+
+def test_new_plan_requires_summary_before_terminal_publication(tmp_path: Path) -> None:
+    operations: list[str] = []
+    request = _request(explicit_policy=True)
+    store = _Store(request, operations)
+    runtime = ControllerRuntime(
+        store,
+        _Volume(operations),
+        _FakeHarborRunner(operations),
+        _Observer(operations),
+        controller_root=tmp_path,
+        attempt_id=lambda: "attempt-one",
+    )
+
+    result = runtime.run(_invocation(request), function_call_id="fc-1")
+
+    assert result.state == "failed"
+    assert store.admission.record.state == "failed"
+    assert store.terminals == []
+    assert "s3:terminal" not in operations
+
+
+def _numeric_summary() -> SectionRewardSummary:
+    return SectionRewardSummary(
+        policy="numeric",
+        aggregate_kind="numeric_mean",
+        task_count=1,
+        sample_count=1,
+        aggregate="1",
+        trials=(
+            TrialReward(
+                task_id="task",
+                trial_name="trial-one",
+                policy="numeric",
+                value="1",
+            ),
+        ),
+        tasks=(
+            TaskRewardSummary(
+                task_id="task",
+                policy="numeric",
+                sample_count=1,
+                aggregate="1",
+            ),
+        ),
+    )
+
+
+def test_cancellation_transformation_preserves_summary(tmp_path: Path) -> None:
+    operations: list[str] = []
+    request = _request(explicit_policy=True)
+    store = _Store(request, operations)
+
+    class CancellingSummaryRunner(_FakeHarborRunner):
+        def run(self, *args, **kwargs):
+            result = super().run(*args, **kwargs)
+            store.admission = AdmissionRead(
+                transition_admission(
+                    store.admission.record,
+                    "cancelling",
+                    timestamp=store.admission.record.updated_at,
+                ),
+                "etag-2",
+            )
+            return replace(
+                result,
+                reward="1",
+                summary=_numeric_summary(),
+            )
+
+    runtime = ControllerRuntime(
+        store,
+        _Volume(operations),
+        CancellingSummaryRunner(operations),
+        _Observer(operations),
+        controller_root=tmp_path,
+        attempt_id=lambda: "attempt-one",
+    )
+    result = runtime.run(_invocation(request), function_call_id="fc-1")
+
+    assert result.state == "terminal"
+    record = parse_canonical_model(
+        attempt_paths(tmp_path, "run-1", "attempt-one").controller_result.read_bytes(),
+        ControllerResultV2,
+    )
+    assert record.outcome == "cancelled"
+    assert record.summary == _numeric_summary()
 
 
 def test_not_quiescent_cleanup_code_is_consistent_at_every_publication_site(

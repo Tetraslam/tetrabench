@@ -8,4 +8,4 @@ python /tests/verify.py \
   --expected-initial /tests/expected_initial.json \
   --baked-marker /opt/tetrabench-verifier-source \
   --diagnostics /logs/verifier/diagnostics.json \
-  --reward /logs/verifier/reward.txt
+  --reward /logs/verifier/reward.json

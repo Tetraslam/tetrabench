@@ -44,7 +44,10 @@ class NativeTrialArtifacts:
     config_path: Path
     lock_path: Path
     result_path: Path
+    config: TrialConfig
     result: TrialResult
+    rewards: tuple[tuple[str, int | float], ...] | None
+    step_rewards: tuple[tuple[tuple[str, int | float], ...], ...]
     atif_paths: tuple[Path, ...]
 
 
@@ -139,6 +142,55 @@ def _reject_manifest_duplicate_keys(
 
 def _reject_manifest_nonfinite(value: str) -> object:
     raise ValueError(f"nonfinite Harbor artifact manifest value: {value}")
+
+
+def _load_strict_json(path: Path) -> object:
+    try:
+        return json.loads(
+            path.read_text(encoding="utf-8"),
+            object_pairs_hook=_reject_manifest_duplicate_keys,
+            parse_constant=_reject_manifest_nonfinite,
+        )
+    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise ValueError("Harbor trial result is not strict JSON") from error
+
+
+def _raw_verifier_rewards(
+    verifier: object,
+) -> tuple[tuple[str, int | float], ...] | None:
+    if verifier is None:
+        return None
+    if not isinstance(verifier, dict):
+        raise ValueError("Harbor verifier result must be an object")
+    rewards = verifier.get("rewards")
+    if rewards is None:
+        return None
+    if not isinstance(rewards, dict):
+        raise ValueError("Harbor verifier rewards must be an object")
+    return tuple(rewards.items())
+
+
+def _raw_rewards(
+    value: object,
+) -> tuple[
+    tuple[tuple[str, int | float], ...] | None,
+    tuple[tuple[tuple[str, int | float], ...], ...],
+]:
+    if not isinstance(value, dict):
+        raise ValueError("Harbor trial result root must be an object")
+    primary = _raw_verifier_rewards(value.get("verifier_result"))
+    step_rewards = []
+    steps = value.get("step_results")
+    if steps is not None:
+        if not isinstance(steps, list) or any(
+            not isinstance(step, dict) for step in steps
+        ):
+            raise ValueError("Harbor trial step results must be an array of objects")
+        for step in steps:
+            rewards = _raw_verifier_rewards(step.get("verifier_result"))
+            if rewards is not None:
+                step_rewards.append(rewards)
+    return primary, tuple(step_rewards)
 
 
 def _load_trial_artifact_manifest(manifest_path: Path) -> ArtifactManifest:
@@ -369,6 +421,9 @@ class Harbor022Api:
             persisted_trial = TrialResult.model_validate_json(
                 trial_result_path.read_text()
             )
+            raw_rewards, raw_step_rewards = _raw_rewards(
+                _load_strict_json(trial_result_path)
+            )
             if persisted_trial.trial_name != trial_name:
                 raise ValueError("Harbor trial directory and result name disagree")
             returned_trial = returned_trials.get(trial_name)
@@ -403,7 +458,10 @@ class Harbor022Api:
                     config_path=trial_config,
                     lock_path=trial_lock,
                     result_path=trial_result_path,
+                    config=persisted_trial_config,
                     result=persisted_trial,
+                    rewards=raw_rewards,
+                    step_rewards=raw_step_rewards,
                     atif_paths=tuple(atif_paths),
                 )
             )

@@ -24,10 +24,75 @@ from tetrabench.remote import (
     RemoteResult,
     RemoteRunsReport,
 )
+from tetrabench.rewards import (
+    SectionRewardSummary,
+    TaskRewardSummary,
+    TrialReward,
+)
 from tetrabench.s3 import S3IntegrityError, S3Store
 
 ROOT = Path(__file__).parents[1]
 runner = CliRunner()
+
+
+def _numeric_summary(value: str) -> SectionRewardSummary:
+    return SectionRewardSummary(
+        policy="numeric",
+        aggregate_kind="numeric_mean",
+        task_count=1,
+        sample_count=1,
+        aggregate=value,
+        trials=(
+            TrialReward(
+                task_id="fixture",
+                trial_name="trial-one",
+                policy="numeric",
+                value=value,
+            ),
+        ),
+        tasks=(
+            TaskRewardSummary(
+                task_id="fixture",
+                policy="numeric",
+                sample_count=1,
+                aggregate=value,
+            ),
+        ),
+    )
+
+
+def _binary_summary() -> SectionRewardSummary:
+    return SectionRewardSummary(
+        policy="binary",
+        aggregate_kind="binary_pass_rate",
+        task_count=1,
+        sample_count=2,
+        pass_count=1,
+        aggregate="0.5",
+        trials=(
+            TrialReward(
+                task_id="fixture",
+                trial_name="trial-a",
+                policy="binary",
+                value="1",
+            ),
+            TrialReward(
+                task_id="fixture",
+                trial_name="trial-b",
+                policy="binary",
+                value="0",
+            ),
+        ),
+        tasks=(
+            TaskRewardSummary(
+                task_id="fixture",
+                policy="binary",
+                sample_count=2,
+                pass_count=1,
+                aggregate="0.5",
+            ),
+        ),
+    )
 
 
 def _local_project(tmp_path: Path) -> tuple[Path, Path]:
@@ -305,6 +370,7 @@ def test_run_retained_output_has_exact_private_mode(
             return HarborRunResult(
                 outcome="succeeded",
                 reward="1",
+                summary=_numeric_summary("1"),
                 job_directory=job,
             )
 
@@ -446,6 +512,7 @@ def test_run_propagates_unsuccessful_harbor_outcome(
             return HarborRunResult(
                 outcome=cast(Literal["failed", "cancelled"], outcome),
                 reward="0.25",
+                summary=_numeric_summary("0.25"),
                 job_directory=job,
             )
 
@@ -577,12 +644,14 @@ def test_run_real_harbor_docker_from_temporary_catalog(
     assert result.stderr == ""
     report = loads_canonical_json(result.stdout.removesuffix("\n").encode())
     assert isinstance(report, dict)
-    assert report == {
-        "job_directory": str(output / "harbor-job"),
-        "outcome": "succeeded",
-        "reward": "1.0",
-        "schema_version": 1,
-    }
+    assert report["job_directory"] == str(output / "harbor-job")
+    assert report["outcome"] == "succeeded"
+    assert report["reward"] == "1"
+    assert report["schema_version"] == 1
+    summary = report["summary"]
+    assert isinstance(summary, dict)
+    assert summary["aggregate"] == "1"
+    assert summary["aggregate_kind"] == "numeric_mean"
     assert (output / "harbor-job/config.json").is_file()
     assert (output / "harbor-job/lock.json").is_file()
     assert (output / "harbor-job/result.json").is_file()
@@ -1242,6 +1311,36 @@ def test_result_human_terminal_shows_outcome_reward_and_inventory(monkeypatch) -
     assert "Outcome: succeeded" in result.stdout
     assert "Reward: 0.5" in result.stdout
     assert "job/result.json" in result.stdout
+
+
+def test_result_binary_human_and_json_show_complete_pass_rate(monkeypatch) -> None:
+    report = RemoteResult(
+        run_id="run-1",
+        state="terminal",
+        outcome="succeeded",
+        reward="0.5",
+        summary_status="available",
+        summary=_binary_summary(),
+        terminal_sha256="a" * 64,
+    )
+
+    class Service:
+        @staticmethod
+        def result(_run_id: str) -> RemoteResult:
+            return report
+
+    monkeypatch.setattr(
+        "tetrabench.cli._remote_result_service", lambda _profile: Service()
+    )
+    human = runner.invoke(app, ["result", "run-1", "--profile", "fresh"])
+    machine = runner.invoke(app, ["result", "run-1", "--profile", "fresh", "--json"])
+
+    assert human.exit_code == 0
+    assert "Pass rate: 0.5 (1/2)" in human.stdout
+    assert "fixture" in human.stdout
+    payload = loads_canonical_json(machine.stdout.removesuffix("\n").encode())
+    assert isinstance(payload, dict)
+    assert payload["summary"] == _binary_summary().model_dump(mode="json")
 
 
 def test_runs_remote_surfaces_malformed_keys_and_exits_three(monkeypatch) -> None:

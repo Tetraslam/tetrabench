@@ -42,6 +42,12 @@ from tetrabench.records import (
     TerminalRunState,
     validate_attempt_id,
 )
+from tetrabench.rewards import (
+    ControllerResultV1,
+    ControllerResultV2,
+    SectionRewardSummary,
+    validate_summary_for_plan,
+)
 
 CONTROLLER_ROOT = Path("/tetrabench/controller")
 HARBOR_VERSION = "0.22.0"
@@ -132,6 +138,7 @@ class HarborRunResult:
     lock_path: Path | None = None
     result_path: Path | None = None
     reward: str | None = None
+    summary: SectionRewardSummary | None = None
     evidence: tuple[str, ...] = ()
     warnings: tuple[str, ...] = ()
     atif_paths: tuple[Path, ...] = ()
@@ -528,6 +535,8 @@ class ControllerRuntime:
                     config_path=result.config_path,
                     lock_path=result.lock_path,
                     result_path=result.result_path,
+                    reward=result.reward,
+                    summary=result.summary,
                     evidence=(
                         *result.evidence,
                         "cancellation observed after Harbor return",
@@ -537,19 +546,39 @@ class ControllerRuntime:
                 )
             phase = "artifact-validation"
             self._validate_runner_result(paths, result)
+            from tetrabench.models import is_legacy_reward_plan
+
+            if is_legacy_reward_plan(request.plan):
+                controller_result = ControllerResultV1(
+                    schema_version=1,
+                    attempt_id=attempt_id,
+                    harbor_version=HARBOR_VERSION,
+                    modal_version=MODAL_VERSION,
+                    outcome=result.outcome,
+                    run_id=invocation.run_id,
+                    tetrabench_version=version("tetrabench"),
+                )
+            else:
+                if result.summary is None:
+                    raise ValueError(
+                        "new resolved plan requires a canonical reward summary"
+                    )
+                validate_summary_for_plan(result.summary, request.plan)
+                controller_result = ControllerResultV2(
+                    schema_version=2,
+                    attempt_id=attempt_id,
+                    harbor_version=HARBOR_VERSION,
+                    modal_version=MODAL_VERSION,
+                    outcome=result.outcome,
+                    plan_sha256=invocation.plan_sha256,
+                    request_sha256=invocation.request_sha256,
+                    run_id=invocation.run_id,
+                    summary=result.summary,
+                    tetrabench_version=version("tetrabench"),
+                )
             _write_new(
                 paths.controller_result,
-                dumps_canonical_json(
-                    {
-                        "attempt_id": attempt_id,
-                        "harbor_version": HARBOR_VERSION,
-                        "modal_version": MODAL_VERSION,
-                        "outcome": result.outcome,
-                        "run_id": invocation.run_id,
-                        "schema_version": 1,
-                        "tetrabench_version": version("tetrabench"),
-                    }
-                ),
+                canonical_model_bytes(controller_result),
             )
             self._volume.commit()
             self._volume.reload()

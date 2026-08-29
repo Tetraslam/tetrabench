@@ -73,39 +73,46 @@ class _FakeApi:
     def execute(self, config):
         if self.fail:
             raise RuntimeError("Harbor failed")
-        trial = SimpleNamespace(
-            trial_name="trial-one",
-            verifier_result=SimpleNamespace(rewards={"reward": 0}),
-            exception_info=None,
-            step_results=None,
-        )
+        trials = [
+            SimpleNamespace(
+                trial_name=f"trial-{index}",
+                verifier_result=SimpleNamespace(rewards={"reward": 0}),
+                exception_info=None,
+                step_results=None,
+            )
+            for index in range(config.n_attempts)
+        ]
         return SimpleNamespace(
             stats=SimpleNamespace(
-                n_completed_trials=1,
+                n_completed_trials=len(trials),
                 n_errored_trials=self.errors,
                 n_cancelled_trials=self.cancelled,
             ),
-            trial_results=[trial],
+            trial_results=trials,
         )
 
     @staticmethod
     def validate_native_artifacts(job_directory, result, config):
-        trial = job_directory / "trial-one"
         return NativeJobArtifacts(
             job_directory=job_directory,
             config_path=job_directory / "config.json",
             lock_path=job_directory / "lock.json",
             result_path=job_directory / "result.json",
-            trials=(
+            trials=tuple(
                 NativeTrialArtifacts(
-                    trial_name="trial-one",
+                    trial_name=returned.trial_name,
                     directory=trial,
                     config_path=trial / "config.json",
                     lock_path=trial / "lock.json",
                     result_path=trial / "result.json",
-                    result=result.trial_results[0],
+                    config=TrialConfig(task=TaskConfig(path=config.tasks[0]["path"])),
+                    result=returned,
+                    rewards=(("reward", 0),),
+                    step_rewards=(),
                     atif_paths=(trial / "agent/trajectory.json",),
-                ),
+                )
+                for returned in result.trial_results
+                for trial in (job_directory / returned.trial_name,)
             ),
             config=config,
             lock=cast(JobLock, SimpleNamespace()),
@@ -225,8 +232,9 @@ def test_zero_verifier_reward_is_a_successful_runner_outcome(tmp_path: Path) -> 
     assert result.outcome == "succeeded"
     assert result.reward == "0"
     assert result.config_path == paths.jobs / "harbor-job/config.json"
-    assert result.atif_paths == (
-        paths.jobs / "harbor-job/trial-one/agent/trajectory.json",
+    assert result.atif_paths == tuple(
+        paths.jobs / f"harbor-job/trial-{index}/agent/trajectory.json"
+        for index in range(2)
     )
 
 

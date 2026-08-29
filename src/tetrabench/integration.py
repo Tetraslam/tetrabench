@@ -32,6 +32,7 @@ from tetrabench.models import (
     ResolvedPlan,
     ResolvedTaskSelection,
     ResolvedTrial,
+    RewardPolicy,
 )
 from tetrabench.plan import canonical_model_bytes, plan_digest
 from tetrabench.records import (
@@ -203,6 +204,7 @@ def prepare_fixture_submission(
     *,
     run_id: str,
     profile: str | None = None,
+    reward_policy: RewardPolicy = "numeric",
 ) -> PreparedSubmission:
     """Seal the fixture without placing it in a benchmark catalog."""
     task_directory = task_directory.resolve()
@@ -242,6 +244,7 @@ def prepare_fixture_submission(
             ResolvedTrial(
                 task_id="fixture-task",
                 harbor_task=FIXTURE_DESTINATION,
+                reward_policy=reward_policy,
             ),
         ),
         runnable=True,
@@ -322,6 +325,7 @@ def run_local_composition(
     output_root: Path,
     *,
     run_id: str = "fixture-composition",
+    reward_policy: RewardPolicy = "numeric",
 ) -> LocalCompositionResult:
     """Run real Harbor Docker through ControllerRuntime and in-memory S3/Volume."""
     if output_root.exists():
@@ -339,7 +343,12 @@ def run_local_composition(
             "harbor": {"agent_name": "oracle", "attempts": 1, "concurrency": 1},
         }
     )
-    prepared = prepare_fixture_submission(task_directory, config, run_id=run_id)
+    prepared = prepare_fixture_submission(
+        task_directory,
+        config,
+        run_id=run_id,
+        reward_policy=reward_policy,
+    )
     store = _MemoryStore(prepared)
     if prepared.plan.storage is None:
         raise RuntimeError("local composition requires resolved storage")
