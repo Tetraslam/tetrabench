@@ -3,11 +3,17 @@
 from __future__ import annotations
 
 import threading
+from builtins import TimeoutError as BuiltinTimeoutError
 from collections.abc import Callable
 from typing import Literal, Protocol
 
 import modal
-from modal.exception import OutputExpiredError, RemoteError, TimeoutError
+from modal.exception import (
+    FunctionTimeoutError,
+    OutputExpiredError,
+    RemoteError,
+    TimeoutError,
+)
 from pydantic import model_validator
 
 from tetrabench.canonical_json import sha256_hex
@@ -421,7 +427,13 @@ class ModalControllerClient:
             call.get(timeout=0)
         except OutputExpiredError:
             return ControllerCallState(call_id=call_id, state="expired")
-        except TimeoutError:
+        except FunctionTimeoutError as error:
+            return ControllerCallState(
+                call_id=call_id,
+                state="failed",
+                detail=type(error).__name__,
+            )
+        except (TimeoutError, BuiltinTimeoutError):
             return ControllerCallState(call_id=call_id, state="running")
         except RemoteError as error:
             return ControllerCallState(

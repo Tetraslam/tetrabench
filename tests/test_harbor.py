@@ -93,7 +93,7 @@ def test_real_observer_uses_harbor_app_tags_persisted_ids_and_waits() -> None:
 
     def app_lookup(name, **kwargs):
         lookups.append((name, kwargs))
-        return SimpleNamespace(object_id="ap-harbor")
+        return SimpleNamespace(app_id="ap-harbor")
 
     observer = ModalChildObserver(
         S3ChildIdentitySource(_EventStore()),

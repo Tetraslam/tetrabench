@@ -242,7 +242,7 @@ class ModalChildObserver:
         return {
             sandbox.object_id: sandbox
             for sandbox in self._sandbox_type.list(
-                app_id=app.object_id,
+                app_id=app.app_id,
                 tags={RUN_LABEL: run_id},
             )
         }

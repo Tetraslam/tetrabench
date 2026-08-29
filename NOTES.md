@@ -188,3 +188,21 @@ Harbor's complete native job directory remains unchanged. The runner validates j
 Provenance: user-provided composition findings, Harbor 0.22 model/source inspection, focused regressions, and a real attached-Docker run through `ControllerRuntime`.
 
 The controller now constructs its S3 store before hiding AWS/Tigris credential, token, profile, and credential-file environment sources for the entire runtime. Child lifecycle publication uses a random invocation-scoped controller-process registry key and the already-created store, with reliable cleanup. Persisted Harbor job/trial config, lock, and result models own semantic outcomes; transport objects must agree. Plans and artifact collection are bounded, and ATIF roots plus continuation files are discovered from the secure inventory. The real fixture requested standard AWS interpolation variables, received only unavailable defaults in the child, published a succeeded 14-artifact terminal with reward `1.0`, and recorded missing ATIF without fabrication. Deployed Modal, real Volume, live IAM, and nested authentication remain `unproven`.
+
+## 2026-08-28T20:01:23-07:00: First live detached Modal and Tigris smoke
+
+Provenance: three paid deployed runs using the source-only oracle fixture, fresh-process tetrabench/Modal/Tigris inspection, downloaded named-Volume files, native Harbor 0.22 model validation, and the retained redacted verifier/report under `~/.local/share/opencode/tetrabench-research/modal-tigris-smoke/2026-08-28/`.
+
+E-039 passed. Final run `smoke-20260828-003` claimed admission with its actual FunctionCall, created one tagged nested Harbor Modal sandbox, retained the complete Volume attempt/job tree, published 14 verified artifacts before one terminal object, acknowledged admission revision 2 as terminal, and produced one completed trial with reward `1.0`. The fixture's credential-boundary verifier passed, Tigris remained queryable after controller completion, and no run-tagged child remained. Live evidence found and corrected two pinned-SDK mismatches: built-in `TimeoutError` from nonblocking `FunctionCall.get`, and `App.app_id` for `Sandbox.list`. All temporary keys and the temporary read policy were deleted; the private baseline bucket/prefix, non-delete controller policy/key, Modal Environment/App/Volume/Secret, and run evidence were retained. Tigris did not enforce the attempted prefix condition on `ListBucket`, so listing remains bucket-wide while object reads/writes are prefix-scoped. AWS, forced replay, and live cancellation remain `unproven`; cancellation was not improvised because the helper has no bounded long-running mode.
+
+## 2026-08-28T20:16:51-07:00: Live-smoke review correction
+
+Provenance: user-provided review findings, pinned Modal 1.5.4 exception inheritance inspection, and focused local regressions.
+
+`modal.exception.FunctionTimeoutError` inherits `modal.exception.TimeoutError`, so call inspection now classifies the function timeout as terminal failure before classifying Modal or built-in nonblocking timeout exceptions as running. Plan evidence now states the six AWS credential/profile selectors the live fixture requested and the controller-only Tigris publication boundary instead of calling the children generically credential-free. E-039 no longer publishes the exact FunctionCall ID, while retaining its run, attempt, and terminal identifiers. Its retained executable verifier is qualified as requiring ambient Tigris read credentials; no dependency was added.
+
+## 2026-08-28T20:19:16-07:00: E-040 validation
+
+Provenance: local Python 3.12 validation after the live-smoke review correction.
+
+All 283 tests passed, including the real attached-Docker Harbor fixture. Ruff check and format, ty, `uv lock --check`, wheel/sdist build, an isolated wheel install with CLI/version/metadata/content inspection, and `git diff --check` passed. No live provider call or dependency change occurred.

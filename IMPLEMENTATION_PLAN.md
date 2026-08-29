@@ -2,9 +2,9 @@
 
 ## Status
 
-- Project state: P0 through P3 and the real Harbor 0.22 attached-Docker composition are complete for local evidence. `ControllerRuntime`, the production runner, in-memory S3/Volume, secure bounded collection, and immutable terminal publication pass together. No controller has been deployed. AWS conditional writes, nested Modal, real Volume semantics, and live cleanup remain `unproven`.
-- Current action: the controller creates its S3 client before removing credential sources for the complete Harbor run; an invocation-scoped in-process sink preserves child events. Persisted Harbor models own semantics, and the oracle fixture proves child credential absence plus successful controller publication.
-- Next action: run the remaining paid Modal, interruption, terminal-publication, Volume, nested-authentication, and running-cancellation smokes.
+- Project state: P0 through P4 now have local and live Tigris/Modal smoke evidence. Three detached controller runs completed with real nested Harbor 0.22 Modal children, named Volume files, terminal-last Tigris publication, reward `1.0`, and zero surviving sandboxes. In the final child, the fixture-requested `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_SESSION_TOKEN`, `AWS_PROFILE`, `AWS_SHARED_CREDENTIALS_FILE`, and `AWS_CONFIG_FILE` selectors were unavailable while the controller retained Tigris publication access. AWS, forced interruption/replay, and live running cancellation remain `unproven`.
+- Current action: E-039 retains the first faithful cloud smoke. Live evidence corrected built-in `TimeoutError` as nonblocking-running and the public `App.app_id` child-listing contract. Review then corrected inherited `FunctionTimeoutError` as terminal failure. The final redeployed smoke passed after the two live-discovered fixes.
+- Next action: exercise forced interruption/reconciliation, add a safe bounded long-running cancellation fixture before a live cancellation smoke, and run AWS conditional-write evidence when credentials are authorized.
 - Canonical record updated: 2026-08-28.
 
 ## Systems-Design Working Record
@@ -158,7 +158,7 @@ runs/<run-id>/terminals/<terminal-sha>.json
 | D-045 | Profile-specific deployed-controller foundation, injected HarborRunner boundary, versioned metadata artifacts, and public child observation/cleanup | accepted | Keeps deployment and orchestration testable without claiming P5 Harbor execution or paid Modal evidence. |
 | D-046 | Supported dynamic App/image/Environment construction, descriptor-safe artifacts, and terminal-commit fencing | accepted | Closes P4 SDK, packaging, credential-boundary, and post-terminal lifecycle findings without adding a control plane. |
 | D-047 | Narrow Harbor 0.22 public-API runner, context-rooted tasks, native artifacts, and explicit optional ATIF | accepted | Keeps model/provider identity opaque, uses Harbor lifecycle ownership, and prevents tetrabench from inventing result or trace semantics. |
-| D-048 | Credential-free Harbor execution, controller-only sink registry, persisted semantic authority, bounded fan-out/collection, and inventory-based ATIF | accepted; narrows D-034/D-046/D-047 | Prevents child interpolation from observing publication credentials and closes unbounded or in-memory-authority composition gaps. |
+| D-048 | Harbor child storage-selector isolation, controller-only publication sink, persisted semantic authority, bounded fan-out/collection, and inventory-based ATIF | accepted; narrows D-034/D-046/D-047 | Prevents child interpolation from observing the configured AWS/Tigris credential and profile selectors while preserving controller-only publication, and closes unbounded or in-memory-authority composition gaps. |
 
 ### Superseded or Rejected
 
@@ -179,14 +179,14 @@ runs/<run-id>/terminals/<terminal-sha>.json
 
 ## Unresolved and Unproven
 
-- [ ] [U-001] `unproven`: live nested Harbor Modal authentication through the supported version-matched path. Resolve with a deployed smoke before claiming nested Modal execution works.
+- [x] [U-001] Resolved by E-039: three deployed smokes created real Harbor Modal sandboxes through the supported version-matched import path; the final run recorded start/stop events and reward `1.0`.
 - [x] [U-002] Resolved locally by E-037: Harbor 0.22 produced and the runner validated native job `config.json`, `lock.json`, `result.json`, per-trial config/lock/result, verifier reward, and the oracle agent's explicit lack of ATIF.
 - [ ] [U-003] `unproven`: replay/preemption behavior with physical attempt reconciliation under a real interruption.
 - [x] [U-004] Resolved by E-019: a version-matched contract fixture proves child identity and tag observation through the supported custom-environment import path and public Modal APIs. Live nested behavior remains U-001/P4 smoke evidence.
 - [ ] [U-005] `partially proven`: Tigris `If-None-Match` create, duplicate rejection, current/stale `If-Match`, and same-ETag concurrent single-winner behavior passed E-032. Tigris immutable publication/lag behavior and all live AWS operations remain `unproven`.
 - [x] [U-006] Resolved by E-013: the shared profile, safe-integer range, duplicate-key and float rejection, and inclusive 2 MiB boundary are executable and golden-byte tested. Record-specific schemas remain P1 work.
-- [ ] [U-007] `unproven`: named Volume version, mount paths, and commit/reload sequence under the pinned Modal SDK.
-- [ ] [U-008] `unproven`: detached Modal smoke covering disconnect, controller record visibility, and terminal publication.
+- [x] [U-007] Resolved by E-039: the named Volume retained context, controller, child-event, and complete native Harbor attempt/job files across fresh-process inspection.
+- [x] [U-008] Resolved by E-039: a fresh process observed running then terminal after submitter exit, and Tigris remained queryable after the controller call succeeded.
 - [ ] [U-009] `unproven`: live AWS `PutObject` conditional create/update behavior. AWS documents the required 200/404/409/412 semantics, but no AWS mutation was run.
 
 ## Planned Package Tree
@@ -263,14 +263,14 @@ Acceptance: complete for local contract evidence. Fault injection covers request
 ### P4: Harbor execution paths
 
 - [x] [P4-01] Implement attached local Docker execution.
-- [x] [P4-02] Implement the deployed Modal controller with `retries=0` and self-recorded FunctionCall ID. Local construction and orchestration passed; live deployment remains E-007/U-008 `unproven`.
+- [x] [P4-02] Implement the deployed Modal controller with `retries=0` and self-recorded FunctionCall ID. E-039 proves live deployment, claim, and terminal execution.
 - [x] [P4-03] Integrate Harbor v0.22.0 with distinct attempt job directories, deterministic job inputs/tags, and the E-019 custom-environment observation path.
-- [ ] [P4-04] Implement disjoint Volume paths and explicit commit/reload boundaries.
-- [ ] [P4-05] Docker runner smoke passed in E-037 and full local controller composition passed in E-038. Deployed Modal and nested-authentication smokes remain `unproven`.
+- [x] [P4-04] Implement disjoint Volume paths and explicit commit/reload boundaries; E-039 proves them on the named live Volume.
+- [x] [P4-05] Docker runner smoke passed in E-037, local composition passed in E-038, and deployed nested Modal passed in E-039.
 
 Acceptance: E-019 passes before controller implementation; real runs publish inspectable native Harbor artifacts; Docker is never claimed detached; U-001, U-002, U-007, and U-008 are resolved or remain visibly `unproven`.
 
-P4 foundation milestone: local implementation is complete for the detached Modal controller boundary, supported App/image/Environment construction, custom Harbor environment, child observer, attempt orchestration, artifact security, terminal reconciliation, and deployment CLI. P4 acceptance remains incomplete because no real HarborRunner, deployed Function, paid Modal call, or real Volume smoke has run.
+P4 acceptance is complete for the detached Modal controller, real Harbor runner, supported App/image/Environment construction, custom Harbor environment, child observation, named Volume, secure artifact publication, terminal reconciliation, and deployment CLI. E-039 records the live evidence.
 
 ### P5: Reconciliation, interruption, and cancellation
 
@@ -331,6 +331,8 @@ Acceptance: a new user can follow the README against released or pinned componen
 | E-036 | P4 review corrections preserve SDK, package, artifact, and terminal boundaries | Real Modal 1.5.4 App construction; image/project-install and distribution-metadata contract tests; no-follow symlink/special/mutation regressions; terminal-CAS and startup-reconciliation races; missing Harbor App and Environment ensure tests; secret-bearing exception regression; full local validation, build, and isolated wheel CLI | passed locally; paid Modal/Harbor/Volume behavior remains unproven | 261 tests on Python 3.12 on 2026-08-28; Ruff, ty, lock, wheel/sdist build, isolated wheel install and CLI/metadata smoke, real SDK object-construction smoke, diff check, and audited secret scan; D-046. |
 | E-037 | Real Harbor 0.22 attached-Docker execution preserves native result and trace semantics | Supported-API config compilation, import-path labels/event observation config, opaque agent/model tests, runner failure and reward semantics, native artifact discovery, source-only fixture packaging, full validation, and a real oracle fixture | passed locally; deployed Modal remains unproven | 273 tests on Python 3.12 on 2026-08-28; real Docker job at `/tmp/opencode/tetrabench-p5-final2/runs/p5-final2/attempts/attempt-local/jobs/harbor-job` completed one trial with reward `1.0`; native job and per-trial config/lock/result validated; oracle emitted `agent/oracle.txt` and no ATIF, recorded explicitly; Ruff, ty, lock, build, isolated wheel CLI/import, and diff checks passed; D-047. |
 | E-038 | Full local Harbor composition preserves credentials, persisted authority, bounds, secure publication, and terminal proof | Real Docker fixture through `ControllerRuntime` with in-memory S3/Volume; standard AWS interpolation requests resolve unavailable in the child; exact persisted-model checks; bounded task/attempt/concurrency and injected artifact limits; multi-step continuation ATIF inventory test; full validation | passed locally; deployed Modal, real Volume, live IAM, and nested authentication remain unproven | 280 tests on Python 3.12 on 2026-08-28; terminal `941498dd3be56cf1c0d9ad0fc865ba0984ca769dc891553b5ec66d2c5cd20d20` at `/tmp/opencode/tetrabench-composition-final/.../jobs/harbor-job`, outcome succeeded, 14 artifacts, reward `1.0`, explicit missing-ATIF warning; Ruff, ty, lock, wheel/sdist build, and diff checks passed; D-048. |
+| E-039 | Detached Tigris/Modal execution preserves ownership, nested Harbor, Volume, requested child AWS selector isolation with controller-only Tigris publication, terminal ordering, and cleanup | Private prefix-scoped non-delete Tigris key; named Modal Environment/App/Volume/Secret; source-only fixture requesting the six AWS credential/profile selectors named in project status, followed from fresh processes; native Harbor model parsing; inventory HEAD/time checks; child event/tag inspection; post-call S3 reread; zero-child sweep | passed on Tigris and Modal; AWS, forced replay, and live cancellation remain unproven | Final run `smoke-20260828-003`, attempt `attempt-df59e91a35094e47af9514ef79e0b902`, terminal `a14fceb5f3766837e24d70bca23a42b951693c212acc068fe0ac55e29b06dede`, 14 artifacts, reward `1.0`, admission revision 2 terminal, zero children; retained redacted report and executable verifier under `~/.local/share/opencode/tetrabench-research/modal-tigris-smoke/2026-08-28/` (rerunning it requires ambient Tigris read credentials); 281 tests plus Ruff, ty, lock, build, and diff checks passed after both live-discovered fixes. |
+| E-040 | Live-smoke review corrections preserve terminal call classification and precise public evidence | Exact Modal/built-in nonblocking timeout tests, inherited FunctionTimeout ordering regression, public-plan identifier and credential-boundary inspection, full tests, Ruff, ty, lock check, build, isolated wheel install/CLI/metadata/content smoke, and diff check | passed locally; no new live call | 283 tests on Python 3.12 on 2026-08-28; Ruff check/format, ty, `uv lock --check`, wheel/sdist build, isolated wheel install and `tetrabench --version`/`--help`/metadata/content inspection, and `git diff --check` passed. |
 
 ## Deferred Capabilities
 

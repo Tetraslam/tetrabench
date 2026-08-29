@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import threading
+from builtins import TimeoutError as BuiltinTimeoutError
 from concurrent.futures import ThreadPoolExecutor
 from types import SimpleNamespace
 
 import pytest
 from modal.exception import (
     ExecutionError,
+    FunctionTimeoutError,
     OutputExpiredError,
     RemoteError,
     TimeoutError,
@@ -354,6 +356,8 @@ def test_modal_adapter_only_spawns_deployed_function(
     ("error", "state"),
     [
         (TimeoutError(), "running"),
+        (BuiltinTimeoutError(), "running"),
+        (FunctionTimeoutError(), "failed"),
         (OutputExpiredError(), "expired"),
         (RemoteError("failed"), "failed"),
         (ExecutionError("broken"), "inspection_failed"),
@@ -385,6 +389,10 @@ def test_modal_adapter_classifies_nonblocking_get(
     result = ModalControllerClient("app", "controller").inspect("fc-1")
     assert result.state == state
     assert timeouts == [0]
+
+
+def test_modal_function_timeout_precedes_nonblocking_timeout_classification() -> None:
+    assert issubclass(FunctionTimeoutError, TimeoutError)
 
 
 def test_modal_adapter_success_and_cancel(monkeypatch: pytest.MonkeyPatch) -> None:

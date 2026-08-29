@@ -16,10 +16,12 @@ child-observer orchestration with fakes. Modal 1.5.4 App construction and the
 installed distribution metadata are exercised against the real local SDK.
 Tigris conditional create, stale-ETag rejection, update, and concurrent
 single-winner behavior have been proven live on a private copy-on-write fork.
-No controller has been deployed and no AWS or Modal smoke has run. The
-checked-in benchmark sections contain no tasks, so `submit` refuses them before
-constructing S3 or Modal clients. The fixture remains under `tests/fixtures` and
-is not a benchmark task or installed wheel payload.
+A deployed Modal controller has completed three detached fixture smokes against
+a private Tigris prefix. The final run retained its named-Volume job tree,
+published a 14-artifact terminal with reward `1.0`, and left no child sandbox
+running. AWS, forced replay, and live cancellation remain unproven. The
+checked-in benchmark sections still contain no tasks, so `submit` refuses them;
+the source-only fixture helper is the only exercised cloud submission path.
 
 Python 3.12 or newer is required.
 
@@ -172,11 +174,11 @@ Environment before deploying. The serialized Function has zero retries, a
 24-hour timeout, the named Volume at `/tetrabench/controller`, and the named S3
 credential Secret. Submission invokes it through
 `Function.from_name(...).spawn()` with canonical invocation bytes and their
-digest. This deployment path is structurally tested only. Package/API behavior,
-Volume semantics, nested Harbor Modal execution, and live cleanup remain
-`unproven` until paid smokes run. Artifact publication accepts only regular
-files reached through no-follow directory descriptors beneath the attempt root;
-links, special files, mutation, and escaped bindings fail closed.
+digest. A paid smoke has verified package/API behavior, named-Volume retention,
+nested Harbor Modal execution, terminal publication, and post-run child cleanup.
+Artifact publication accepts only regular files reached through no-follow
+directory descriptors beneath the attempt root; links, special files, mutation,
+and escaped bindings fail closed.
 
 ## Project configuration
 
