@@ -294,7 +294,11 @@ those groups. Input and cache rates above `$10` per million tokens or output
 rates above `$50` per million make calibration fail. Evidence retains a redacted
 canonical pricing snapshot and digest.
 
-Each attempt receives one ephemeral OpenAI credential. Its first valid request
+Each attempt receives one ephemeral OpenAI credential. Chat requests contain or
+receive `n = 1`; every multiplicity alias and Responses background mode is
+rejected. Message and input content admits only text, tool calls, and tool
+results, never image/audio/file/remote-reference blocks. Ordinary URLs inside a
+text string remain text. Its first valid request
 locks that attempt to either `/v1/responses` or `/v1/chat/completions`; later
 requests must use the same endpoint. The broker applies the endpoint's exact
 output-limit fields and caps them at 8,192 tokens. It treats the forwarded UTF-8
@@ -304,12 +308,11 @@ shared ledger atomically reserves that bound at the hard pricing ceilings plus
 a fixed safety margin. The authoritative response-cost header settles the
 reservation, and a missing, invalid, or excessive settlement fails the run.
 
-Proof mode discovers and binds only the host address assigned to Docker's
-default `bridge` gateway and fixed/configured high port `62017`. Rootless Docker
-and arbitrary host addresses fail closed; loopback is available only to
-non-admissible debug tests. Before authenticated pricing or a model request, a
-disposable default-bridge container must complete a one-shot ephemeral-token
-probe against that broker. Failure stops before upstream access and produces no
+Each attempt uses one fresh labeled external Docker bridge network and one
+credential-broker sidecar with a unique alias at port `62017`. No host port is
+published. A disposable container on that network must complete a one-shot
+ephemeral-token probe before model work; the OpenCode attempt receives a
+different token. Failure stops before model forwarding and produces no
 admissible evidence. The probe is valid only while `now < deadline`; equality is
 expired. Expiry is checked under the token lock, rejects without consuming the
 token, and permanently invalidates the broker. One attempt per profile is debug
@@ -318,14 +321,24 @@ snapshot. Native ATIF aggregate prompt and completion tokens must both be
 positive, cached tokens may
 be zero, and all three must agree with Harbor's native trial and job metrics.
 
-A real local run may require an operator-scoped temporary firewall rule. The
-operator must discover the exact default bridge interface, subnet, and gateway,
-allow only that source/interface to gateway TCP port `62017`, and remove the
-same rule after success or failure. For UFW, use the shape `allow in on
-<interface> from <subnet> to <gateway> port 62017 proto tcp`, then delete that
-exact rule. The runner never invokes `sudo` or UFW, broadens its bind interface,
-or installs a standing rule. No real calibration attempt has run, so difficulty
-calibration remains unproven.
+The broker runs the source snapshot in a pinned Python image mounted read-only.
+Its parent key arrives through anonymous stdin and remains process memory.
+A broker-only private evidence mount receives a bounded redacted ledger; `main`
+receives neither that mount nor the Docker socket. A temporary task overlay
+changes only `environment/docker-compose.yaml`, binds `main` to the exact
+external network, adds unique labels and an activation healthcheck, and remains
+part of native task identity. The attempt token starts inactive. Harbor's native
+`compose up --wait` cannot finish until the runner discovers the exact `main`,
+rejects privileged or host-integrated immutable config, records its config
+digest, and activates through the private broker pipe. A post-activation
+half-second heartbeat leases authority; loss revokes and removes the broker
+within five seconds. Final cleanup reconciles exact names and labels and proves
+authority and owned resources absent. Docker daemon/root is trusted. Network
+peers and unrelated host containers are not containment evidence. Docker's
+reported IPAM gateway and `Internal` value are recorded as topology only;
+authenticated pricing and later forwarding prove actual egress. This transport
+requires no host reachability or firewall change. No real calibration attempt
+has run, so difficulty calibration remains unproven.
 
 Mandatory gates:
 

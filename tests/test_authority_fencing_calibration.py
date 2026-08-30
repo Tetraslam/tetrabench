@@ -3,18 +3,19 @@ from __future__ import annotations
 import dataclasses
 import http.client
 import json
+import shutil
 import socket
 import subprocess
 import sys
 import threading
 import time
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import Future, ThreadPoolExecutor
 from contextlib import contextmanager
 from decimal import Decimal
 from email.message import Message
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import pytest
 
@@ -309,6 +310,22 @@ def test_model_info_rejects_missing_or_duplicate_required_group() -> None:
         calibration._validate_pricing_document(document)
 
 
+def test_broker_pricing_binding_requires_exact_host_snapshot_and_model() -> None:
+    snapshot = calibration._validate_pricing_document(pricing_document())
+    models = list(snapshot.models)
+    calibration._validate_broker_pricing_binding(
+        models, snapshot.sha256, "openai/gpt-5.6-sol", 200000
+    )
+    with pytest.raises(ValueError, match="digest mismatch"):
+        calibration._validate_broker_pricing_binding(
+            models, "0" * 64, "openai/gpt-5.6-sol", 200000
+        )
+    with pytest.raises(ValueError, match="model binding mismatch"):
+        calibration._validate_broker_pricing_binding(
+            models, snapshot.sha256, "openai/gpt-5.6-sol", 199999
+        )
+
+
 def test_atif_token_metrics_are_mandatory_coherent_and_nonzero() -> None:
     record = {
         "trajectory": {
@@ -499,6 +516,10 @@ def test_broker_forwards_exact_model_caps_output_and_strips_sensitive_headers() 
 def test_endpoint_specific_output_limit_is_injected_or_capped(
     path: str, document: dict[str, Any], field: str
 ) -> None:
+    if path == "/v1/responses":
+        document["input"] = "redacted"
+    else:
+        document["messages"] = [{"role": "user", "content": "redacted"}]
     with fake_upstream() as upstream:
         with running_broker(upstream) as broker:
             status, _headers, _body = request(broker, path=path, document=document)
@@ -578,7 +599,11 @@ def test_child_content_type_is_derived_only_from_validated_stream_mode(
         with running_broker(upstream) as broker:
             status, returned_headers, _body = request(
                 broker,
-                document={"model": "openai/gpt-5.6-sol", "stream": stream},
+                document={
+                    "model": "openai/gpt-5.6-sol",
+                    "input": "redacted",
+                    "stream": stream,
+                },
             )
     assert status == 200
     assert returned_headers["content-type"] == expected_content_type
@@ -594,6 +619,156 @@ def test_nonboolean_stream_mode_is_rejected_before_upstream() -> None:
                 document={"model": "openai/gpt-5.6-sol", "stream": "true"},
             )
             assert status == 400
+            assert upstream.requests == []
+
+
+def test_chat_injects_exactly_one_completion_and_reservation_covers_it() -> None:
+    document = {
+        "model": "openai/gpt-5.6-sol",
+        "messages": [{"role": "user", "content": "https://example.test/plain"}],
+    }
+    with fake_upstream() as upstream:
+        with running_broker(upstream) as broker:
+            assert (
+                request(broker, path="/v1/chat/completions", document=document)[0]
+                == 200
+            )
+            forwarded = upstream.requests[0]["body"]
+            assert forwarded["n"] == 1
+            assert forwarded["max_completion_tokens"] == calibration.MAX_OUTPUT_TOKENS
+            encoded = calibration.canonical(forwarded).encode()
+            deadline = time.monotonic() + 2
+            while not broker.state.records and time.monotonic() < deadline:
+                time.sleep(0.01)
+            assert broker.state.records
+            assert Decimal(broker.state.records[0].worst_case_reservation_usd) == (
+                Decimal(len(encoded)) * calibration.MAX_INPUT_OR_CACHE_COST_PER_TOKEN
+                + Decimal(calibration.MAX_OUTPUT_TOKENS)
+                * calibration.MAX_OUTPUT_COST_PER_TOKEN
+                + calibration.RESERVATION_SAFETY_MARGIN
+            )
+
+
+@pytest.mark.parametrize(
+    "field",
+    [
+        "n",
+        "best_of",
+        "candidate_count",
+        "num_return_sequences",
+        "parallel_samples",
+        "num_generations",
+    ],
+)
+def test_chat_rejects_completion_multiplicity(field: str) -> None:
+    document: dict[str, Any] = {
+        "model": "openai/gpt-5.6-sol",
+        "messages": [{"role": "user", "content": "text"}],
+        field: 64 if field == "n" else 2,
+    }
+    with fake_upstream() as upstream:
+        with running_broker(upstream) as broker:
+            assert (
+                request(broker, path="/v1/chat/completions", document=document)[0]
+                == 400
+            )
+            assert upstream.requests == []
+
+
+@pytest.mark.parametrize(
+    "field",
+    ["n", "best_of", "candidate_count", "num_return_sequences", "background"],
+)
+def test_responses_rejects_multiplicity_and_background(field: str) -> None:
+    document = {
+        "model": "openai/gpt-5.6-sol",
+        "input": "text",
+        field: True if field == "background" else 2,
+    }
+    with fake_upstream() as upstream:
+        with running_broker(upstream) as broker:
+            assert request(broker, document=document)[0] == 400
+            assert upstream.requests == []
+
+
+@pytest.mark.parametrize(
+    "field",
+    [
+        "maxOutputTokens",
+        "maximum_output_length",
+        "max_new_tokens",
+        "output_token_limit",
+    ],
+)
+def test_unknown_output_limit_aliases_are_rejected(field: str) -> None:
+    with fake_upstream() as upstream:
+        with running_broker(upstream) as broker:
+            document = {"model": "openai/gpt-5.6-sol", "input": "text", field: 1}
+            assert request(broker, document=document)[0] == 400
+            assert upstream.requests == []
+
+
+@pytest.mark.parametrize(
+    "content",
+    [
+        [{"type": "image_url", "image_url": {"url": "https://example.test/a"}}],
+        [{"type": "input_audio", "audio": "AAAA"}],
+        [{"type": "input_file", "file_id": "file-1"}],
+        [{"type": "text", "text": "ok", "data_url": "data:text/plain,x"}],
+        [{"type": "text", "text": "ok", "blob": "fetch-me"}],
+    ],
+)
+def test_chat_rejects_multimodal_remote_and_file_content(content: Any) -> None:
+    document = {
+        "model": "openai/gpt-5.6-sol",
+        "messages": [{"role": "user", "content": content}],
+    }
+    with fake_upstream() as upstream:
+        with running_broker(upstream) as broker:
+            assert (
+                request(broker, path="/v1/chat/completions", document=document)[0]
+                == 400
+            )
+            assert upstream.requests == []
+
+
+@pytest.mark.parametrize(
+    "item",
+    [
+        {"type": "input_image", "image_url": "https://example.test/a"},
+        {"type": "input_file", "file_id": "file-1"},
+        {"type": "message", "content": [{"type": "audio", "audio": "AAAA"}]},
+    ],
+)
+def test_responses_rejects_multimodal_url_file_and_audio(item: Any) -> None:
+    document = {"model": "openai/gpt-5.6-sol", "input": [item]}
+    with fake_upstream() as upstream:
+        with running_broker(upstream) as broker:
+            assert request(broker, document=document)[0] == 400
+            assert upstream.requests == []
+
+
+@pytest.mark.parametrize(
+    ("path", "field", "value"),
+    [
+        ("/v1/responses", "modalities", ["text"]),
+        ("/v1/responses", "audio", {"format": "wav"}),
+        ("/v1/responses", "prediction", {"type": "content", "content": "x"}),
+        ("/v1/chat/completions", "modalities", ["text"]),
+        ("/v1/chat/completions", "audio", {"format": "wav"}),
+    ],
+)
+def test_top_level_non_text_modalities_audio_and_prediction_are_rejected(
+    path: str, field: str, value: Any
+) -> None:
+    document: dict[str, Any] = {"model": "openai/gpt-5.6-sol", field: value}
+    if path == "/v1/responses":
+        document["input"] = "text"
+    else:
+        document["messages"] = [{"role": "user", "content": "text"}]
+    with fake_upstream() as upstream:
+        with running_broker(upstream) as broker:
+            assert request(broker, path=path, document=document)[0] == 400
             assert upstream.requests == []
 
 
@@ -727,50 +902,60 @@ def test_broker_rejects_expired_and_invalidated_token() -> None:
             broker.state.authorize(headers)
 
 
-def test_bridge_probe_succeeds_through_substituted_connector_without_upstream() -> None:
-    topology = calibration.DockerBridgeTopology(
-        gateway="127.0.0.1",
-        interface="test-bridge",
-        subnet="127.0.0.0/8",
+def test_task_overlay_changes_only_compose_and_binds_external_network(
+    tmp_path: Path,
+) -> None:
+    overlay = calibration.create_task_overlay(
+        calibration.TASK, tmp_path / "overlay", "tb-cal-safe-1"
     )
-
-    def connector(host: str, port: int, token: str) -> subprocess.CompletedProcess[str]:
-        connection = http.client.HTTPConnection(host, port, timeout=5)
-        connection.request(
-            "GET",
-            "/__tetrabench_probe",
-            headers={"Authorization": f"Bearer {token}"},
-        )
-        response = connection.getresponse()
-        response.read()
-        connection.close()
-        return subprocess.CompletedProcess(
-            args=[], returncode=0, stdout=f"{response.status}\n", stderr=""
-        )
-
-    evidence = calibration.probe_docker_bridge_reachability(
-        topology=topology,
-        port=calibration.DEFAULT_BROKER_PORT,
-        connector=connector,
-    )
-    assert evidence == {
-        "gateway": "127.0.0.1",
-        "interface": "test-bridge",
-        "port": calibration.DEFAULT_BROKER_PORT,
-        "reachable": True,
-        "subnet": "127.0.0.0/8",
-        "temporary_ufw_commands": {
-            "add": (
-                "sudo ufw allow in on test-bridge from 127.0.0.0/8 "
-                "to 127.0.0.1 port 62017 proto tcp"
-            ),
-            "delete": (
-                "sudo ufw delete allow in on test-bridge from 127.0.0.0/8 "
-                "to 127.0.0.1 port 62017 proto tcp"
-            ),
-            "removal_required_in_finally": True,
-        },
+    compose = (overlay.task / "environment/docker-compose.yaml").read_text()
+    assert "context: ." in compose
+    assert "dockerfile: Dockerfile" in compose
+    assert "external: true" in compose
+    assert "name: tb-cal-safe-1" in compose
+    candidate = {
+        item["path"]: item
+        for item in overlay.candidate_manifest
+        if item["path"] != "environment/docker-compose.yaml"
     }
+    overlaid = {
+        item["path"]: item
+        for item in overlay.overlay_manifest
+        if item["path"] != "environment/docker-compose.yaml"
+    }
+    assert candidate == overlaid
+    assert overlay.candidate_manifest_sha256 != overlay.overlay_manifest_sha256
+    assert len(overlay.compose_sha256) == 64
+    compose_entry = next(
+        item
+        for item in overlay.overlay_manifest
+        if item["path"] == "environment/docker-compose.yaml"
+    )
+    assert compose_entry["mode"] == 0o644
+
+
+@pytest.mark.parametrize(
+    "value",
+    ["bad network", "../escape", "$(id)", "-leading", "UPPER", "a" * 64],
+)
+def test_network_and_alias_injection_is_rejected(value: str) -> None:
+    with pytest.raises(ValueError, match="unsafe Docker"):
+        calibration._safe_docker_name(value, "network name")
+
+
+def test_overlay_byte_drift_fails_closed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def corrupt_copy(source: Path, destination: Path) -> list[dict[str, Any]]:
+        shutil.copytree(source, destination)
+        (destination / "instruction.md").write_text("drift")
+        return calibration.tree_manifest(source)
+
+    monkeypatch.setattr(calibration, "_copy_verified_tree", corrupt_copy)
+    with pytest.raises(ValueError, match="changed candidate bytes"):
+        calibration.create_task_overlay(
+            calibration.TASK, tmp_path / "overlay", "tb-cal-safe-1"
+        )
 
 
 def test_probe_invalid_then_valid_preserves_one_shot_token() -> None:
@@ -1166,7 +1351,7 @@ def test_disconnect_is_bounded_and_recorded() -> None:
     with fake_upstream(body=b"x" * (1 << 20)) as upstream:
         with running_broker(upstream) as broker:
             stream = socket.create_connection(("127.0.0.1", broker.port), timeout=5)
-            body = b'{"model":"openai/gpt-5.6-sol"}'
+            body = b'{"model":"openai/gpt-5.6-sol","input":"text"}'
             stream.sendall(
                 b"POST /v1/responses HTTP/1.1\r\nHost: localhost\r\n"
                 + f"Authorization: Bearer {broker.token}\r\n".encode()
@@ -1252,6 +1437,113 @@ def test_shutdown_waits_for_inflight_upstream_and_leaves_no_request_thread() -> 
         )
 
 
+def test_attempt_token_is_inactive_until_probe_then_activation_and_lease() -> None:
+    state = calibration.BrokerState(
+        parent_key="parent",
+        token=None,
+        probe_token="probe-token",
+        model="model",
+        max_input_tokens=100,
+        deadline=time.monotonic() + 30,
+        ledger=calibration.SpendLedger(),
+    )
+    attempt_headers = probe_headers("attempt-token-0123456789-abcdefghijklmnop")
+    with pytest.raises(PermissionError):
+        state.authorize(attempt_headers)
+    state.consume_probe(probe_headers("probe-token"))
+    channel = (1, 2)
+    state.activate("attempt-token-0123456789-abcdefghijklmnop", channel)
+    state.authorize(attempt_headers)
+    state.heartbeat(channel)
+    state.last_heartbeat = time.monotonic() - calibration.HEARTBEAT_LEASE_SECONDS - 0.1
+    assert state.lease_expired() is True
+    state.invalidate()
+    assert state.parent_key == ""
+
+
+def test_create_disconnect_still_reconciles_exact_owned_resources(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    sidecar = _docker_sidecar(tmp_path)
+    exists = {sidecar.names.broker: False, sidecar.names.network: False}
+
+    def docker(argv: list[str], **_kwargs: Any) -> subprocess.CompletedProcess[bytes]:
+        if argv[:2] == ["network", "create"]:
+            exists[sidecar.names.network] = True
+            return subprocess.CompletedProcess(argv, 0, b"", b"")
+        if argv and argv[0] == "create":
+            exists[sidecar.names.broker] = True
+            raise subprocess.TimeoutExpired(argv, 120)
+        if argv[:3] == ["rm", "--force", sidecar.names.broker]:
+            exists[sidecar.names.broker] = False
+        if argv[:2] == ["network", "rm"]:
+            exists[sidecar.names.network] = False
+        if "inspect" in argv:
+            name = argv[-1]
+            return subprocess.CompletedProcess(
+                argv, 0 if exists.get(name, False) else 1, b"", b""
+            )
+        return subprocess.CompletedProcess(argv, 0, b"", b"")
+
+    monkeypatch.setattr(calibration, "_docker", docker)
+    monkeypatch.setattr(
+        calibration,
+        "_owned_resource_exists",
+        lambda _kind, name, _labels: exists.get(name, False),
+    )
+    monkeypatch.setattr(
+        calibration, "_remove_owned_attempt_containers", lambda _n: None
+    )
+    with pytest.raises(subprocess.TimeoutExpired):
+        sidecar.start()
+    cleanup = sidecar.cleanup()
+    assert cleanup["broker_absent"] is True
+    assert cleanup["network_absent"] is True
+    assert exists == {sidecar.names.broker: False, sidecar.names.network: False}
+
+
+def test_attach_timeout_is_terminated_and_reaped(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    sidecar = _docker_sidecar(tmp_path)
+
+    class Stdin:
+        closed = False
+
+        def close(self) -> None:
+            self.closed = True
+
+    class Process:
+        stdin = Stdin()
+        terminated = False
+        waits = 0
+
+        def wait(self, timeout: float) -> int:
+            del timeout
+            self.waits += 1
+            if not self.terminated:
+                raise subprocess.TimeoutExpired("attach", 10)
+            return 0
+
+        def terminate(self) -> None:
+            self.terminated = True
+
+        def kill(self) -> None:
+            raise AssertionError("terminated attach client should reap")
+
+        def poll(self) -> int | None:
+            return 0 if self.terminated else None
+
+    process = Process()
+    sidecar.process = cast(Any, process)
+    monkeypatch.setattr(calibration, "_owned_resource_exists", lambda *_args: False)
+    monkeypatch.setattr(calibration, "_wait_resource_absent", lambda *_args: True)
+    cleanup = sidecar.cleanup()
+    assert process.terminated is True
+    assert process.waits == 2
+    assert cleanup["attach_client_reaped"] is True
+
+
 @pytest.mark.parametrize(
     "argv",
     [
@@ -1302,42 +1594,318 @@ def test_debug_two_attempts_rejects_before_pricing_or_listener(
     )
 
 
-def test_docker_bridge_discovery_fails_closed_for_rootless(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    def run(*_args: Any, **_kwargs: Any) -> subprocess.CompletedProcess[str]:
-        return subprocess.CompletedProcess(
-            args=[], returncode=0, stdout='["name=rootless"]\n', stderr=""
-        )
-
-    monkeypatch.setattr(calibration.subprocess, "run", run)
-    with pytest.raises(RuntimeError, match="rootless"):
-        calibration.discover_docker_bridge_gateway()
+def _docker_sidecar(
+    tmp_path: Path,
+    *,
+    parent_key: str = "parent-secret-never-in-docker-config-0123456789",
+) -> calibration.DockerBrokerSidecar:
+    pricing = calibration._validate_pricing_document(pricing_document())
+    names = calibration._docker_names("cal-test-sidecar", 1)
+    evidence = tmp_path / "evidence"
+    evidence.mkdir(mode=0o700)
+    return calibration.DockerBrokerSidecar(
+        names=names,
+        snapshot_root=ROOT,
+        evidence_root=evidence,
+        parent_key=parent_key,
+        attempt_token="attempt-token-0123456789-abcdefghijklmnop",
+        probe_token="probe-token-0123456789-abcdefghijklmnopqr",
+        model="openai/gpt-5.6-sol",
+        pricing=pricing,
+        max_input_tokens=200000,
+        budget_cap=Decimal("1"),
+        fake_response_cost=Decimal("0.125"),
+    )
 
 
 @pytest.mark.docker
-def test_default_bridge_probe_is_no_upstream_and_blockage_fails_closed() -> None:
-    topology = calibration.discover_docker_bridge_topology()
+def test_sidecar_network_probe_simulated_client_inspect_and_cleanup(
+    tmp_path: Path,
+) -> None:
+    sidecar = _docker_sidecar(tmp_path)
     try:
-        evidence = calibration.probe_docker_bridge_reachability(
-            topology=topology,
-            port=calibration.DEFAULT_BROKER_PORT,
-        )
-    except RuntimeError as error:
-        assert str(error) == "Docker bridge broker reachability probe failed"
-    else:
-        assert evidence == {
-            "gateway": topology.gateway,
-            "interface": topology.interface,
-            "port": calibration.DEFAULT_BROKER_PORT,
-            "reachable": True,
-            "subnet": topology.subnet,
-            "temporary_ufw_commands": calibration._topology_evidence(
-                topology,
-                port=calibration.DEFAULT_BROKER_PORT,
-                reachable=True,
-            )["temporary_ufw_commands"],
+        sidecar.start()
+        sidecar.probe()
+        security = sidecar.inspect_secret_boundary()
+        assert security["config_parent_key_absent"] is True
+        assert security["logs_parent_key_absent"] is True
+        assert security["mounts"] == {"evidence_rw": True, "source_ro": True}
+        assert security["network"]["driver"] == "bridge"
+        assert security["network"]["gateway"]
+        assert security["network"]["internal"] is False
+        assert security["network"]["labels"] == sidecar.names.role_labels("network")
+        output = tmp_path / "output"
+        for target in ("agent", "verifier", "artifacts"):
+            (output / target).mkdir(parents=True, exist_ok=True)
+        main = f"tb-main-{calibration.secrets.token_hex(6)}"
+        labels = {
+            **sidecar.names.role_labels("main"),
+            "com.docker.compose.service": "main",
+            "org.tetrabench.calibration.candidate-manifest": "0" * 64,
         }
+        calibration._docker(
+            [
+                "create",
+                "--name",
+                main,
+                "--network",
+                sidecar.names.network,
+                *[
+                    value
+                    for key, value in labels.items()
+                    for value in ("--label", f"{key}={value}")
+                ],
+                "--mount",
+                f"type=bind,src={output / 'agent'},dst=/logs/agent",
+                "--mount",
+                f"type=bind,src={output / 'verifier'},dst=/logs/verifier",
+                "--mount",
+                f"type=bind,src={output / 'artifacts'},dst=/logs/artifacts",
+                calibration.BROKER_IMAGE,
+                "sleep",
+                "300",
+            ]
+        )
+        calibration._docker(["start", main])
+        pending: Future[calibration.CommandResult] = Future()
+        activation = calibration.DockerMainAuthority(
+            sidecar.names, sidecar.parent_key, output, sidecar, "0" * 64
+        ).wait_inspect_activate(pending)
+        assert activation["boundary"].startswith("immutable-docker-config")
+        assert len(activation["config_sha256"]) == 64
+        assert activation["activation"]["completed_before_harbor_healthcheck"] is True
+        script = (
+            "import json,sys,urllib.request;"
+            "token=sys.stdin.read().strip();"
+            "body=json.dumps({'model':'openai/gpt-5.6-sol','input':'fake'}).encode();"
+            "request=urllib.request.Request('http://'+sys.argv[1]+':62017/v1/responses',"
+            "data=body,headers={'Authorization':'Bearer '+token,"
+            "'Content-Type':'application/json'});"
+            "response=urllib.request.urlopen(request,timeout=10);"
+            "print(response.status,response.read().decode())"
+        )
+        result = calibration._docker(
+            [
+                "run",
+                "--rm",
+                "-i",
+                "--network",
+                sidecar.names.network,
+                "--read-only",
+                "--cap-drop",
+                "ALL",
+                calibration.BROKER_IMAGE,
+                "python",
+                "-c",
+                script,
+                sidecar.names.alias,
+            ],
+            input_bytes=(sidecar.attempt_token + "\n").encode(),
+        )
+        assert result.stdout.strip() == b'200 {"ok":true}'
+        ledger = sidecar.read_ledger()
+        assert ledger["probe_consumed"] is True
+        assert ledger["known_actual_cost_usd"] == "0.125"
+        assert ledger["request_count"] == 1
+        assert ledger["requests"][0]["model"] == "openai/gpt-5.6-sol"
+        assert ledger["requests"][0]["cost"] == "0.125"
+        network = calibration._inspect_one("network", sidecar.names.network)
+        peers = {item["Name"] for item in network["Containers"].values()}
+        assert sidecar.names.broker in peers
+        assert main in peers
+    finally:
+        cleanup = sidecar.cleanup()
+    assert cleanup == {
+        "attach_client_reaped": True,
+        "broker_absent": True,
+        "network_absent": True,
+        "stdin_closed": True,
+        "tokens_expired": True,
+    }
+
+
+@pytest.mark.docker
+def test_parent_sigkill_revokes_broker_and_startup_sweeps_stale_network(
+    tmp_path: Path,
+) -> None:
+    helper = tmp_path / "parent.py"
+    helper.write_text(
+        """import hashlib,json,sys,time
+from decimal import Decimal
+from pathlib import Path
+sys.path.insert(0,ROOT_REPR)
+from tools import run_authority_fencing_calibration as c
+models=[]
+for _profile, model in c.PROFILES:
+    models.append({
+            "cache_creation_input_token_cost":'0.00000375',
+        'cache_read_input_token_cost':'3E-7',
+        'input_cost_per_token':'0.000003',
+        'max_input_tokens':200000,
+        'max_output_tokens':16384,
+        'model_group':model,
+        'output_cost_per_token':'0.000015',
+    })
+pricing=c.PricingSnapshot(tuple(models),hashlib.sha256(c.canonical(models).encode()).hexdigest())
+root=Path(__file__).parent
+evidence=root/'evidence'; evidence.mkdir(mode=0o700)
+names=c._docker_names('cal-parent-death',1)
+sidecar=c.DockerBrokerSidecar(names=names,snapshot_root=c.ROOT,evidence_root=evidence,
+ parent_key='parent-secret-never-in-docker-config-0123456789',
+ attempt_token='attempt-token-0123456789-abcdefghijklmnop',
+ probe_token='probe-token-0123456789-abcdefghijklmnopqr',
+ model='openai/gpt-5.6-sol',pricing=pricing,max_input_tokens=200000,
+ budget_cap=Decimal('1'),fake_response_cost=Decimal('0.125'))
+sidecar.start(); sidecar.probe(); sidecar.activate()
+print(json.dumps({
+            "network":names.network,'broker':names.broker,'alias':names.alias,
+ 'token':sidecar.attempt_token}),flush=True)
+time.sleep(300)
+""".replace("ROOT_REPR", repr(str(ROOT)))
+    )
+    parent = subprocess.Popen(
+        [str(ROOT / ".venv/bin/python"), str(helper)],
+        cwd=ROOT,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    assert parent.stdout is not None
+    names: dict[str, str] = {}
+    try:
+        line = parent.stdout.readline()
+        if not line:
+            assert parent.stderr is not None
+            pytest.fail(parent.stderr.read())
+        names = json.loads(line)
+        started = time.monotonic()
+        parent.kill()
+        parent.wait(timeout=5)
+        while time.monotonic() - started < calibration.PARENT_DEATH_BOUND_SECONDS:
+            if (
+                calibration._docker(
+                    ["container", "inspect", names["broker"]], check=False
+                ).returncode
+                != 0
+            ):
+                break
+            time.sleep(0.05)
+        assert time.monotonic() - started < calibration.PARENT_DEATH_BOUND_SECONDS
+        assert (
+            calibration._docker(
+                ["container", "inspect", names["broker"]], check=False
+            ).returncode
+            != 0
+        )
+        stale = calibration._docker(
+            [
+                "run",
+                "--rm",
+                "-i",
+                "--network",
+                names["network"],
+                calibration.BROKER_IMAGE,
+                "python",
+                "-c",
+                (
+                    "import json,sys,urllib.request;"
+                    "token=sys.stdin.read().strip();"
+                    "body=json.dumps({'model':'openai/gpt-5.6-sol','input':'x'}).encode();"
+                    "request=urllib.request.Request('http://'+sys.argv[1]+"
+                    "':62017/v1/responses',data=body,headers="
+                    "{'Authorization':'Bearer '+token});"
+                    "urllib.request.urlopen(request,timeout=1)"
+                ),
+                names["alias"],
+            ],
+            check=False,
+            input_bytes=(names["token"] + "\n").encode(),
+        )
+        assert stale.returncode != 0
+        swept = calibration.sweep_stale_calibration_resources()
+        assert swept["networks"] >= 1
+        assert (
+            calibration._docker(
+                ["network", "inspect", names["network"]], check=False
+            ).returncode
+            != 0
+        )
+    finally:
+        parent.kill()
+        parent.wait(timeout=5)
+        if names:
+            calibration._docker(["rm", "--force", names["broker"]], check=False)
+            calibration._docker(["network", "rm", names["network"]], check=False)
+
+
+@pytest.mark.docker
+def test_harbor_main_is_inspected_and_activated_before_agent_setup(
+    tmp_path: Path,
+) -> None:
+    sidecar = _docker_sidecar(tmp_path)
+    overlay = calibration.create_task_overlay(
+        calibration.TASK, tmp_path / "overlay", sidecar.names
+    )
+    project, config_root = calibration._write_project(
+        tmp_path / "execution", overlay.task
+    )
+    config = config_root / "tetrabench/config.toml"
+    config.write_text(
+        config.read_text().replace('agent_name = "opencode"', 'agent_name = "oracle"')
+    )
+    home = tmp_path / "home"
+    home.mkdir(mode=0o700)
+    for name in ("tmp", "cache", "data", "state"):
+        (home / name).mkdir(mode=0o700)
+    output = tmp_path / "output"
+    environment = calibration.child_environment(
+        config_root=config_root,
+        private_home=home,
+        token=sidecar.attempt_token,
+        base_url=f"http://{sidecar.names.alias}:{calibration.DEFAULT_BROKER_PORT}/v1",
+    )
+    executor = ThreadPoolExecutor(max_workers=1)
+    try:
+        sidecar.start()
+        sidecar.probe()
+        command: Future[calibration.CommandResult] = executor.submit(
+            calibration._bounded_command,
+            [
+                str(ROOT / ".venv/bin/tetrabench"),
+                "run",
+                "systems-design",
+                "--profile",
+                "target",
+                "--output",
+                str(output),
+                "--json",
+            ],
+            cwd=project,
+            env=environment,
+            timeout=180,
+        )
+        activation = calibration.DockerMainAuthority(
+            sidecar.names,
+            sidecar.parent_key,
+            output,
+            sidecar,
+            overlay.candidate_manifest_sha256,
+        ).wait_inspect_activate(command)
+        result = command.result(timeout=180)
+        document = json.loads(result.stdout)
+        assert document["outcome"] == "succeeded"
+        assert activation["activation"]["completed_before_harbor_healthcheck"] is True
+        assert activation["mount_targets"] == [
+            "/logs/agent",
+            "/logs/artifacts",
+            "/logs/verifier",
+        ]
+        ledger = sidecar.read_ledger()
+        assert ledger["request_count"] == 0
+        assert ledger["requests"] == []
+    finally:
+        sidecar.cleanup()
+        executor.shutdown(wait=True, cancel_futures=True)
 
 
 def test_missing_parent_key_fails_without_output_or_network(
@@ -1357,27 +1925,18 @@ def test_missing_parent_key_fails_without_output_or_network(
     )
 
 
-def test_pricing_preflight_failure_occurs_after_topology_probe_without_attempt(
+def test_startup_sweep_precedes_pricing_and_failure_starts_no_attempt(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     monkeypatch.setenv(calibration.PARENT_KEY_ENV, "fake-parent")
-    monkeypatch.setattr(
-        calibration,
-        "discover_docker_bridge_topology",
-        lambda: calibration.DockerBridgeTopology(
-            gateway="192.0.2.1", interface="docker0", subnet="192.0.2.0/24"
-        ),
-    )
-    monkeypatch.setattr(
-        calibration,
-        "probe_docker_bridge_reachability",
-        lambda **_kwargs: {
-            "gateway": "192.0.2.1",
-            "interface": "docker0",
-            "port": calibration.DEFAULT_BROKER_PORT,
-            "subnet": "192.0.2.0/24",
-        },
-    )
+    sweep_calls = 0
+
+    def sweep() -> dict[str, int]:
+        nonlocal sweep_calls
+        sweep_calls += 1
+        return {"containers": 0, "networks": 0}
+
+    monkeypatch.setattr(calibration, "sweep_stale_calibration_resources", sweep)
     monkeypatch.setattr(
         calibration,
         "query_model_pricing",
@@ -1388,72 +1947,28 @@ def test_pricing_preflight_failure_occurs_after_topology_probe_without_attempt(
     assert result == 1
     assert output["attempt_count"] == 0
     assert output["error"] == "ValueError: pricing rejected"
-    assert not any(
-        thread.name == "calibration-broker" for thread in threading.enumerate()
-    )
+    assert sweep_calls == 1
 
 
-def test_blocked_topology_stops_before_authenticated_pricing_or_model_upstream(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+def test_cleanup_failure_cannot_claim_absence(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setenv(calibration.PARENT_KEY_ENV, "fake-parent")
-    monkeypatch.setattr(
-        calibration,
-        "discover_docker_bridge_topology",
-        lambda: calibration.DockerBridgeTopology(
-            gateway="192.0.2.1", interface="docker0", subnet="192.0.2.0/24"
-        ),
-    )
-    monkeypatch.setattr(
-        calibration,
-        "probe_docker_bridge_reachability",
-        lambda **_kwargs: (_ for _ in ()).throw(
-            RuntimeError("Docker bridge broker reachability probe failed")
-        ),
-    )
-    pricing_calls = 0
+    sidecar = _docker_sidecar(tmp_path)
+    sidecar.created_container = True
+    sidecar.created_network = True
 
-    def query(**_kwargs: Any) -> calibration.PricingSnapshot:
-        nonlocal pricing_calls
-        pricing_calls += 1
-        raise AssertionError("authenticated upstream must not run")
+    def fail(argv: list[str], **_kwargs: Any) -> subprocess.CompletedProcess[bytes]:
+        return subprocess.CompletedProcess(
+            args=[],
+            returncode=0 if "inspect" in argv else 1,
+            stdout=b"",
+            stderr=b"",
+        )
 
-    monkeypatch.setattr(calibration, "query_model_pricing", query)
-    result = calibration.main([])
-    output = json.loads(capsys.readouterr().out)
-    assert result == 1
-    assert pricing_calls == 0
-    assert output["admissible"] is False
-    assert output["attempt_count"] == 0
-    assert output["pricing"] is None
-    assert output["total_authoritative_cost_usd"] == "0"
-    assert output["spend_exposure"] == {
-        "known_actual_cost_usd": "0",
-        "retained_unknown_reservation_usd": "0",
-        "total_usd": "0",
-    }
-    assert output["topology"] == {
-        "gateway": "192.0.2.1",
-        "interface": "docker0",
-        "port": calibration.DEFAULT_BROKER_PORT,
-        "reachable": False,
-        "subnet": "192.0.2.0/24",
-        "temporary_ufw_commands": {
-            "add": (
-                "sudo ufw allow in on docker0 from 192.0.2.0/24 to 192.0.2.1 "
-                "port 62017 proto tcp"
-            ),
-            "delete": (
-                "sudo ufw delete allow in on docker0 from 192.0.2.0/24 "
-                "to 192.0.2.1 port 62017 proto tcp"
-            ),
-            "removal_required_in_finally": True,
-        },
-    }
-    assert "fake-parent" not in json.dumps(output)
-    assert output["error"] == (
-        "RuntimeError: Docker bridge broker reachability probe failed"
-    )
+    monkeypatch.setattr(calibration, "_docker", fail)
+    monkeypatch.setattr(calibration, "_owned_resource_exists", lambda *_args: True)
+    with pytest.raises(RuntimeError, match="absence proof failed"):
+        sidecar.cleanup()
 
 
 def test_calibration_tool_is_source_only() -> None:

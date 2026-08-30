@@ -43,18 +43,17 @@ Direct-IP and hostname TCP connection attempts must both fail, and either
 connection succeeding forces reward `0`. Detached Modal proof remains unproven
 because the retained storage credentials are expired.
 The unlisted candidate also has a source-only local calibration runner with two
-fixed OpenCode model groups. Proof mode first discovers Docker's default bridge,
-binds only its gateway and configured high port `62017`, and requires a one-shot
-ephemeral-token probe from a disposable default-bridge container. Loopback is
-debug-only. Before its deadline, missing or invalid authorization leaves the
-probe token usable, and exactly one of concurrent valid probes succeeds. At or
-after the deadline, the broker rejects the probe without consuming its token and
-permanently invalidates the broker. A blocked probe stops before
-authenticated pricing or a model request, reports exact temporary UFW add/delete
-commands for the discovered topology, and produces no admissible evidence. After
-a successful probe, the runner reads authenticated `/model/info` pricing and
-limits, rejects rates above fixed hard ceilings, and retains only a redacted
-canonical snapshot and digest.
+fixed OpenCode model groups. Every attempt creates a fresh labeled Docker bridge
+network and one broker sidecar with a unique alias. The broker image is pinned,
+mounts the source snapshot read-only, and receives the parent gateway key through
+anonymous stdin after start. The key is absent from Docker env, argv, labels,
+mounts, config, and logs. A disposable container completes a one-shot probe. The
+attempt token remains inactive until the runner discovers the uniquely labeled
+Harbor `main`, validates its immutable Docker config, records one config digest,
+and activates the token through that same private pipe. A `main` healthcheck
+holds Harbor's native `compose up --wait` boundary until activation, before
+OpenCode installation or execution. Authenticated `/model/info` pricing and
+limits are retained only as an exact redacted canonical snapshot and digest.
 It then starts each attempt with bounded failure evidence before model work.
 Each attempt locks to its first valid OpenCode endpoint only after successful
 budget reservation. The broker caps output at 8,192 tokens and atomically
@@ -65,22 +64,28 @@ reservation as unknown exposure, and prevents later forwarding. Child responses
 use only `text/event-stream` for a validated streaming request or
 `application/json` otherwise; upstream content type, encoding, and other headers
 are not reflected. Fake-upstream tests cover this boundary without a model call.
-The required clean four-attempt report remains unproven.
+Chat requests are normalized to exactly one completion and both supported
+endpoints reject multiplicity, background generation, non-text modalities,
+remote media, and file references. Message/input content admits only text, tool
+calls, and tool results. Endpoint-specific output limits remain capped at 8,192,
+and every reservation covers that complete permitted output.
 
-Real local calibration may need a temporary operator-managed firewall rule.
-Discover the current default bridge interface, subnet, and gateway, then allow
-only that interface and source subnet to the exact gateway TCP port `62017` for
-the duration of one run. The blocked-topology report fills in this exact pair:
-
-```console
-sudo ufw allow in on <interface> from <subnet> to <gateway> port 62017 proto tcp
-sudo ufw delete allow in on <interface> from <subnet> to <gateway> port 62017 proto tcp
-```
-
-Treat them as a try/finally pair: install the first rule immediately before the
-run and execute the second in cleanup after success, failure, or interruption.
-The runner does not invoke either command, alter UFW, bind `0.0.0.0`, or create a
-standing rule.
+The clean task is copied into a temporary overlay whose only added or replaced
+path is `environment/docker-compose.yaml`. It builds the committed main
+Dockerfile and seed and attaches `main` to the exact external attempt network.
+Candidate and overlay manifests are retained separately; Harbor's native task
+digest includes the overlay. Inspection rejects host namespaces, privilege,
+added capabilities, devices, weakened security options, runtime sockets, and
+mounts outside Harbor's explicit log/artifact binds. The Docker daemon and its
+root-equivalent operator remain trusted; unrelated host containers are not
+security evidence. After activation, a host heartbeat updates the anonymous pipe
+at least twice per second. Loss of that lease revokes tokens, drops the parent
+key, closes the listener, and removes the `--rm` broker within five seconds.
+Cleanup reconciles exact random names and labels regardless of create-call
+outcomes, reaps the attach client, and proves no active authority or owned
+resource remains. A dead parent may leave an inert network; the next startup's
+exact-label sweep removes it. No host port is published. The required clean
+four-attempt report remains unproven.
 
 Catalog tasks now bind `reward_policy = "numeric" | "binary"` into resolved-plan
 identity. Existing catalogs default to numeric, and retained plans without the

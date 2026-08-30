@@ -846,3 +846,45 @@ The topology-probe broker now validates active state and one exact bearer Author
 Provenance: local inspection of the append-only notes after recording E-081.
 
 The 05:07:18 validation entry was also inserted after the 03:59:03 entry because its patch anchor matched repeated validation text. The intended append-only order is represented by this final entry: the 05:00:19 contract and 05:07:18 validation were created after E-080, and the E-081 validation evidence in the 05:07:18 entry is authoritative. No earlier entry was rewritten or deleted.
+
+## 2026-08-30T12:00:00-07:00: D-089 calibration sidecar transport contract
+
+Provenance: user-provided credential-broker Docker-sidecar, overlay-identity, inspection, and cleanup contract. Implementation and validation are pending. No gateway, model, paid, firewall, commit, or push action is authorized.
+
+The calibration atomic transport unit is one attempt: one fresh labeled external Docker bridge network, one broker container and alias, one disposable one-shot probe token, one distinct attempt token, one exact task overlay, and one broker-only redacted ledger directory. The host owns network/container creation and proven removal. The broker process alone owns the forwarding parent key after it arrives over an anonymous stdin pipe; Docker configuration and durable evidence may contain no parent key or prompt/content bytes. Harbor owns `main`, which joins the exact external network through an overlay that changes only `environment/docker-compose.yaml`; candidate bytes and overlay bytes retain separate manifests and digests, while native task identity includes the overlay.
+
+Faithful nonpaid evidence must use the real Docker topology with a fake upstream or broker test mode, probe and simulated client containers, exact model/cost settlement, runtime inspect, and final absence checks. Adversarial coverage includes parent-key inspection, mount/socket separation, extra peers, broker crash, stale tokens, cleanup failures, overlay drift, and network/alias injection. Successful four-attempt calibration remains `unproven` and pending a clean post-commit run.
+
+## 2026-08-30T12:58:00-07:00: E-082 sidecar transport validation
+
+Provenance: two real-Docker sidecar tests, fake broker response mode, complete non-Docker suite, Docker residue inspection, and local lint, type, security, workflow, package, dependency, diff, and worktree secret scans. No gateway, model, paid, firewall, proof-output, commit, or push action occurred.
+
+All eight marked Docker tests and 850 non-Docker tests passed. The first sidecar integration created a fresh external bridge network, started the pinned broker from the mounted source, passed credentials after start through stdin, consumed a one-shot probe token, accepted a distinct simulated-client token for exact model `openai/gpt-5.6-sol`, settled exact fake cost `$0.125`, and proved the broker/network absent. Docker inspection found the parent key absent from config, env, argv, mounts, and logs; the source was read-only, the evidence mount was broker-only and writable, no Docker socket existed, and the network retained bridge gateway egress. The second integration rejected an extra peer, killed the broker, rejected the stale attempt token, and again proved cleanup. No labeled calibration container or network survived.
+
+Overlay tests retain separate exact candidate and overlay manifests and digests, reject instruction-byte drift, and bind only `environment/docker-compose.yaml` to the generated external network. Pricing digest/model binding, cleanup failure, and unsafe network/alias names fail closed. Ruff, format, ty, Bandit, actionlint, lock checking, wheel/sdist build, isolated locked-wheel smoke, all-groups pip-audit, `git diff --check`, and redacted worktree Gitleaks passed. The exact clean four-attempt calibration remains post-commit and `unproven`.
+
+## 2026-08-30T06:48:54-07:00: E-083 calibration activation and lease correction
+
+Provenance: user-provided Docker-sidecar calibration review findings; fake-upstream request adversaries; real Docker inactive-token, immutable-main-config, parent-death, and stale-network tests; all eight marked Docker tests; 877-test non-Docker suite; and complete local lint, type, security, package, dependency, diff, and full-history secret-scan parity. No gateway, model, paid, host-port, firewall, proof-output, catalog, commit, or push action occurred.
+
+This entry corrects D-089/E-082 where they treated continuous peer polling, only-broker-and-main membership, immediate attempt-token authority, or `Internal=false` as security evidence. Docker daemon/root and its same-UID operator are trusted. Network inspection now records the actual IPAM gateway and `Internal` value as topology only. Authenticated pricing and later forwarding, not that topology, prove egress. Unrelated host containers are outside the evidence boundary.
+
+Chat admits exactly one completion, injecting `n=1` when absent. Both endpoints reject multiplicity and Responses background aliases, non-text modalities, prediction, remote media, files, and unknown output-limit spellings. Message and input content admits text, tool calls, and tool results only; ordinary URL text remains text. Endpoint-specific 8,192-token caps remain, and the worst-case reservation covers every permitted output.
+
+The broker starts with its attempt token inactive. Harbor `main` carries unique attempt/candidate labels and a readiness healthcheck. The pinned `docker compose up --wait` lifecycle blocks before OpenCode installation and execution while the runner validates one immutable Docker config/image digest, exact Harbor mounts, namespace/privilege/capability/device/security settings, socket absence, and task identity. Only then does the host activate over the anonymous stdin control pipe, which is unavailable to `main`. A 0.5-second heartbeat owns a two-second monotonic lease. Lease loss drops the parent key, revokes tokens, closes the listener, and exits the `--rm` broker within five seconds.
+
+Cleanup no longer trusts create-call flags. It reconciles exact random names and unique labels after accepted-create disconnect, attach timeout, normal completion, and failure; terminates and reaps the attach client; and fails evidence if authority or an owned resource remains. Parent `SIGKILL` left only an inert network, and the next exact-owner-label startup sweep removed it. Logical manifests continue retaining repository-relative paths; only absolute host, temporary, and home paths are excluded from durable evidence. Candidate/overlay and native task fidelity are unchanged.
+
+All eight Docker tests and 877 non-Docker tests passed. Ruff check and format, ty, `uv lock --check`, locked all-group sync, Bandit, actionlint, wheel/sdist build, isolated locked-runtime wheel installation and metadata/content checks, all-groups pip-audit, `git diff --check`, and redacted Gitleaks over 31 commits passed. No labeled calibration container or network survived. The exact clean four-attempt calibration remains post-commit and `unproven`.
+
+## 2026-08-30T07:05:13-07:00: E-083 Docker-count and Harbor-lifecycle correction
+
+Provenance: one additional real Harbor Docker lifecycle regression and repeated exact Docker-marker selection after the preceding E-083 entry.
+
+The preceding E-083 count is superseded by nine passing Docker tests. The added test runs the pinned Harbor `docker compose up --wait` path with the Oracle agent, so it makes no model call. It proves the generated task overlay holds Harbor on the readiness healthcheck, the runner discovers and validates the actual labeled Harbor `main` with its exact `/logs/agent`, `/logs/artifacts`, and `/logs/verifier` mounts, activation completes, and only then can Harbor continue agent setup. The complete 877-test non-Docker selection remains passing from E-083. No labeled calibration container or network survived.
+
+## 2026-08-30T07:07:59-07:00: E-083 request-adversary count correction
+
+Provenance: five additional fake-upstream top-level modality regressions and repeated focused non-Docker validation.
+
+The E-083 non-Docker count is superseded by 882. The added cases explicitly reject Responses `modalities`, `audio`, and `prediction`, plus Chat `modalities` and `audio`, before upstream forwarding. The nine-test Docker selection remains passing from the preceding correction.
