@@ -30,14 +30,33 @@ inputs (scenario, seed, fault schedule, and gate mapping); the verifier derives
 expected state and effect hashes from its independent model. Harbor's sealed
 task context and exact verifier image copy bind the complete contract.
 
-The gold, no-op, six seeded gate mutants, and eight exploit fixtures are
-available to the bounded local admission tool. One local matrix and one real
-Harbor Docker oracle have passed. Public repository source is inspectable and
-is not contamination-resistant. The current hidden-test claim is only that
-Harbor bakes hidden source into the separate verifier image and does not mount
-it into the agent runtime. Three consecutive local gold runs, two
-detached gold runs, detached no-op/mutant/exploit audits, calibration, and
-catalog admission remain unproven.
+The bounded local admission tool runs the gold, no-op, six seeded gate mutants,
+and eight exploit fixtures. Admissible proof mode requires a clean worktree and
+index. It captures `HEAD` once and makes one private `git archive` snapshot;
+that snapshot owns the task, verifier image context, matrix candidates, gold
+solution, temporary project, source manifests, lockfile, built wheel, and
+installed production CLI. One to three ordered production runs execute only the
+absolute CLI from that private locked installation, but only exactly three can
+be admissible. Successful one- and two-run executions are diagnostics with
+`admissible=false`, `ok=false`, a nonzero exit, and no retained proof file.
+Linux subreaper containment and one no-follow snapshot of each private native
+output must complete before validation. Retained proof output requires every
+ancestor to remain root- or current-euid-owned and not group/world writable,
+except a root-owned sticky world-writable ancestor such as `/tmp`. The final
+parent must remain current-euid-owned and not group/world writable. Its file
+descriptor remains open through byte, metadata, visible-name, parent-fsync, and
+final repeated checks. A same-UID process remains authoritative and may mutate
+the file after return; post-return immutability is not promised.
+Any dirty run remains non-admission with no retained proof file.
+
+One local matrix and one real Harbor Docker oracle have passed. The runner
+source exists only in the dirty candidate change, so no clean admissible run is
+currently possible. The required three-run proof remains ungenerated and
+unproven until after commit. Public repository source is inspectable and is not
+contamination-resistant. The current hidden-test claim is only that Harbor
+bakes hidden source into the separate verifier image and does not mount it into
+the agent runtime. Two detached gold runs, detached no-op/mutant/exploit audits,
+calibration, and catalog admission remain unproven.
 
 The concurrent expiry claim is relation/property-based: the scheduler may choose
 either seeded contender. Trusted verifier diagnostics and admission evidence

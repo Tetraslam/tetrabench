@@ -255,6 +255,32 @@ no-cache run attestation records its nonce, image ID, tag, repository digests,
 and normalized build command. Fresh builds intentionally differ; neither whole
 attestation bytes nor image IDs are claimed reproducible.
 
+Admissible proof mode first requires a clean worktree and index, captures `HEAD`
+once, and extracts one private `git archive`. That snapshot owns every task,
+verifier, candidate, gold, temporary-project, source-manifest, lockfile, wheel,
+and CLI input. The wheel is hashed and installed with its locked dependencies in
+a private environment; production runs invoke only its absolute `tetrabench`
+path. The task `tests/` manifest must equal the verifier build-context manifest.
+
+The matrix may be followed by one to three ordered, unretried production runs.
+Only exactly three requested runs can be admissible. One or two successful runs
+are diagnostics, report `admissible=false` and `ok=false`, exit nonzero, and
+cannot use `--output`.
+Linux subreaper cleanup proves that no descendant survives before one bounded
+no-follow snapshot captures the complete private native output for Harbor and
+reward validation. Retained proof output uses a descriptor-anchored exclusive
+write through protected root- or current-euid-owned ancestors. Ancestors must
+not be group/world writable, except a root-owned sticky world-writable ancestor
+such as `/tmp`. The final parent must be current-euid-owned and not group/world
+writable, and its descriptor remains open through byte, metadata, visible-name,
+parent-fsync, and final repeated checks. A missing or replaced name fails
+without output success.
+An equally authorized same-UID process can still mutate the file after the tool
+returns; post-return immutability is outside this boundary. Dirty runs are
+explicit debug evidence: they are non-admissible, exit nonzero, and cannot write
+proof output. The required clean N=3 proof remains ungenerated until after
+commit; no three-run evidence is claimed.
+
 Mandatory gates:
 
 1. A current unexpired holder can commit, and a non-holder cannot.
@@ -516,7 +542,7 @@ most 8 distinct fault schedules.
 
 | Candidate | Status |
 | --- | --- |
-| `systems-design/authority-fencing` | Local candidate implemented under `benchmarks/tasks/`; intentionally unlisted and excluded from wheel/sdist. One gold Harbor Docker run and one strict bounded no-op/mutant/exploit matrix pass locally. Three local gold repetitions, two detached repetitions, detached admission, calibration, and catalog admission remain `unproven`. |
+| `systems-design/authority-fencing` | Local candidate implemented under `benchmarks/tasks/`; intentionally unlisted and excluded from wheel/sdist. One gold Harbor Docker run and one strict bounded no-op/mutant/exploit matrix pass locally. The runner source is part of this dirty candidate change, so a clean admissible run is impossible before commit. Its N=3 proof remains deliberately ungenerated. Two detached repetitions, detached admission, calibration, and catalog admission remain `unproven`. |
 | Remaining v1 candidates | Absent. |
 
 1. Run the locally proven E-064 separate-verifier and forge-sidecar prototype in

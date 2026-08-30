@@ -1,9 +1,9 @@
 schema_version = 1
 task_id = "systems-design/authority-fencing"
-initial_workspace_sha256 = "841bfa17a5a9932019b673c80cf26f0511ad4f522534e569396ec392fcafe437"
+initial_workspace_sha256 = "af7a552f51fa1ebb728c21596e1228630aabe408df67d161dadd8e40de254791"
 initial_workspace_files = ["README.md", "authority.py", "test_public.py"]
 initial_workspace_manifest = [
-  { path = "README.md", sha256 = "c62669cd4da7702090aa24b1099bfa7626f7196080dc26260886c9c9d7ad225b" },
+  { path = "README.md", sha256 = "818840a33bbcd67b01579285ed66c98b312d8bb352133a5da60962b582a7ffe9" },
   { path = "authority.py", sha256 = "ab5c5a3e80afa6699b32c0ef2db9bcfab8458da86d7e5fac42905482d50988e9" },
   { path = "test_public.py", sha256 = "d218978e0a040ceacd8d83b269a883063f2038b50bd36c211d4f7f1b147748b2" },
 ]

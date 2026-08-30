@@ -4,9 +4,10 @@ import hashlib
 import importlib.util
 import json
 import os
-import shutil
+import stat
 import subprocess
 import sys
+import tempfile
 import time
 import tomllib
 from pathlib import Path
@@ -35,6 +36,7 @@ def _load_source_module(name: str, path: Path):  # type: ignore[no-untyped-def]
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     sys.path.insert(0, str(path.parent))
+    sys.modules[name] = module
     try:
         spec.loader.exec_module(module)
     finally:
@@ -373,6 +375,54 @@ def test_admission_subject_binds_sources_and_reports_untracked_candidate_dirty(
     )
 
 
+def test_clean_source_snapshot_archives_one_tracked_head(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    admission = _load_source_module(
+        "authority_admission_clean_snapshot",
+        ROOT / "tools/run_authority_fencing_admission.py",
+    )
+    repository = tmp_path / "repository"
+    repository.mkdir()
+    (repository / "candidate").mkdir()
+    (repository / "candidate/task.py").write_text("VALUE = 1\n")
+    (repository / "tool.py").write_text("TOOL = 1\n")
+    _git(repository, "init")
+    _git(repository, "add", ".")
+    _git(
+        repository,
+        "-c",
+        "user.name=tetrabench test",
+        "-c",
+        "user.email=test@example.invalid",
+        "-c",
+        "commit.gpgsign=false",
+        "-c",
+        "core.hooksPath=/dev/null",
+        "commit",
+        "-m",
+        "fixture",
+    )
+    monkeypatch.setattr(
+        admission,
+        "SOURCE_RELATIVE_PATHS",
+        (Path("candidate"), Path("tool.py")),
+    )
+    private = tmp_path / "private"
+    private.mkdir()
+    snapshot = admission.create_clean_source_snapshot(private, repository=repository)
+    assert snapshot.revision == _git(repository, "rev-parse", "HEAD").stdout.strip()
+    assert snapshot.source_state == "clean"
+    assert snapshot.archive_sha256 is not None
+    assert (snapshot.root / "candidate/task.py").read_text() == "VALUE = 1\n"
+
+    (repository / "tool.py").write_text("TOOL = 2\n")
+    second_private = tmp_path / "second-private"
+    second_private.mkdir()
+    with pytest.raises(ValueError, match="clean Git worktree and index"):
+        admission.create_clean_source_snapshot(second_private, repository=repository)
+
+
 def test_docker_marker_accounting_fails_when_a_required_marker_is_missing() -> None:
     result = subprocess.run(
         [
@@ -384,13 +434,13 @@ def test_docker_marker_accounting_fails_when_a_required_marker_is_missing() -> N
             str(Path(__file__)),
         ],
         cwd=ROOT,
-        env={**os.environ, "TETRABENCH_EXPECT_DOCKER_TESTS": "3"},
+        env={**os.environ, "TETRABENCH_EXPECT_DOCKER_TESTS": "4"},
         capture_output=True,
         text=True,
         timeout=30,
     )
     assert result.returncode == 4
-    assert "expected 3 Docker tests, collected 2" in result.stderr
+    assert "expected 4 Docker tests, collected 3" in result.stderr
 
 
 def test_authority_fencing_native_task_boundary() -> None:
@@ -561,21 +611,672 @@ def test_caller_image_requires_debug_mode() -> None:
     assert "require explicit --debug mode" in result.stderr
 
 
+@pytest.mark.parametrize(
+    ("count", "accepted"),
+    [(0, False), (1, True), (2, True), (3, True), (4, False)],
+)
+def test_proof_repetition_parser_exact_counts(count: int, accepted: bool) -> None:
+    admission = _load_source_module(
+        f"authority_admission_parser_{count}",
+        ROOT / "tools/run_authority_fencing_admission.py",
+    )
+    arguments = ["--proof-runs", str(count)]
+    if accepted:
+        assert admission.parse_arguments(arguments).proof_runs == count
+    else:
+        with pytest.raises(SystemExit) as error:
+            admission.parse_arguments(arguments)
+        assert error.value.code == 2
+
+
+def test_debug_image_cannot_write_proof_output(tmp_path: Path) -> None:
+    output = tmp_path / "proof.json"
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(ROOT / "tools/run_authority_fencing_admission.py"),
+            "--debug",
+            "--skip-build",
+            "--proof-runs",
+            "1",
+            "--output",
+            str(output),
+        ],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    assert result.returncode == 2
+    assert result.stdout == ""
+    assert "--output requires exactly 3 proof runs" in result.stderr
+    assert not output.exists()
+
+
+@pytest.mark.parametrize("count", [1, 2])
+def test_diagnostic_run_count_cannot_write_proof_output(
+    tmp_path: Path, count: int
+) -> None:
+    output = tmp_path / "proof.json"
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(ROOT / "tools/run_authority_fencing_admission.py"),
+            "--proof-runs",
+            str(count),
+            "--output",
+            str(output),
+        ],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    assert result.returncode == 2
+    assert result.stdout == ""
+    assert "--output requires exactly 3 proof runs" in result.stderr
+    assert not output.exists()
+
+
+def test_proof_output_is_exclusive_private_and_refuses_symlinks(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    admission = _load_source_module(
+        "authority_admission_proof_output",
+        ROOT / "tools/run_authority_fencing_admission.py",
+    )
+    monkeypatch.chdir(tmp_path)
+    output = Path("proof.json")
+    authority = admission.open_proof_output_authority(output)
+    admission.write_exclusive_proof(authority, b'{"ok":true}\n')
+    authority.close()
+    assert output.read_bytes() == b'{"ok":true}\n'
+    assert stat.S_IMODE(output.stat().st_mode) == 0o600
+    second = admission.open_proof_output_authority(Path("second.json"))
+    admission.write_exclusive_proof(second, b"first")
+    with pytest.raises(FileExistsError):
+        admission.write_exclusive_proof(second, b"replacement")
+    second.close()
+
+    target = Path("target")
+    target.write_text("untouched")
+    link = Path("link")
+    link.symlink_to(target)
+    with pytest.raises(ValueError, match="refuses symlink"):
+        admission.open_proof_output_authority(link)
+    assert target.read_text() == "untouched"
+
+
+def test_proof_output_accepts_absolute_home_path() -> None:
+    admission = _load_source_module(
+        "authority_admission_absolute_home_output",
+        ROOT / "tools/run_authority_fencing_admission.py",
+    )
+    with tempfile.TemporaryDirectory(
+        prefix=".tetrabench-proof-", dir=Path.home()
+    ) as root:
+        parent = Path(root)
+        parent.chmod(0o700)
+        output = parent / "proof.json"
+        authority = admission.open_proof_output_authority(output)
+        try:
+            admission.write_exclusive_proof(authority, b'{"ok":true}\n')
+        finally:
+            authority.close()
+        assert output.read_bytes() == b'{"ok":true}\n'
+
+
+def test_proof_output_accepts_private_child_beneath_tmp() -> None:
+    admission = _load_source_module(
+        "authority_admission_tmp_private_output",
+        ROOT / "tools/run_authority_fencing_admission.py",
+    )
+    with tempfile.TemporaryDirectory(prefix="tetrabench-proof-", dir="/tmp") as root:
+        parent = Path(root)
+        parent.chmod(0o700)
+        output = parent / "proof.json"
+        authority = admission.open_proof_output_authority(output)
+        try:
+            admission.write_exclusive_proof(authority, b'{"ok":true}\n')
+        finally:
+            authority.close()
+        assert output.read_bytes() == b'{"ok":true}\n'
+
+
+def test_proof_output_accepts_cwd_relative_private_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    admission = _load_source_module(
+        "authority_admission_relative_private_output",
+        ROOT / "tools/run_authority_fencing_admission.py",
+    )
+    monkeypatch.chdir(tmp_path)
+    parent = Path("private")
+    parent.mkdir(mode=0o700)
+    output = parent / "proof.json"
+    authority = admission.open_proof_output_authority(output)
+    try:
+        admission.write_exclusive_proof(authority, b'{"ok":true}\n')
+    finally:
+        authority.close()
+    assert output.read_bytes() == b'{"ok":true}\n'
+
+
+def test_proof_output_rejects_tmp_as_final_parent() -> None:
+    admission = _load_source_module(
+        "authority_admission_direct_tmp_output",
+        ROOT / "tools/run_authority_fencing_admission.py",
+    )
+    output = Path("/tmp") / f"tetrabench-proof-{os.getpid()}.json"
+    with pytest.raises(PermissionError, match="current euid and private"):
+        admission.open_proof_output_authority(output)
+    assert not output.exists()
+
+
+def test_proof_evidence_normalizes_output_path() -> None:
+    admission = _load_source_module(
+        "authority_admission_proof_command",
+        ROOT / "tools/run_authority_fencing_admission.py",
+    )
+    assert admission.evidence_argv(
+        ["--proof-runs", "1", "--output", "/private/proof.json"]
+    ) == ["--proof-runs", "1", "--output", "<exclusive-proof-output>"]
+    assert admission.evidence_argv(
+        ["--proof-runs=1", "--output=/private/proof.json"]
+    ) == ["--proof-runs=1", "--output=<exclusive-proof-output>"]
+
+
+def test_proof_output_rejects_intermediate_directory_replacement(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    admission = _load_source_module(
+        "authority_admission_output_race",
+        ROOT / "tools/run_authority_fencing_admission.py",
+    )
+    monkeypatch.chdir(tmp_path)
+    parent = Path("parent")
+    parent.mkdir()
+    output = parent / "proof.json"
+    authority = admission.open_proof_output_authority(output)
+    moved = Path("moved")
+    parent.rename(moved)
+    parent.mkdir()
+    redirected = parent / "proof.json"
+    try:
+        with pytest.raises(OSError, match="parent identity changed"):
+            admission.write_exclusive_proof(authority, b'{"ok":true}\n')
+    finally:
+        authority.close()
+    assert not redirected.exists()
+    assert not (moved / "proof.json").exists()
+
+
+def test_proof_output_write_failure_leaves_no_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    admission = _load_source_module(
+        "authority_admission_output_failure",
+        ROOT / "tools/run_authority_fencing_admission.py",
+    )
+    monkeypatch.chdir(tmp_path)
+    output = Path("proof.json")
+    authority = admission.open_proof_output_authority(output)
+    real_fsync = admission.os.fsync
+    calls = 0
+
+    def fail_first_fsync(descriptor: int) -> None:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise OSError("injected fsync failure")
+        real_fsync(descriptor)
+
+    monkeypatch.setattr(admission.os, "fsync", fail_first_fsync)
+    try:
+        with pytest.raises(OSError, match="injected fsync failure"):
+            admission.write_exclusive_proof(authority, b'{"ok":true}\n')
+    finally:
+        authority.close()
+    assert not output.exists()
+
+
+def test_proof_output_rejects_shared_final_parent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    admission = _load_source_module(
+        "authority_admission_untrusted_final_mode",
+        ROOT / "tools/run_authority_fencing_admission.py",
+    )
+    monkeypatch.chdir(tmp_path)
+    parent = Path("parent")
+    parent.mkdir()
+    parent.chmod(0o770)
+    with pytest.raises(PermissionError, match="current euid and private"):
+        admission.open_proof_output_authority(parent / "proof.json")
+
+
+def test_proof_output_accepts_private_sticky_final_parent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    admission = _load_source_module(
+        "authority_admission_private_sticky_final_parent",
+        ROOT / "tools/run_authority_fencing_admission.py",
+    )
+    monkeypatch.chdir(tmp_path)
+    parent = Path("parent")
+    parent.mkdir()
+    parent.chmod(0o1700)
+    authority = admission.open_proof_output_authority(parent / "proof.json")
+    authority.close()
+
+
+def test_proof_output_rejects_parent_beneath_nonsticky_writable_ancestor(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    admission = _load_source_module(
+        "authority_admission_nonsticky_writable_ancestor",
+        ROOT / "tools/run_authority_fencing_admission.py",
+    )
+    monkeypatch.chdir(tmp_path)
+    ancestor = Path("ancestor")
+    parent = ancestor / "private"
+    parent.mkdir(parents=True, mode=0o700)
+    ancestor.chmod(0o777)
+    with pytest.raises(PermissionError, match="proof output ancestor"):
+        admission.open_proof_output_authority(parent / "proof.json")
+
+
+def test_proof_output_rejects_ancestor_owned_by_unrelated_uid(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    admission = _load_source_module(
+        "authority_admission_unrelated_ancestor_owner",
+        ROOT / "tools/run_authority_fencing_admission.py",
+    )
+    monkeypatch.chdir(tmp_path)
+    ancestor = Path("ancestor")
+    parent = ancestor / "private"
+    parent.mkdir(parents=True, mode=0o700)
+    real_fstat = admission.os.fstat
+    unrelated_uid = os.geteuid() + 1
+
+    def unrelated_ancestor_stat(descriptor: int) -> os.stat_result:
+        metadata = real_fstat(descriptor)
+        if Path(os.readlink(f"/proc/self/fd/{descriptor}")).name != ancestor.name:
+            return metadata
+        values = list(metadata)
+        values[4] = unrelated_uid
+        return os.stat_result(values)
+
+    monkeypatch.setattr(admission.os, "fstat", unrelated_ancestor_stat)
+    with pytest.raises(PermissionError, match="proof output ancestor"):
+        admission.open_proof_output_authority(parent / "proof.json")
+
+
+def test_proof_output_detects_replacement_during_parent_fsync(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    admission = _load_source_module(
+        "authority_admission_replace_during_fsync",
+        ROOT / "tools/run_authority_fencing_admission.py",
+    )
+    monkeypatch.chdir(tmp_path)
+    output = Path("proof.json")
+    moved = Path("moved.json")
+    authority = admission.open_proof_output_authority(output)
+    real_fsync = admission.os.fsync
+    replaced = False
+
+    def replace_on_parent_fsync(descriptor: int) -> None:
+        nonlocal replaced
+        if descriptor == authority.parent_fd and not replaced:
+            replaced = True
+            output.rename(moved)
+            output.write_bytes(b"replacement")
+        real_fsync(descriptor)
+
+    monkeypatch.setattr(admission.os, "fsync", replace_on_parent_fsync)
+    try:
+        with pytest.raises(OSError, match="identity or bytes changed"):
+            admission.write_exclusive_proof(authority, b'{"ok":true}\n')
+    finally:
+        authority.close()
+    assert moved.read_bytes() == b'{"ok":true}\n'
+    assert output.read_bytes() == b"replacement"
+
+
+def test_proof_output_detects_rename_during_file_close(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    admission = _load_source_module(
+        "authority_admission_rename_during_close",
+        ROOT / "tools/run_authority_fencing_admission.py",
+    )
+    monkeypatch.chdir(tmp_path)
+    output = Path("proof.json")
+    moved = Path("moved.json")
+    authority = admission.open_proof_output_authority(output)
+    real_close = admission.os.close
+    renamed = False
+
+    def rename_on_file_close(descriptor: int) -> None:
+        nonlocal renamed
+        if descriptor not in authority.descriptors and not renamed:
+            renamed = True
+            output.rename(moved)
+        real_close(descriptor)
+
+    monkeypatch.setattr(admission.os, "close", rename_on_file_close)
+    try:
+        with pytest.raises(OSError, match="identity changed during close"):
+            admission.write_exclusive_proof(authority, b'{"ok":true}\n')
+    finally:
+        authority.close()
+    assert moved.read_bytes() == b'{"ok":true}\n'
+    assert not output.exists()
+
+
+def test_clean_proof_refuses_dirty_source_without_creating_output(
+    tmp_path: Path,
+) -> None:
+    output = tmp_path / "proof.json"
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(ROOT / "tools/run_authority_fencing_admission.py"),
+            "--proof-runs",
+            "3",
+            "--output",
+            output.name,
+        ],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    evidence = json.loads(result.stdout)
+    assert result.returncode == 1
+    assert evidence["admissible"] is False
+    assert evidence["ok"] is False
+    assert "clean Git worktree and index" in evidence["error"]
+    assert not output.exists()
+
+
+def test_three_ordered_runs_abort_without_retry_on_second_failure() -> None:
+    admission = _load_source_module(
+        "authority_admission_three_calls",
+        ROOT / "tools/run_authority_fencing_admission.py",
+    )
+    calls: list[int] = []
+
+    def invoke(ordinal: int) -> dict[str, Any]:
+        calls.append(ordinal)
+        if ordinal == 2:
+            raise ValueError("second failed")
+        return {"ordinal": ordinal}
+
+    outcome = admission.execute_ordered_calls(3, invoke)
+    assert calls == [1, 2]
+    assert outcome.records == [{"ordinal": 1}]
+    assert outcome.error == "ValueError: second failed"
+    diagnostic_runs_ok, full_runs_ok, admissible = admission.proof_status(
+        debug=False,
+        source_state="clean",
+        matrix_ok=True,
+        requested_runs=3,
+        outcome=outcome,
+    )
+    assert diagnostic_runs_ok is False
+    assert full_runs_ok is False
+    assert admissible is False
+
+
+def test_three_ordered_runs_make_three_independent_calls() -> None:
+    admission = _load_source_module(
+        "authority_admission_three_successes",
+        ROOT / "tools/run_authority_fencing_admission.py",
+    )
+    calls: list[int] = []
+    outcome = admission.execute_ordered_calls(
+        3,
+        lambda ordinal: calls.append(ordinal) or {"ordinal": ordinal},
+    )
+    assert calls == [1, 2, 3]
+    assert [record["ordinal"] for record in outcome.records] == [1, 2, 3]
+    assert outcome.error is None
+    diagnostic_runs_ok, full_runs_ok, admissible = admission.proof_status(
+        debug=True,
+        source_state="dirty-debug",
+        matrix_ok=True,
+        requested_runs=3,
+        outcome=outcome,
+    )
+    assert diagnostic_runs_ok is True
+    assert full_runs_ok is True
+    assert admissible is False
+
+
+@pytest.mark.parametrize(
+    ("requested", "record_count", "diagnostic_ok", "full_ok", "admissible"),
+    [
+        (0, 0, False, False, False),
+        (1, 1, True, False, False),
+        (2, 2, True, False, False),
+        (3, 3, True, True, True),
+        (4, 4, False, False, False),
+        (3, 2, False, False, False),
+    ],
+)
+def test_proof_status_admits_only_exactly_three_complete_records(
+    requested: int,
+    record_count: int,
+    diagnostic_ok: bool,
+    full_ok: bool,
+    admissible: bool,
+) -> None:
+    admission = _load_source_module(
+        f"authority_admission_status_{requested}_{record_count}",
+        ROOT / "tools/run_authority_fencing_admission.py",
+    )
+    outcome = admission.FullRunOutcome(
+        records=[{"ordinal": ordinal} for ordinal in range(1, record_count + 1)],
+        error=None,
+    )
+    assert admission.proof_status(
+        debug=False,
+        source_state="clean",
+        matrix_ok=True,
+        requested_runs=requested,
+        outcome=outcome,
+    ) == (diagnostic_ok, full_ok, admissible)
+
+
+def test_failure_evidence_does_not_serialize_private_paths() -> None:
+    admission = _load_source_module(
+        "authority_admission_safe_failure",
+        ROOT / "tools/run_authority_fencing_admission.py",
+    )
+    assert admission.safe_error(ValueError("failed at /tmp/private/run")) == (
+        "ValueError: operation failed"
+    )
+
+
+def test_production_command_bounds_aggregate_output() -> None:
+    admission = _load_source_module(
+        "authority_admission_bounded_output",
+        ROOT / "tools/run_authority_fencing_admission.py",
+    )
+    source = "import os\nos.write(1,b'a'*600000)\nos.write(2,b'b'*600000)\n"
+    with pytest.raises(ValueError, match="output exceeded limit"):
+        admission._bounded_command(
+            [sys.executable, "-c", source],
+            cwd=ROOT,
+            env=dict(os.environ),
+            timeout=10,
+        )
+
+
+def test_production_command_kills_descendant_after_parent_exit(tmp_path: Path) -> None:
+    admission = _load_source_module(
+        "authority_admission_descendant_cleanup",
+        ROOT / "tools/run_authority_fencing_admission.py",
+    )
+    pid_path = tmp_path / "descendant.pid"
+    source = (
+        "import os,time\n"
+        "pid=os.fork()\n"
+        "if pid: raise SystemExit(0)\n"
+        f"open({str(pid_path)!r},'w').write(str(os.getpid()))\n"
+        "time.sleep(30)\n"
+    )
+    with pytest.raises(
+        (TimeoutError, RuntimeError),
+        match=r"production CLI (timed out|descendants retained output pipes)",
+    ):
+        admission._bounded_command(
+            [sys.executable, "-c", source],
+            cwd=ROOT,
+            env=dict(os.environ),
+            timeout=1,
+        )
+    deadline = time.monotonic() + 2
+    while not pid_path.exists() and time.monotonic() < deadline:
+        time.sleep(0.01)
+    assert pid_path.exists()
+    descendant = int(pid_path.read_text())
+    while Path(f"/proc/{descendant}").exists() and time.monotonic() < deadline:
+        time.sleep(0.01)
+    assert not Path(f"/proc/{descendant}").exists()
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="requires Linux subreaper")
+@pytest.mark.parametrize("double_fork", [False, True])
+def test_production_command_kills_setsid_closed_pipe_daemons(
+    tmp_path: Path, double_fork: bool
+) -> None:
+    admission = _load_source_module(
+        f"authority_admission_daemon_{double_fork}",
+        ROOT / "tools/run_authority_fencing_admission.py",
+    )
+    pid_path = tmp_path / "daemon.pid"
+    marker = tmp_path / "mutated"
+    fork_again = "second=os.fork()\nif second: os._exit(0)\n" if double_fork else ""
+    source = (
+        "import os,time\n"
+        "first=os.fork()\n"
+        "if first:\n"
+        f" while not os.path.exists({str(pid_path)!r}): time.sleep(0.01)\n"
+        " raise SystemExit(0)\n"
+        f"{fork_again}"
+        "os.setsid()\n"
+        "os.close(1);os.close(2)\n"
+        f"open({str(pid_path)!r},'w').write(str(os.getpid()))\n"
+        "time.sleep(0.5)\n"
+        f"open({str(marker)!r},'w').write('escaped')\n"
+        "time.sleep(30)\n"
+    )
+    result = admission._bounded_command(
+        [sys.executable, "-c", source],
+        cwd=ROOT,
+        env=dict(os.environ),
+        timeout=5,
+    )
+    assert result.containment["descendants_observed_after_exit"] >= 1
+    assert result.containment["survivors"] == 0
+    deadline = time.monotonic() + 2
+    while not pid_path.exists() and time.monotonic() < deadline:
+        time.sleep(0.01)
+    assert pid_path.exists()
+    daemon = int(pid_path.read_text())
+    time.sleep(0.6)
+    assert not marker.exists()
+    assert not Path(f"/proc/{daemon}").exists()
+
+
+def test_proof_project_selects_only_binary_oracle_candidate(tmp_path: Path) -> None:
+    admission = _load_source_module(
+        "authority_admission_proof_project",
+        ROOT / "tools/run_authority_fencing_admission.py",
+    )
+    project, config_root = admission._write_proof_project(tmp_path)
+    catalog = (project / "benchmarks/catalog.toml").read_text()
+    profile = (config_root / "tetrabench/config.toml").read_text()
+    assert catalog.count('id = "authority-fencing"') == 1
+    assert 'reward_policy = "binary"' in catalog
+    assert 'include = ["authority-fencing"]' in profile
+    assert 'agent_name = "oracle"' in profile
+    assert "model_name" not in profile
+    assert 'kind = "local"' in profile
+    assert 'kind = "docker"' in profile
+
+
+def test_native_output_snapshot_is_bounded_no_follow_and_complete(
+    tmp_path: Path,
+) -> None:
+    admission = _load_source_module(
+        "authority_admission_native_snapshot",
+        ROOT / "tools/run_authority_fencing_admission.py",
+    )
+    output = tmp_path / "run"
+    output.mkdir(mode=0o700)
+    nested = output / "job"
+    nested.mkdir()
+    (nested / "result.json").write_bytes(b'{"ok":true}\n')
+    snapshot = admission.snapshot_native_output(output)
+    assert snapshot.read("job/result.json") == b'{"ok":true}\n'
+    assert snapshot.manifest == [
+        {"mode": 0o700, "path": ".", "type": "directory"},
+        {"mode": 0o755, "path": "job", "type": "directory"},
+        {
+            "mode": 0o644,
+            "path": "job/result.json",
+            "sha256": hashlib.sha256(b'{"ok":true}\n').hexdigest(),
+            "size": 12,
+            "type": "file",
+        },
+    ]
+    (output / "escape").symlink_to("/etc/passwd")
+    with pytest.raises(ValueError, match="unsafe entry"):
+        admission.snapshot_native_output(output)
+
+
+def test_proof_output_requires_proof_mode(tmp_path: Path) -> None:
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(ROOT / "tools/run_authority_fencing_admission.py"),
+            "--output",
+            str(tmp_path / "proof.json"),
+        ],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    assert result.returncode == 2
+    assert result.stdout == ""
+    assert "--output requires --proof-runs" in result.stderr
+
+
 @pytest.mark.docker
 def test_authority_fencing_admission_and_mutant_attribution(tmp_path: Path) -> None:
     assert _docker_available(), "Docker daemon is required for the test suite"
     result = subprocess.run(
-        ["python", str(ROOT / "tools/run_authority_fencing_admission.py")],
+        [
+            "python",
+            str(ROOT / "tools/run_authority_fencing_admission.py"),
+            "--debug",
+        ],
         cwd=ROOT,
-        check=True,
         capture_output=True,
         text=True,
-        timeout=600,
+        timeout=900,
     )
     evidence = json.loads(result.stdout)
-    assert evidence["ok"] is True
-    assert evidence["admissible"] is True
-    assert evidence["debug"] is False
+    assert result.returncode == 1
+    assert evidence["ok"] is False
+    assert evidence["admissible"] is False
+    assert evidence["debug"] is True
     assert evidence["matrix_ok"] is True
     first_attestation = evidence["run_attestation"]
     assert first_attestation["image_id"].startswith("sha256:")
@@ -585,6 +1286,10 @@ def test_authority_fencing_admission_and_mutant_attribution(tmp_path: Path) -> N
     assert not any(str(tmp_path) in item for item in first_attestation["build_command"])
     assert evidence["subject"]["tool_versions"]["harbor"] == "0.22.0"
     assert len(evidence["subject"]["verifier_context_sha256"]) == 64
+    assert (
+        evidence["subject"]["task_tests_manifest_sha256"]
+        == evidence["subject"]["verifier_context_sha256"]
+    )
     assert (
         evidence["subject_sha256"]
         == hashlib.sha256(canonical(evidence["subject"])).hexdigest()
@@ -622,35 +1327,74 @@ def test_authority_fencing_admission_and_mutant_attribution(tmp_path: Path) -> N
             assert entry["attribution_admitted"] is True
             assert entry["gate_vector"] == expected
 
-    admission = _load_source_module(
-        "authority_admission_second_fresh_build",
-        ROOT / "tools/run_authority_fencing_admission.py",
+    assert evidence["subject"]["source_state"] == "dirty-debug"
+    assert evidence["source_snapshot"]["mode"] == "tracked-worktree-debug-copy"
+    assert evidence["source_snapshot"]["archive_sha256"] is None
+    assert evidence["full_runs_ok"] is False
+
+
+@pytest.mark.docker
+def test_authority_fencing_non_admission_uses_isolated_production_cli_once(
+    tmp_path: Path,
+) -> None:
+    assert _docker_available(), "Docker daemon is required for the test suite"
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(ROOT / "tools/run_authority_fencing_admission.py"),
+            "--debug",
+            "--proof-runs",
+            "1",
+        ],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        timeout=3600,
     )
-    context = tmp_path / "verifier-context"
-    shutil.copytree(
-        TASK / "tests",
-        context,
-        symlinks=True,
-        ignore=shutil.ignore_patterns("__pycache__", "*.pyc"),
-    )
-    context_sha256 = admission.tests_context_digest(context)
-    _image, second_attestation = admission.build_admission_image(
-        context, context_sha256
-    )
-    mutants = tomllib.loads((TASK / "tests/mutants.toml").read_text())["mutants"]
-    second_subject = admission.admission_subject(
-        hidden_case_input_sha256=evidence["hidden_case_input_sha256"],
-        mutants=mutants,
-        tool_version_values=evidence["subject"]["tool_versions"],
-        verifier_context_sha256=context_sha256,
-    )
-    assert (
-        hashlib.sha256(canonical(second_subject)).hexdigest()
-        == evidence["subject_sha256"]
-    )
-    assert second_attestation != first_attestation
-    assert second_attestation["build_nonce"] != first_attestation["build_nonce"]
-    assert second_attestation["image_id"] != first_attestation["image_id"]
+    evidence = json.loads(result.stdout)
+    assert result.returncode == 1
+    assert evidence["schema_version"] == 3
+    assert evidence["ok"] is False
+    assert evidence["admissible"] is False
+    assert evidence["matrix_ok"] is True
+    assert evidence["proof_repetitions"] == 1
+    assert evidence["full_run_count"] == 1
+    assert evidence["diagnostic_runs_ok"] is True
+    assert evidence["full_runs_ok"] is False
+    run = evidence["full_runs"][0]
+    assert run["ordinal"] == 1
+    assert run["cli"]["outcome"] == "succeeded"
+    assert run["cli"]["reward"] == "1"
+    assert run["cli"]["summary"]["policy"] == "binary"
+    assert run["cli"]["summary"]["pass_count"] == 1
+    assert run["cli"]["summary"]["sample_count"] == 1
+    assert len(run["native"]["trial"]["task_checksum"]) == 64
+    assert run["native"]["trial"]["task_digest"].startswith("sha256:")
+    assert len(run["native"]["trial"]["task_digest"]) == 71
+    assert len(run["artifact_manifest"]["sha256"]) == 64
+    assert run["containment"]["subreaper"] is True
+    assert run["containment"]["survivors"] == 0
+    assert run["output_snapshot"]["manifest"][0] == {
+        "mode": 0o700,
+        "path": ".",
+        "type": "directory",
+    }
+    distribution = evidence["cli_distribution"]
+    assert distribution["wheel"]["filename"].endswith(".whl")
+    assert len(distribution["wheel"]["sha256"]) == 64
+    assert distribution["executable"] == "<private-venv>/bin/tetrabench"
+    assert distribution["python"]["executable"] == "<private-venv>/bin/python"
+    assert distribution["distribution"]["metadata"]["name"] == "tetrabench"
+    installed = {
+        item["name"].lower(): item["version"]
+        for item in distribution["distribution"]["installed_distributions"]
+    }
+    assert installed["tetrabench"] == "0.1.0"
+    assert installed["harbor"] == "0.22.0"
+    serialized = result.stdout
+    assert "/tmp/" not in serialized
+    assert str(tmp_path) not in serialized
+    assert str(Path.home()) not in serialized
 
 
 def _docker_available() -> bool:
