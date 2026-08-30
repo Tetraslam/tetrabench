@@ -980,20 +980,26 @@ def test_clean_proof_refuses_dirty_source_without_creating_output(
     tmp_path: Path,
 ) -> None:
     output = tmp_path / "proof.json"
-    result = subprocess.run(
-        [
-            sys.executable,
-            str(ROOT / "tools/run_authority_fencing_admission.py"),
-            "--proof-runs",
-            "3",
-            "--output",
-            output.name,
-        ],
-        cwd=tmp_path,
-        capture_output=True,
-        text=True,
-        timeout=30,
-    )
+    source = ROOT / "tools/run_authority_fencing_admission.py"
+    original = source.read_bytes()
+    source.write_bytes(original + b"\n")
+    try:
+        result = subprocess.run(
+            [
+                sys.executable,
+                str(source),
+                "--proof-runs",
+                "3",
+                "--output",
+                output.name,
+            ],
+            cwd=tmp_path,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+    finally:
+        source.write_bytes(original)
     evidence = json.loads(result.stdout)
     assert result.returncode == 1
     assert evidence["admissible"] is False
