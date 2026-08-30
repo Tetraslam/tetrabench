@@ -278,8 +278,11 @@ without output success.
 An equally authorized same-UID process can still mutate the file after the tool
 returns; post-return immutability is outside this boundary. Dirty runs are
 explicit debug evidence: they are non-admissible, exit nonzero, and cannot write
-proof output. The required clean N=3 proof remains ungenerated until after
-commit; no three-run evidence is claimed.
+proof output. The clean local N=3 proof passed at source revision
+`8fc7c78bc9c59da9b188ed9a9800425f08203d7a`: all 17 matrix entries passed,
+followed by exactly three ordered, distinct, unretried production CLI runs with
+raw integer reward `1`, pass rate `1/1`, separate verification, native
+provenance, and no surviving child or current-run Docker residue.
 
 Mandatory gates:
 
@@ -542,7 +545,7 @@ most 8 distinct fault schedules.
 
 | Candidate | Status |
 | --- | --- |
-| `systems-design/authority-fencing` | Local candidate implemented under `benchmarks/tasks/`; intentionally unlisted and excluded from wheel/sdist. One gold Harbor Docker run and one strict bounded no-op/mutant/exploit matrix pass locally. The runner source is part of this dirty candidate change, so a clean admissible run is impossible before commit. Its N=3 proof remains deliberately ungenerated. Two detached repetitions, detached admission, calibration, and catalog admission remain `unproven`. |
+| `systems-design/authority-fencing` | Local candidate implemented under `benchmarks/tasks/`; intentionally unlisted and excluded from wheel/sdist. The clean local proof passed all 17 gold/no-op/mutant/exploit matrix entries and exactly three ordered unretried production CLI runs. Local gold repetition, no-op, mutant, and exploit gates are passed. Two detached repetitions, the detached audit, two-profile calibration, budget completion, and catalog admission remain `unproven`. |
 | Remaining v1 candidates | Absent. |
 
 1. Run the locally proven E-064 separate-verifier and forge-sidecar prototype in
