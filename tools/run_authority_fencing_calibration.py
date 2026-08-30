@@ -333,6 +333,7 @@ class BrokerState:
         evidence_path: Path | None = None,
         fake_response_cost: Decimal | None = None,
         pricing_sha256: str | None = None,
+        shutdown_event: threading.Event | None = None,
     ) -> None:
         self.parent_key = parent_key
         self._token: str | None = token
@@ -347,6 +348,7 @@ class BrokerState:
         self.evidence_lock = threading.Lock()
         self.fake_response_cost = fake_response_cost
         self.pricing_sha256 = pricing_sha256
+        self.shutdown_event = shutdown_event
         self.lock = threading.Lock()
         self.semaphore = threading.BoundedSemaphore(MAX_CONCURRENCY)
         self.request_count = 0
@@ -412,71 +414,123 @@ class BrokerState:
             finally:
                 os.close(directory)
 
+    def _expired_locked(self, now: float) -> bool:
+        return now >= self.deadline or bool(
+            self.activated
+            and (
+                self.last_heartbeat is None
+                or now - self.last_heartbeat >= HEARTBEAT_LEASE_SECONDS
+            )
+        )
+
+    def _invalidate_locked(self) -> tuple[http.client.HTTPConnection, ...]:
+        self.active = False
+        self._token = None
+        self._probe_token = None
+        self.parent_key = ""
+        if self.shutdown_event is not None:
+            self.shutdown_event.set()
+        return tuple(self.upstreams)
+
+    def _close_upstreams(
+        self, upstreams: tuple[http.client.HTTPConnection, ...]
+    ) -> None:
+        for upstream in upstreams:
+            upstream.close()
+
     def authorize(self, headers: Any) -> None:
         values = headers.get_all("Authorization", [])
+        expired_upstreams: tuple[http.client.HTTPConnection, ...] | None = None
         with self.lock:
-            token = self._token
-            active = self.active
-        if (
-            not active
-            or token is None
-            or time.monotonic() >= self.deadline
-            or len(values) != 1
-            or not secrets.compare_digest(values[0], f"Bearer {token}")
-        ):
+            if self._expired_locked(time.monotonic()):
+                expired_upstreams = self._invalidate_locked()
+                accepted = False
+            else:
+                token = self._token
+                accepted = bool(
+                    self.active
+                    and token is not None
+                    and len(values) == 1
+                    and secrets.compare_digest(values[0], f"Bearer {token}")
+                )
+        if expired_upstreams is not None:
+            self._close_upstreams(expired_upstreams)
+            self.write_evidence()
+        if not accepted:
             raise PermissionError("broker authorization rejected")
 
     def consume_probe(self, headers: Any) -> None:
         values = headers.get_all("Authorization", [])
+        expired_upstreams: tuple[http.client.HTTPConnection, ...] | None = None
         with self.lock:
-            if time.monotonic() >= self.deadline:
-                self.active = False
-                self._token = None
-                self._probe_token = None
-                raise PermissionError("broker probe authorization rejected")
-            token = self._probe_token
-            if (
-                token is None
-                or len(values) != 1
-                or not secrets.compare_digest(values[0], f"Bearer {token}")
-            ):
-                raise PermissionError("broker probe authorization rejected")
-            self._probe_token = None
-            self._probe_consumed = True
+            if self._expired_locked(time.monotonic()):
+                expired_upstreams = self._invalidate_locked()
+                accepted = False
+            else:
+                token = self._probe_token
+                accepted = bool(
+                    token is not None
+                    and len(values) == 1
+                    and secrets.compare_digest(values[0], f"Bearer {token}")
+                )
+                if accepted:
+                    self._probe_token = None
+                    self._probe_consumed = True
+        if expired_upstreams is not None:
+            self._close_upstreams(expired_upstreams)
+        if not accepted:
+            if expired_upstreams is not None:
+                self.write_evidence()
+            raise PermissionError("broker probe authorization rejected")
         self.write_evidence()
 
     def activate(self, token: str, channel_identity: tuple[int, int]) -> None:
         if len(token) < 32:
             raise ValueError("broker activation token rejected")
+        expired_upstreams: tuple[http.client.HTTPConnection, ...] | None = None
         with self.lock:
-            if self.activated or self.active or not self._probe_consumed:
+            now = time.monotonic()
+            if self._expired_locked(now):
+                expired_upstreams = self._invalidate_locked()
+            elif self.activated or self.active or not self._probe_consumed:
                 raise RuntimeError("broker activation ordering rejected")
-            self._token = token
-            self.active = True
-            self.activated = True
-            self.last_heartbeat = time.monotonic()
-            self.lease_channel_identity = channel_identity
+            else:
+                self._token = token
+                self.active = True
+                self.activated = True
+                self.last_heartbeat = now
+                self.lease_channel_identity = channel_identity
+        if expired_upstreams is not None:
+            self._close_upstreams(expired_upstreams)
+            self.write_evidence()
+            raise PermissionError("broker activation expired")
         self.write_evidence()
 
     def heartbeat(self, channel_identity: tuple[int, int]) -> None:
+        expired_upstreams: tuple[http.client.HTTPConnection, ...] | None = None
         with self.lock:
-            if (
-                not self.active
-                or not self.activated
-                or self.lease_channel_identity != channel_identity
-            ):
-                raise PermissionError("broker heartbeat rejected")
-            self.last_heartbeat = time.monotonic()
+            now = time.monotonic()
+            if self._expired_locked(now):
+                expired_upstreams = self._invalidate_locked()
+                accepted = False
+            else:
+                accepted = bool(
+                    self.active
+                    and self.activated
+                    and self.lease_channel_identity == channel_identity
+                )
+                if accepted:
+                    self.last_heartbeat = now
+        if expired_upstreams is not None:
+            self._close_upstreams(expired_upstreams)
+            self.write_evidence()
+        if not accepted:
+            raise PermissionError("broker heartbeat rejected")
 
     def lease_expired(self) -> bool:
         with self.lock:
-            return bool(
-                self.activated
-                and (
-                    not self.active
-                    or self.last_heartbeat is None
-                    or time.monotonic() - self.last_heartbeat > HEARTBEAT_LEASE_SECONDS
-                )
+            return (self.activated and not self.active) or self._expired_locked(
+                time.monotonic()
             )
 
     @property
@@ -489,9 +543,13 @@ class BrokerState:
     ) -> tuple[int, Reservation]:
         if not self.semaphore.acquire(blocking=False):
             raise BlockingIOError("broker concurrency limit reached")
+        expired_upstreams: tuple[http.client.HTTPConnection, ...] | None = None
         try:
             with self.lock:
-                if not self.active or time.monotonic() >= self.deadline:
+                if self._expired_locked(time.monotonic()):
+                    expired_upstreams = self._invalidate_locked()
+                    raise PermissionError("broker attempt expired")
+                if not self.active:
                     raise PermissionError("broker attempt expired")
                 if self.request_count >= MAX_REQUESTS:
                     raise RuntimeError("broker request limit reached")
@@ -508,6 +566,9 @@ class BrokerState:
             return ordinal, reservation
         except BaseException:
             self.semaphore.release()
+            if expired_upstreams is not None:
+                self._close_upstreams(expired_upstreams)
+                self.write_evidence()
             raise
 
     def finish_request(self, reservation: Reservation, cost: Decimal) -> None:
@@ -530,20 +591,27 @@ class BrokerState:
 
     def invalidate(self) -> None:
         with self.lock:
-            self.active = False
-            self._token = None
-            self._probe_token = None
-            self.parent_key = ""
-            upstreams = tuple(self.upstreams)
-        for upstream in upstreams:
-            upstream.close()
+            upstreams = self._invalidate_locked()
+        self._close_upstreams(upstreams)
         self.write_evidence()
 
-    def register_upstream(self, upstream: http.client.HTTPConnection) -> None:
+    def register_upstream(self, upstream: http.client.HTTPConnection) -> str:
+        expired_upstreams: tuple[http.client.HTTPConnection, ...] | None = None
         with self.lock:
-            if not self.active:
-                raise PermissionError("broker attempt expired")
-            self.upstreams.add(upstream)
+            if self._expired_locked(time.monotonic()):
+                expired_upstreams = self._invalidate_locked()
+                parent_key = ""
+            elif not self.active:
+                parent_key = ""
+            else:
+                self.upstreams.add(upstream)
+                parent_key = self.parent_key
+        if expired_upstreams is not None:
+            self._close_upstreams(expired_upstreams)
+            self.write_evidence()
+        if not parent_key:
+            raise PermissionError("broker attempt expired")
+        return parent_key
 
     def unregister_upstream(self, upstream: http.client.HTTPConnection) -> None:
         with self.lock:
@@ -1385,14 +1453,14 @@ class CalibrationBrokerHandler(BaseHTTPRequestHandler):
                     )
                 else:
                     raise ValueError("upstream scheme rejected")
-                state.register_upstream(upstream)
+                parent_key = state.register_upstream(upstream)
                 potentially_paid = True
                 upstream.request(
                     "POST",
                     endpoint,
                     body=body,
                     headers={
-                        **_forward_headers(self, state.parent_key),
+                        **_forward_headers(self, parent_key),
                         "Content-Length": str(len(body)),
                     },
                 )
@@ -1504,6 +1572,7 @@ class CalibrationBroker:
         fake_response_cost: Decimal | None = None,
         pricing_sha256: str | None = None,
         inactive: bool = False,
+        shutdown_event: threading.Event | None = None,
     ) -> None:
         self.host = host
         self.port = port
@@ -1520,6 +1589,7 @@ class CalibrationBroker:
             evidence_path=evidence_path,
             fake_response_cost=fake_response_cost,
             pricing_sha256=pricing_sha256,
+            shutdown_event=shutdown_event,
         )
         self.server: CalibrationHTTPServer | None = None
         self.thread: threading.Thread | None = None
@@ -1639,6 +1709,7 @@ def _broker_child_main(argv: list[str]) -> int:
         ),
         pricing_sha256=args.pricing_sha256,
         inactive=True,
+        shutdown_event=stop,
     )
     credentials["parent_key"] = ""  # nosec B105 - best-effort replacement
     credentials["probe_token"] = ""  # nosec B105 - best-effort replacement
@@ -2140,17 +2211,27 @@ class DockerMainAuthority:
         config = inspected.get("Config")
         host = inspected.get("HostConfig")
         mounts = inspected.get("Mounts")
+        network_settings = inspected.get("NetworkSettings")
         if (
             not isinstance(config, dict)
             or not isinstance(host, dict)
             or not isinstance(mounts, list)
+            or not isinstance(network_settings, dict)
         ):
             raise RuntimeError("Harbor main immutable config schema rejected")
+        if (
+            config.get("ExposedPorts") not in (None, {})
+            or host.get("PortBindings") not in (None, {})
+            or host.get("PublishAllPorts") is not False
+            or network_settings.get("Ports") not in (None, {})
+        ):
+            raise RuntimeError("Harbor main published port rejected")
         immutable_boundary = {
             "Config": config,
             "HostConfig": host,
             "Image": inspected.get("Image"),
             "Mounts": mounts,
+            "NetworkSettingsPorts": network_settings.get("Ports"),
         }
         serialized = canonical(immutable_boundary).encode()
         if self.parent_key.encode() in serialized:
@@ -2203,7 +2284,7 @@ class DockerMainAuthority:
                 raise RuntimeError("Harbor main runtime socket rejected")
         if set(approved_mounts) != self._ALLOWED_MOUNT_TARGETS:
             raise RuntimeError("Harbor main expected mounts missing")
-        attached = inspected.get("NetworkSettings", {}).get("Networks")
+        attached = network_settings.get("Networks")
         if not isinstance(attached, dict) or set(attached) != {self.names.network}:
             raise RuntimeError("Harbor main network attachment rejected")
         image_id = inspected.get("Image")
@@ -2224,6 +2305,7 @@ class DockerMainAuthority:
             "main_container_id": inspected.get("Id"),
             "mount_targets": sorted(approved_mounts),
             "parent_key_absent": True,
+            "published_ports_absent": True,
             "runtime_sockets_absent": True,
         }
 

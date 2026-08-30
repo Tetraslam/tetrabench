@@ -888,3 +888,21 @@ The preceding E-083 count is superseded by nine passing Docker tests. The added 
 Provenance: five additional fake-upstream top-level modality regressions and repeated focused non-Docker validation.
 
 The E-083 non-Docker count is superseded by 882. The added cases explicitly reject Responses `modalities`, `audio`, and `prediction`, plus Chat `modalities` and `audio`, before upstream forwarding. The nine-test Docker selection remains passing from the preceding correction.
+
+## 2026-08-30T10:46:54-07:00: E-083 committed calibration findings
+
+Provenance: user-provided post-commit calibration findings. Implementation and validation are pending. No gateway or model call is authorized.
+
+Authorization must check heartbeat lease expiry atomically with bearer-token acceptance under the broker state lock. Exact or later expiry immediately revokes token, probe, parent-key, and in-flight upstream authority; the request rejects without relying on the watchdog. A heartbeat arriving after expiry cannot renew authority. Concurrent authorize-versus-expiry evidence must permit no post-expiry acceptance.
+
+Harbor `main` immutable-config admission must reject every Docker port surface: any `Config.ExposedPorts`, `HostConfig.PortBindings`, `PublishAllPorts`, or runtime host-published/listening port representation. The fresh attempt bridge remains calibration-internal transport only and publishes no host port. Adversarial inspect fixtures and the full fake, Docker, security, package, and hosted-CI validation remain pending.
+
+## 2026-08-30T11:07:00-07:00: E-084 lease and port-surface validation
+
+Provenance: focused fake-broker tests, full non-Docker and real-Docker suites, direct Docker residue inspection, and complete local CI/security/package parity. No gateway or model call occurred.
+
+`BrokerState.authorize` now reads monotonic time, checks the attempt deadline and heartbeat lease, invalidates authority, and decides bearer acceptance under one lock. Equality is expired. Invalidation clears attempt and probe tokens plus the parent key, closes registered upstreams, and sets the sidecar shutdown event so listener/process teardown starts without watchdog polling. Heartbeat, request admission, and upstream registration repeat the expiry boundary, so delayed renewal and forwarding fail closed. The exact-boundary test proved upstream closure and shutdown signaling; eight synchronized authorizers at expiry produced zero acceptance.
+
+Immutable Harbor `main` inspection now rejects nonempty `Config.ExposedPorts`, `HostConfig.PortBindings`, and runtime `NetworkSettings.Ports`, and requires `HostConfig.PublishAllPorts` to be exact false. Four independent inspect adversaries cover those surfaces before activation. The existing real sidecar and Harbor `compose up --wait` tests passed with internal-only attempt networking and no host-published port.
+
+The focused fake suite passed 145 tests. The full selections passed 888 non-Docker and nine Docker tests, with no owned calibration container or network remaining. Lock/sync, Ruff check/format, ty, Bandit, actionlint, wheel/sdist build, isolated locked-wheel smoke, all-groups pip-audit, `git diff --check`, and redacted full-history Gitleaks over 32 commits passed. Hosted CI remains pending.

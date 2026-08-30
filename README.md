@@ -75,12 +75,14 @@ path is `environment/docker-compose.yaml`. It builds the committed main
 Dockerfile and seed and attaches `main` to the exact external attempt network.
 Candidate and overlay manifests are retained separately; Harbor's native task
 digest includes the overlay. Inspection rejects host namespaces, privilege,
-added capabilities, devices, weakened security options, runtime sockets, and
-mounts outside Harbor's explicit log/artifact binds. The Docker daemon and its
-root-equivalent operator remain trusted; unrelated host containers are not
-security evidence. After activation, a host heartbeat updates the anonymous pipe
-at least twice per second. Loss of that lease revokes tokens, drops the parent
-key, closes the listener, and removes the `--rm` broker within five seconds.
+added capabilities, devices, weakened security options, runtime sockets, exposed
+or published ports, and mounts outside Harbor's explicit log/artifact binds. The
+Docker daemon and its root-equivalent operator remain trusted; unrelated host
+containers are not security evidence. After activation, a host heartbeat updates
+the anonymous pipe at least twice per second. Authorization treats the exact
+two-second lease boundary as expired under the token lock, immediately revokes
+tokens and parent-key authority, and signals listener shutdown. The `--rm` broker
+is absent within five seconds.
 Cleanup reconciles exact random names and labels regardless of create-call
 outcomes, reaps the attach client, and proves no active authority or owned
 resource remains. A dead parent may leave an inert network; the next startup's

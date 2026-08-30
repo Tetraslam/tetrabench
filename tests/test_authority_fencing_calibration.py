@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import dataclasses
 import http.client
 import json
@@ -1461,6 +1462,81 @@ def test_attempt_token_is_inactive_until_probe_then_activation_and_lease() -> No
     assert state.parent_key == ""
 
 
+def test_authorize_at_exact_lease_expiry_revokes_all_authority(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    shutdown = threading.Event()
+    state = calibration.BrokerState(
+        parent_key="parent",
+        token="attempt-token-0123456789-abcdefghijklmnop",
+        probe_token="probe-token",
+        model="model",
+        max_input_tokens=100,
+        deadline=1_000,
+        ledger=calibration.SpendLedger(),
+        shutdown_event=shutdown,
+    )
+    state.last_heartbeat = 100 - calibration.HEARTBEAT_LEASE_SECONDS
+
+    class Upstream:
+        closed = False
+
+        def close(self) -> None:
+            self.closed = True
+
+    upstream = Upstream()
+    state.upstreams.add(cast(Any, upstream))
+    monkeypatch.setattr(calibration.time, "monotonic", lambda: 100)
+
+    with pytest.raises(PermissionError, match="authorization rejected"):
+        state.authorize(probe_headers("attempt-token-0123456789-abcdefghijklmnop"))
+    assert state.active is False
+    assert state.parent_key == ""
+    assert upstream.closed is True
+    assert shutdown.is_set()
+    with pytest.raises(PermissionError, match="heartbeat rejected"):
+        state.heartbeat((1, 2))
+
+
+def test_concurrent_authorize_vs_exact_expiry_accepts_nothing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    token = "attempt-token-0123456789-abcdefghijklmnop"
+    state = calibration.BrokerState(
+        parent_key="parent",
+        token=token,
+        probe_token=None,
+        model="model",
+        max_input_tokens=100,
+        deadline=1_000,
+        ledger=calibration.SpendLedger(),
+    )
+    state.last_heartbeat = 100 - calibration.HEARTBEAT_LEASE_SECONDS
+    monkeypatch.setattr(calibration.time, "monotonic", lambda: 100)
+    barrier = threading.Barrier(9)
+    accepted: list[bool] = []
+
+    def authorize() -> None:
+        barrier.wait()
+        try:
+            state.authorize(probe_headers(token))
+        except PermissionError:
+            accepted.append(False)
+        else:
+            accepted.append(True)
+
+    threads = [threading.Thread(target=authorize) for _ in range(8)]
+    for thread in threads:
+        thread.start()
+    barrier.wait()
+    for thread in threads:
+        thread.join(timeout=2)
+        assert not thread.is_alive()
+    assert accepted == [False] * 8
+    assert state.active is False
+    assert state.parent_key == ""
+
+
 def test_create_disconnect_still_reconciles_exact_owned_resources(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1616,6 +1692,95 @@ def _docker_sidecar(
         budget_cap=Decimal("1"),
         fake_response_cost=Decimal("0.125"),
     )
+
+
+def _main_inspect_document(
+    sidecar: calibration.DockerBrokerSidecar, output: Path
+) -> dict[str, Any]:
+    labels = {
+        **sidecar.names.role_labels("main"),
+        "com.docker.compose.service": "main",
+        "org.tetrabench.calibration.candidate-manifest": "0" * 64,
+    }
+    return {
+        "Config": {
+            "ExposedPorts": None,
+            "Image": "python:3.12-alpine",
+            "Labels": labels,
+        },
+        "HostConfig": {
+            "CapAdd": None,
+            "DeviceRequests": [],
+            "Devices": [],
+            "IpcMode": "private",
+            "NetworkMode": sidecar.names.network,
+            "PidMode": "",
+            "PortBindings": {},
+            "Privileged": False,
+            "PublishAllPorts": False,
+            "SecurityOpt": ["no-new-privileges"],
+        },
+        "Id": "main-container-id",
+        "Image": "sha256:" + "1" * 64,
+        "Mounts": [
+            {
+                "Destination": f"/logs/{name}",
+                "Source": str(output / name),
+                "Type": "bind",
+            }
+            for name in ("agent", "verifier", "artifacts")
+        ],
+        "NetworkSettings": {
+            "Networks": {sidecar.names.network: {}},
+            "Ports": {},
+        },
+    }
+
+
+@pytest.mark.parametrize(
+    ("section", "field", "value"),
+    [
+        ("Config", "ExposedPorts", {"62017/tcp": {}}),
+        (
+            "HostConfig",
+            "PortBindings",
+            {"62017/tcp": [{"HostIp": "127.0.0.1", "HostPort": "62017"}]},
+        ),
+        ("HostConfig", "PublishAllPorts", True),
+        (
+            "NetworkSettings",
+            "Ports",
+            {"62017/tcp": [{"HostIp": "0.0.0.0", "HostPort": "62017"}]},
+        ),
+    ],
+)
+def test_main_inspect_rejects_every_port_publication_surface(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    section: str,
+    field: str,
+    value: Any,
+) -> None:
+    sidecar = _docker_sidecar(tmp_path)
+    output = tmp_path / "output"
+    for name in ("agent", "verifier", "artifacts"):
+        (output / name).mkdir(parents=True, exist_ok=True)
+    inspected = copy.deepcopy(_main_inspect_document(sidecar, output))
+    inspected[section][field] = value
+    monkeypatch.setattr(
+        calibration,
+        "_inspect_one",
+        lambda kind, name: (
+            {"Id": inspected["Image"]}
+            if kind == "image" and name == inspected["Image"]
+            else (_ for _ in ()).throw(AssertionError("unexpected inspect"))
+        ),
+    )
+    authority = calibration.DockerMainAuthority(
+        sidecar.names, sidecar.parent_key, output, sidecar, "0" * 64
+    )
+    with pytest.raises(RuntimeError, match="published port rejected"):
+        authority._validate_main(inspected)
 
 
 @pytest.mark.docker

@@ -330,9 +330,12 @@ external network, adds unique labels and an activation healthcheck, and remains
 part of native task identity. The attempt token starts inactive. Harbor's native
 `compose up --wait` cannot finish until the runner discovers the exact `main`,
 rejects privileged or host-integrated immutable config, records its config
-digest, and activates through the private broker pipe. A post-activation
-half-second heartbeat leases authority; loss revokes and removes the broker
-within five seconds. Final cleanup reconciles exact names and labels and proves
+digest, rejects every exposed or published Docker port surface, and activates
+through the private broker pipe. A post-activation half-second heartbeat leases
+authority. Authorization checks that lease under the token lock, treats equality
+as expired, revokes parent-key authority immediately, and signals listener
+shutdown without waiting for watchdog polling. The broker is absent within five
+seconds. Final cleanup reconciles exact names and labels and proves
 authority and owned resources absent. Docker daemon/root is trusted. Network
 peers and unrelated host containers are not containment evidence. Docker's
 reported IPAM gateway and `Internal` value are recorded as topology only;
