@@ -938,3 +938,9 @@ The first real calibration reached authenticated model-info pricing preflight, t
 The model-info control-plane read now has a separate named 4 MiB maximum and reads at most that cap plus one byte. It rejects declared or streamed overflow, duplicate or malformed Content-Length, conflicting transfer framing, truncation, malformed JSON, ambiguous required groups, invalid limits, and rates above the fixed hard ceilings. A valid document above 2 MiB with a bounded irrelevant row passes, while the retained canonical pricing snapshot still contains only the exact target and alternate profiles. The independent 64 MiB model-completion response cap is unchanged.
 
 All 160 calibration tests, 900 non-Docker tests, and nine Docker tests passed. `uv lock --check`, Ruff check/format, ty, Bandit, actionlint, wheel/sdist build, isolated locked-wheel installation and metadata/content smoke, all-groups pip-audit, `git diff --check`, redacted Gitleaks over 35 commits, and Docker residue inspection passed. No owned calibration container or network remained. Hosted CI remains pending.
+
+## 2026-08-30T12:38:32-07:00: E-086 hosted validation
+
+Provenance: GitHub Actions push run `33331034746` for implementation commit `586ebc26827bacf4553d9a715f8a34d5ea552718`.
+
+The Python 3.12 job passed lock checking, locked installation, lint, format, type checking, Bandit, Docker availability, all nine required Docker tests, all 900 non-Docker tests, package build, isolated-wheel smoke, and the complete dependency audit. The independent full-history Gitleaks job passed. E-086 is complete, while the exact clean four-attempt calibration remains `unproven`.
