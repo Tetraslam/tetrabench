@@ -906,3 +906,19 @@ Provenance: focused fake-broker tests, full non-Docker and real-Docker suites, d
 Immutable Harbor `main` inspection now rejects nonempty `Config.ExposedPorts`, `HostConfig.PortBindings`, and runtime `NetworkSettings.Ports`, and requires `HostConfig.PublishAllPorts` to be exact false. Four independent inspect adversaries cover those surfaces before activation. The existing real sidecar and Harbor `compose up --wait` tests passed with internal-only attempt networking and no host-published port.
 
 The focused fake suite passed 145 tests. The full selections passed 888 non-Docker and nine Docker tests, with no owned calibration container or network remaining. Lock/sync, Ruff check/format, ty, Bandit, actionlint, wheel/sdist build, isolated locked-wheel smoke, all-groups pip-audit, `git diff --check`, and redacted full-history Gitleaks over 32 commits passed. Hosted CI remains pending.
+
+## 2026-08-30T11:26:07-07:00: Connected-upstream calibration contract
+
+Provenance: user-provided calibration P1 correction. Implementation and validation are pending. No gateway or model call is authorized.
+
+Before parent-key authority is obtained or used, the broker establishes the upstream TCP/TLS connection without credentials. While holding the `BrokerState` lock it registers that connected `HTTPConnection`, disables automatic reconnect, and atomically rechecks the exact active child bearer plus heartbeat/deadline lease before beginning the credentialed send. Exact expiry clears authority and closes registered sockets under the lock. A handler whose credential send has not begun cannot open or reopen upstream transport or emit Authorization after expiry.
+
+The credential-send boundary defines admitted in-flight reserved work. Expiry may close a request whose send already began; if authoritative settlement is then unavailable, the exact reservation remains retained and the ledger remains fatal. Deterministic evidence must cover expiry after child-request capture but before upstream send, socket closure, reconnect refusal, expiry during an established in-flight request, and zero post-expiry upstream request count and known cost. D-092 records this boundary.
+
+## 2026-08-30T11:46:39-07:00: E-085 connected-upstream validation
+
+Provenance: deterministic fake-upstream barriers; all calibration, non-Docker, and real-Docker tests; complete local CI/security/package parity; and direct Docker residue inspection. No gateway or model call occurred.
+
+The forwarding path now establishes TCP/TLS before parent-key access. Under the broker lock it requires a connected socket, sets `auto_open=0`, registers the connection, rechecks the exact active child bearer and monotonic lease, and begins the parent-authorized request. Expiry clears authority and closes the registered set under that lock. The pre-send expiry barrier produced zero upstream HTTP requests and zero known cost, released its unforwarded reservation, preserved fatal broker behavior, and proved a later request could not reconnect. A request whose credential send began before expiry remained admitted reserved work and settled its authoritative `$0.125` response after expiry without admitting another request.
+
+All 152 calibration tests, 892 non-Docker tests, and nine Docker tests passed. `uv lock --check`, locked all-group sync, Ruff check/format, ty, Bandit, actionlint, wheel/sdist build, isolated locked-wheel installation and metadata/content smoke, all-groups pip-audit, `git diff --check`, redacted Gitleaks over 33 commits, and Docker residue inspection passed. No owned calibration container or network remained. Hosted CI remains pending.

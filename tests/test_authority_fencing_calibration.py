@@ -10,10 +10,12 @@ import subprocess
 import sys
 import threading
 import time
+import urllib.parse
 from concurrent.futures import Future, ThreadPoolExecutor
 from contextlib import contextmanager
 from decimal import Decimal
 from email.message import Message
+from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any, cast
@@ -1496,6 +1498,161 @@ def test_authorize_at_exact_lease_expiry_revokes_all_authority(
     assert shutdown.is_set()
     with pytest.raises(PermissionError, match="heartbeat rejected"):
         state.heartbeat((1, 2))
+
+
+def test_expiry_after_capture_before_upstream_request_sends_nothing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    connected = threading.Event()
+    release_connect = threading.Event()
+
+    class GatedConnection(http.client.HTTPConnection):
+        connect_count = 0
+
+        def connect(self) -> None:
+            self.connect_count += 1
+            super().connect()
+            connected.set()
+            assert release_connect.wait(timeout=5)
+
+    created: list[GatedConnection] = []
+
+    def connection_factory(
+        parsed: urllib.parse.SplitResult,
+    ) -> http.client.HTTPConnection:
+        assert parsed.hostname is not None
+        connection = GatedConnection(parsed.hostname, parsed.port, timeout=5)
+        created.append(connection)
+        return connection
+
+    monkeypatch.setattr(calibration, "_upstream_connection", connection_factory)
+    ledger = calibration.SpendLedger()
+    with fake_upstream() as upstream:
+        with running_broker(upstream, ledger=ledger) as broker:
+            outcome: list[tuple[int, dict[str, str], bytes] | BaseException] = []
+
+            def invoke() -> None:
+                try:
+                    outcome.append(request(broker))
+                except BaseException as error:
+                    outcome.append(error)
+
+            client = threading.Thread(target=invoke)
+            client.start()
+            assert connected.wait(timeout=5)
+            assert broker.state.request_count == 1
+            broker.state.last_heartbeat = (
+                time.monotonic() - calibration.HEARTBEAT_LEASE_SECONDS
+            )
+            with pytest.raises(PermissionError, match="heartbeat rejected"):
+                broker.state.heartbeat((1, 2))
+            release_connect.set()
+            client.join(timeout=5)
+            assert not client.is_alive()
+            assert len(outcome) == 1
+            assert upstream.requests == []
+            assert ledger.cost == 0
+            assert ledger.reserved == 0
+            assert ledger.fatal == "broker upstream response invalid"
+            assert created[0].connect_count == 1
+            assert created[0].auto_open == 0
+            assert created[0].sock is None
+
+
+def test_expiry_closes_registered_socket_and_disables_reconnect() -> None:
+    token = "attempt-token-0123456789-abcdefghijklmnop"
+    with fake_upstream() as upstream:
+        state = calibration.BrokerState(
+            parent_key="parent",
+            token=token,
+            probe_token=None,
+            model="model",
+            max_input_tokens=100,
+            deadline=time.monotonic() + 30,
+            ledger=calibration.SpendLedger(),
+        )
+        connection = http.client.HTTPConnection(
+            "127.0.0.1", upstream.server_address[1], timeout=5
+        )
+        connection.connect()
+        admission = calibration.ForwardingAdmission()
+        state.send_connected_request(
+            connection,
+            probe_headers(token),
+            "/v1/responses",
+            b"{}",
+            {"Content-Type": "application/json"},
+            admission,
+        )
+        response = connection.getresponse()
+        response.read()
+        assert admission.started is True
+        assert upstream.requests[0]["authorization"] == "Bearer parent"
+        state.last_heartbeat = time.monotonic() - calibration.HEARTBEAT_LEASE_SECONDS
+        with pytest.raises(PermissionError, match="heartbeat rejected"):
+            state.heartbeat((1, 2))
+        assert connection.sock is None
+        assert connection.auto_open == 0
+        assert state.upstreams == set()
+        with pytest.raises(http.client.NotConnected):
+            connection.request("POST", "/v1/responses", body=b"{}", headers={})
+        assert len(upstream.requests) == 1
+
+
+def test_expiry_during_established_inflight_request_settles_reserved_work() -> None:
+    response_gate = threading.Event()
+    ledger = calibration.SpendLedger()
+    with fake_upstream(response_gate=response_gate) as upstream:
+        with running_broker(upstream, ledger=ledger) as broker:
+            outcome: list[tuple[int, dict[str, str], bytes] | BaseException] = []
+
+            def invoke() -> None:
+                try:
+                    outcome.append(request(broker))
+                except BaseException as error:
+                    outcome.append(error)
+
+            client = threading.Thread(target=invoke)
+            client.start()
+            deadline = time.monotonic() + 5
+            while not upstream.requests and time.monotonic() < deadline:
+                time.sleep(0.01)
+            assert len(upstream.requests) == 1
+            reserved = ledger.reserved
+            assert reserved > 0
+            broker.state.last_heartbeat = (
+                time.monotonic() - calibration.HEARTBEAT_LEASE_SECONDS
+            )
+            with pytest.raises(PermissionError, match="heartbeat rejected"):
+                broker.state.heartbeat((1, 2))
+            response_gate.set()
+            client.join(timeout=5)
+            assert not client.is_alive()
+            assert len(outcome) == 1
+            assert len(upstream.requests) == 1
+            assert ledger.cost == Decimal("0.125")
+            assert ledger.reserved == 0
+            assert ledger.fatal is None
+            deadline = time.monotonic() + 5
+            while not broker.state.records and time.monotonic() < deadline:
+                time.sleep(0.01)
+            assert broker.state.records[0].settlement == "settled"
+            assert broker.state.upstreams == set()
+
+
+def test_post_expiry_request_does_not_change_upstream_count_or_cost() -> None:
+    ledger = calibration.SpendLedger()
+    with fake_upstream() as upstream:
+        with running_broker(upstream, ledger=ledger) as broker:
+            broker.state.last_heartbeat = (
+                time.monotonic() - calibration.HEARTBEAT_LEASE_SECONDS
+            )
+            status, _headers, _body = request(broker)
+            assert status == HTTPStatus.UNAUTHORIZED
+            assert upstream.requests == []
+            assert broker.state.request_count == 0
+            assert ledger.cost == 0
+            assert ledger.reserved == 0
 
 
 def test_concurrent_authorize_vs_exact_expiry_accepts_nothing(

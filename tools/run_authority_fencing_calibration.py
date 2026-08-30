@@ -235,6 +235,11 @@ class Reservation:
     amount: Decimal
 
 
+@dataclasses.dataclass(slots=True)
+class ForwardingAdmission:
+    started: bool = False
+
+
 class SpendLedger:
     """Atomically own actual spend plus exact in-flight worst-case reservations."""
 
@@ -423,27 +428,25 @@ class BrokerState:
             )
         )
 
-    def _invalidate_locked(self) -> tuple[http.client.HTTPConnection, ...]:
+    def _invalidate_locked(self) -> None:
         self.active = False
         self._token = None
         self._probe_token = None
         self.parent_key = ""
         if self.shutdown_event is not None:
             self.shutdown_event.set()
-        return tuple(self.upstreams)
-
-    def _close_upstreams(
-        self, upstreams: tuple[http.client.HTTPConnection, ...]
-    ) -> None:
+        upstreams = tuple(self.upstreams)
+        self.upstreams.clear()
         for upstream in upstreams:
             upstream.close()
 
     def authorize(self, headers: Any) -> None:
         values = headers.get_all("Authorization", [])
-        expired_upstreams: tuple[http.client.HTTPConnection, ...] | None = None
+        expired = False
         with self.lock:
             if self._expired_locked(time.monotonic()):
-                expired_upstreams = self._invalidate_locked()
+                self._invalidate_locked()
+                expired = True
                 accepted = False
             else:
                 token = self._token
@@ -453,18 +456,18 @@ class BrokerState:
                     and len(values) == 1
                     and secrets.compare_digest(values[0], f"Bearer {token}")
                 )
-        if expired_upstreams is not None:
-            self._close_upstreams(expired_upstreams)
+        if expired:
             self.write_evidence()
         if not accepted:
             raise PermissionError("broker authorization rejected")
 
     def consume_probe(self, headers: Any) -> None:
         values = headers.get_all("Authorization", [])
-        expired_upstreams: tuple[http.client.HTTPConnection, ...] | None = None
+        expired = False
         with self.lock:
             if self._expired_locked(time.monotonic()):
-                expired_upstreams = self._invalidate_locked()
+                self._invalidate_locked()
+                expired = True
                 accepted = False
             else:
                 token = self._probe_token
@@ -476,22 +479,21 @@ class BrokerState:
                 if accepted:
                     self._probe_token = None
                     self._probe_consumed = True
-        if expired_upstreams is not None:
-            self._close_upstreams(expired_upstreams)
+        if expired:
+            self.write_evidence()
         if not accepted:
-            if expired_upstreams is not None:
-                self.write_evidence()
             raise PermissionError("broker probe authorization rejected")
         self.write_evidence()
 
     def activate(self, token: str, channel_identity: tuple[int, int]) -> None:
         if len(token) < 32:
             raise ValueError("broker activation token rejected")
-        expired_upstreams: tuple[http.client.HTTPConnection, ...] | None = None
+        expired = False
         with self.lock:
             now = time.monotonic()
             if self._expired_locked(now):
-                expired_upstreams = self._invalidate_locked()
+                self._invalidate_locked()
+                expired = True
             elif self.activated or self.active or not self._probe_consumed:
                 raise RuntimeError("broker activation ordering rejected")
             else:
@@ -500,18 +502,18 @@ class BrokerState:
                 self.activated = True
                 self.last_heartbeat = now
                 self.lease_channel_identity = channel_identity
-        if expired_upstreams is not None:
-            self._close_upstreams(expired_upstreams)
+        if expired:
             self.write_evidence()
             raise PermissionError("broker activation expired")
         self.write_evidence()
 
     def heartbeat(self, channel_identity: tuple[int, int]) -> None:
-        expired_upstreams: tuple[http.client.HTTPConnection, ...] | None = None
+        expired = False
         with self.lock:
             now = time.monotonic()
             if self._expired_locked(now):
-                expired_upstreams = self._invalidate_locked()
+                self._invalidate_locked()
+                expired = True
                 accepted = False
             else:
                 accepted = bool(
@@ -521,8 +523,7 @@ class BrokerState:
                 )
                 if accepted:
                     self.last_heartbeat = now
-        if expired_upstreams is not None:
-            self._close_upstreams(expired_upstreams)
+        if expired:
             self.write_evidence()
         if not accepted:
             raise PermissionError("broker heartbeat rejected")
@@ -543,11 +544,12 @@ class BrokerState:
     ) -> tuple[int, Reservation]:
         if not self.semaphore.acquire(blocking=False):
             raise BlockingIOError("broker concurrency limit reached")
-        expired_upstreams: tuple[http.client.HTTPConnection, ...] | None = None
+        expired = False
         try:
             with self.lock:
                 if self._expired_locked(time.monotonic()):
-                    expired_upstreams = self._invalidate_locked()
+                    self._invalidate_locked()
+                    expired = True
                     raise PermissionError("broker attempt expired")
                 if not self.active:
                     raise PermissionError("broker attempt expired")
@@ -566,8 +568,7 @@ class BrokerState:
             return ordinal, reservation
         except BaseException:
             self.semaphore.release()
-            if expired_upstreams is not None:
-                self._close_upstreams(expired_upstreams)
+            if expired:
                 self.write_evidence()
             raise
 
@@ -591,27 +592,57 @@ class BrokerState:
 
     def invalidate(self) -> None:
         with self.lock:
-            upstreams = self._invalidate_locked()
-        self._close_upstreams(upstreams)
+            self._invalidate_locked()
         self.write_evidence()
 
-    def register_upstream(self, upstream: http.client.HTTPConnection) -> str:
-        expired_upstreams: tuple[http.client.HTTPConnection, ...] | None = None
+    def send_connected_request(
+        self,
+        upstream: http.client.HTTPConnection,
+        child_headers: Any,
+        endpoint: str,
+        body: bytes,
+        forwarded_headers: dict[str, str],
+        admission: ForwardingAdmission,
+    ) -> None:
+        expired = False
         with self.lock:
+            if upstream.sock is None:
+                raise RuntimeError("upstream is not connected")
+            upstream.auto_open = 0
+            self.upstreams.add(upstream)
             if self._expired_locked(time.monotonic()):
-                expired_upstreams = self._invalidate_locked()
-                parent_key = ""
-            elif not self.active:
-                parent_key = ""
+                self._invalidate_locked()
+                expired = True
+                accepted = False
             else:
-                self.upstreams.add(upstream)
+                values = child_headers.get_all("Authorization", [])
+                token = self._token
+                accepted = bool(
+                    self.active
+                    and token is not None
+                    and len(values) == 1
+                    and secrets.compare_digest(values[0], f"Bearer {token}")
+                )
+            if accepted:
                 parent_key = self.parent_key
-        if expired_upstreams is not None:
-            self._close_upstreams(expired_upstreams)
+                admission.started = True
+                upstream.request(
+                    "POST",
+                    endpoint,
+                    body=body,
+                    headers={
+                        **forwarded_headers,
+                        "Authorization": f"Bearer {parent_key}",
+                        "Content-Length": str(len(body)),
+                    },
+                )
+            else:
+                self.upstreams.discard(upstream)
+                upstream.close()
+        if expired:
             self.write_evidence()
-        if not parent_key:
+        if not accepted:
             raise PermissionError("broker attempt expired")
-        return parent_key
 
     def unregister_upstream(self, upstream: http.client.HTTPConnection) -> None:
         with self.lock:
@@ -1317,17 +1348,35 @@ def _validate_request(
     return parsed.path, data, _reservation_for_body(data), content_type
 
 
-def _forward_headers(
-    handler: BaseHTTPRequestHandler, parent_key: str
-) -> dict[str, str]:
+def _forward_headers(handler: BaseHTTPRequestHandler) -> dict[str, str]:
     headers = {
-        "Authorization": f"Bearer {parent_key}",
         "Content-Type": handler.headers.get("Content-Type", "application/json"),
         "Accept": handler.headers.get("Accept", "application/json"),
     }
     if value := handler.headers.get("User-Agent"):
         headers["User-Agent"] = value[:256]
     return headers
+
+
+def _upstream_connection(
+    parsed: urllib.parse.SplitResult,
+) -> http.client.HTTPConnection:
+    if parsed.hostname is None:
+        raise ValueError("upstream host is missing")
+    if parsed.scheme == "https":
+        return http.client.HTTPSConnection(
+            parsed.hostname,
+            parsed.port,
+            timeout=BACKPRESSURE_TIMEOUT_SECONDS,
+            context=ssl.create_default_context(),
+        )
+    if parsed.scheme == "http":
+        return http.client.HTTPConnection(
+            parsed.hostname,
+            parsed.port,
+            timeout=BACKPRESSURE_TIMEOUT_SECONDS,
+        )
+    raise ValueError("upstream scheme rejected")
 
 
 class CalibrationBrokerHandler(BaseHTTPRequestHandler):
@@ -1425,6 +1474,7 @@ class CalibrationBrokerHandler(BaseHTTPRequestHandler):
         settlement_finalized = False
         settlement = "unforwarded"
         response: http.client.HTTPResponse | None = None
+        forwarding = ForwardingAdmission()
         try:
             if state.fake_response_cost is not None:
                 response_body = b'{"ok":true}'
@@ -1436,34 +1486,17 @@ class CalibrationBrokerHandler(BaseHTTPRequestHandler):
                 settlement_finalized = True
             else:
                 parsed = urllib.parse.urlsplit(state.upstream_url)
-                if parsed.hostname is None:
-                    raise ValueError("upstream host is missing")
-                if parsed.scheme == "https":
-                    upstream = http.client.HTTPSConnection(
-                        parsed.hostname,
-                        parsed.port,
-                        timeout=BACKPRESSURE_TIMEOUT_SECONDS,
-                        context=ssl.create_default_context(),
-                    )
-                elif parsed.scheme == "http":
-                    upstream = http.client.HTTPConnection(
-                        parsed.hostname,
-                        parsed.port,
-                        timeout=BACKPRESSURE_TIMEOUT_SECONDS,
-                    )
-                else:
-                    raise ValueError("upstream scheme rejected")
-                parent_key = state.register_upstream(upstream)
-                potentially_paid = True
-                upstream.request(
-                    "POST",
+                upstream = _upstream_connection(parsed)
+                upstream.connect()
+                state.send_connected_request(
+                    upstream,
+                    self.headers,
                     endpoint,
-                    body=body,
-                    headers={
-                        **_forward_headers(self, parent_key),
-                        "Content-Length": str(len(body)),
-                    },
+                    body,
+                    _forward_headers(self),
+                    forwarding,
                 )
+                potentially_paid = forwarding.started
                 response = upstream.getresponse()
                 status = response.status
                 cost = _parse_cost(response.headers)
@@ -1502,6 +1535,7 @@ class CalibrationBrokerHandler(BaseHTTPRequestHandler):
             except (TimeoutError, BrokenPipeError, ConnectionResetError):
                 disconnected = True
         except (OSError, http.client.HTTPException, RuntimeError, ValueError):
+            potentially_paid = potentially_paid or forwarding.started
             if reservation is not None and not settlement_finalized:
                 try:
                     if cost is not None:

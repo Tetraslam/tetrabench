@@ -82,7 +82,13 @@ containers are not security evidence. After activation, a host heartbeat updates
 the anonymous pipe at least twice per second. Authorization treats the exact
 two-second lease boundary as expired under the token lock, immediately revokes
 tokens and parent-key authority, and signals listener shutdown. The `--rm` broker
-is absent within five seconds.
+is absent within five seconds. Forwarding first establishes TCP/TLS without
+credentials. Under the authority lock, the broker registers that connected
+socket, disables automatic reconnect, rechecks the active child bearer and
+lease, and begins the parent-authorized request. Expiry closes registered
+sockets. Requests whose credential send already began remain reserved in-flight
+work; later handlers cannot open or reopen upstream transport or send
+Authorization.
 Cleanup reconciles exact random names and labels regardless of create-call
 outcomes, reaps the attach client, and proves no active authority or owned
 resource remains. A dead parent may leave an inert network; the next startup's
