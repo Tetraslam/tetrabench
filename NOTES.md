@@ -928,3 +928,13 @@ All 152 calibration tests, 892 non-Docker tests, and nine Docker tests passed. `
 Provenance: GitHub Actions push run `33329238829` for commit `70124d51f13659a5156f25031619703903c34c46`.
 
 The Python 3.12 job passed lock checking, locked installation, lint, format, type checking, Bandit, Docker availability, all nine required Docker tests, all 892 non-Docker tests, package build, isolated-wheel smoke, and the complete dependency audit. The independent full-history Gitleaks job passed. E-085 is complete.
+
+## 2026-08-30T12:28:12-07:00: E-086 model-info preflight correction
+
+Provenance: user-provided first real calibration outcome from clean commit `02452fa0f4262363e44484549ebb58160f94d784`; local fake-upstream framing and scale regressions; complete non-Docker and real-Docker suites; and local lint, type, security, package, dependency, diff, secret-scan, and Docker-residue checks. No gateway or model call occurred during this correction or its validation.
+
+The first real calibration reached authenticated model-info pricing preflight, then stopped before pricing completion because the 2,231,684-byte response exceeded the old 1 MiB cap. It produced no report, started no attempts, incurred no spend, and passed cleanup. This is a failed preflight, not completed calibration; the clean exact-four calibration remains `unproven`.
+
+The model-info control-plane read now has a separate named 4 MiB maximum and reads at most that cap plus one byte. It rejects declared or streamed overflow, duplicate or malformed Content-Length, conflicting transfer framing, truncation, malformed JSON, ambiguous required groups, invalid limits, and rates above the fixed hard ceilings. A valid document above 2 MiB with a bounded irrelevant row passes, while the retained canonical pricing snapshot still contains only the exact target and alternate profiles. The independent 64 MiB model-completion response cap is unchanged.
+
+All 160 calibration tests, 900 non-Docker tests, and nine Docker tests passed. `uv lock --check`, Ruff check/format, ty, Bandit, actionlint, wheel/sdist build, isolated locked-wheel installation and metadata/content smoke, all-groups pip-audit, `git diff --check`, redacted Gitleaks over 35 commits, and Docker residue inspection passed. No owned calibration container or network remained. Hosted CI remains pending.

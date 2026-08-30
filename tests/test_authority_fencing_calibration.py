@@ -35,6 +35,8 @@ class FakeUpstreamServer(ThreadingHTTPServer):
     body: bytes
     response_headers: list[tuple[str, str]]
     response_gate: threading.Event | None
+    include_content_length: bool
+    close_response: bool
 
 
 class FakeUpstreamHandler(BaseHTTPRequestHandler):
@@ -63,9 +65,16 @@ class FakeUpstreamHandler(BaseHTTPRequestHandler):
         self.send_response(status)
         for name, value in server.response_headers:
             self.send_header(name, value)
-        self.send_header("Content-Length", str(len(response)))
+        if server.include_content_length:
+            self.send_header("Content-Length", str(len(response)))
+        if server.close_response:
+            self.send_header("Connection", "close")
+            self.close_connection = True
         self.end_headers()
-        self.wfile.write(response)
+        try:
+            self.wfile.write(response)
+        except (BrokenPipeError, ConnectionResetError):
+            pass
 
     def do_GET(self) -> None:
         server = self.server
@@ -81,9 +90,16 @@ class FakeUpstreamHandler(BaseHTTPRequestHandler):
         self.send_response(server.status)
         for name, value in server.response_headers:
             self.send_header(name, value)
-        self.send_header("Content-Length", str(len(response)))
+        if server.include_content_length:
+            self.send_header("Content-Length", str(len(response)))
+        if server.close_response:
+            self.send_header("Connection", "close")
+            self.close_connection = True
         self.end_headers()
-        self.wfile.write(response)
+        try:
+            self.wfile.write(response)
+        except (BrokenPipeError, ConnectionResetError):
+            pass
 
 
 @contextmanager
@@ -93,6 +109,8 @@ def fake_upstream(
     body: bytes = b'{"ok":true}',
     status: int = 200,
     response_gate: threading.Event | None = None,
+    include_content_length: bool = True,
+    close_response: bool = False,
 ):
     server = FakeUpstreamServer(("127.0.0.1", 0), FakeUpstreamHandler)
     server.requests = []
@@ -103,6 +121,8 @@ def fake_upstream(
         ("X-Litellm-Response-Cost", "0.125"),
     ]
     server.response_gate = response_gate
+    server.include_content_length = include_content_length
+    server.close_response = close_response
     thread = threading.Thread(target=server.serve_forever)
     thread.start()
     try:
@@ -278,6 +298,108 @@ def test_authenticated_model_info_selects_exact_groups_and_redacts_snapshot() ->
     serialized = json.dumps(dataclasses.asdict(snapshot))
     assert "secret" not in serialized
     assert len(snapshot.sha256) == 64
+
+
+def test_model_info_accepts_large_document_and_discards_irrelevant_rows() -> None:
+    document = pricing_document()
+    document["data"].append(
+        {
+            "model_name": "irrelevant-large-row",
+            "bounded_padding": "x" * ((2 << 20) + 1),
+        }
+    )
+    body = json.dumps(document).encode()
+    assert 2 << 20 < len(body) <= calibration.MODEL_INFO_MAX_RESPONSE_BYTES
+    with fake_upstream(body=body) as upstream:
+        snapshot = calibration.query_model_pricing(
+            parent_key="parent-secret",
+            upstream_url=f"http://127.0.0.1:{upstream.server_address[1]}",
+        )
+    assert len(snapshot.models) == 2
+    assert [item["model_group"] for item in snapshot.models] == [
+        model for _profile, model in calibration.PROFILES
+    ]
+    assert all(
+        set(item)
+        == {
+            "cache_creation_input_token_cost",
+            "cache_read_input_token_cost",
+            "input_cost_per_token",
+            "max_input_tokens",
+            "max_output_tokens",
+            "model_group",
+            "output_cost_per_token",
+        }
+        for item in snapshot.models
+    )
+
+
+@pytest.mark.parametrize("include_content_length", [True, False])
+def test_model_info_rejects_response_above_four_mib(
+    include_content_length: bool,
+) -> None:
+    body = b"x" * (calibration.MODEL_INFO_MAX_RESPONSE_BYTES + 1)
+    with fake_upstream(
+        body=body,
+        include_content_length=include_content_length,
+        close_response=not include_content_length,
+    ) as upstream:
+        with pytest.raises(ValueError, match="exceeds limit"):
+            calibration.query_model_pricing(
+                parent_key="parent-secret",
+                upstream_url=f"http://127.0.0.1:{upstream.server_address[1]}",
+            )
+
+
+@pytest.mark.parametrize(
+    "headers",
+    [
+        [("Content-Length", "2")],
+        [("Content-Length", "malformed")],
+        [
+            (
+                "Content-Length",
+                str(calibration.MODEL_INFO_MAX_RESPONSE_BYTES + 1),
+            )
+        ],
+        [("Content-Length", "2"), ("Transfer-Encoding", "chunked")],
+    ],
+)
+def test_model_info_rejects_ambiguous_malformed_or_oversized_content_length(
+    headers: list[tuple[str, str]],
+) -> None:
+    include_content_length = headers == [("Content-Length", "2")]
+    with fake_upstream(
+        headers=headers,
+        body=b"{}",
+        include_content_length=include_content_length,
+        close_response=True,
+    ) as upstream:
+        with pytest.raises(ValueError, match=r"framing|exceeds limit"):
+            calibration.query_model_pricing(
+                parent_key="parent-secret",
+                upstream_url=f"http://127.0.0.1:{upstream.server_address[1]}",
+            )
+
+
+def test_model_info_rejects_truncated_or_malformed_document() -> None:
+    with fake_upstream(
+        headers=[("Content-Length", "3")],
+        body=b"{}",
+        include_content_length=False,
+        close_response=True,
+    ) as upstream:
+        with pytest.raises(ValueError, match="truncated"):
+            calibration.query_model_pricing(
+                parent_key="parent-secret",
+                upstream_url=f"http://127.0.0.1:{upstream.server_address[1]}",
+            )
+    with fake_upstream(body=b"not-json") as upstream:
+        with pytest.raises(ValueError, match="invalid JSON"):
+            calibration.query_model_pricing(
+                parent_key="parent-secret",
+                upstream_url=f"http://127.0.0.1:{upstream.server_address[1]}",
+            )
 
 
 @pytest.mark.parametrize(

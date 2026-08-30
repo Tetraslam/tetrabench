@@ -130,6 +130,7 @@ BROKER_IMAGE = (
 MAX_BODY_BYTES = 512 << 10
 MAX_HEADER_BYTES = 16 << 10
 MAX_RESPONSE_BYTES = 64 << 20
+MODEL_INFO_MAX_RESPONSE_BYTES = 4 << 20
 BACKPRESSURE_TIMEOUT_SECONDS = 30
 HEADER_READ_TIMEOUT_SECONDS = 2
 ALLOWED_PATHS = frozenset({"/v1/chat/completions", "/v1/responses"})
@@ -848,8 +849,34 @@ def query_model_pricing(
             },
         )
         response = connection.getresponse()
-        body = response.read((1 << 20) + 1)
-        if response.status != HTTPStatus.OK or len(body) > 1 << 20:
+        content_lengths = response.headers.get_all("Content-Length", [])
+        transfer_encodings = response.headers.get_all("Transfer-Encoding", [])
+        if (
+            len(content_lengths) > 1
+            or (content_lengths and not content_lengths[0].isdigit())
+            or (content_lengths and transfer_encodings)
+            or len(transfer_encodings) > 1
+            or (
+                transfer_encodings
+                and transfer_encodings[0].strip().lower() != "chunked"
+            )
+        ):
+            raise ValueError("gateway model-info response framing is ambiguous")
+        declared_length = int(content_lengths[0]) if content_lengths else None
+        if (
+            declared_length is not None
+            and declared_length > MODEL_INFO_MAX_RESPONSE_BYTES
+        ):
+            raise ValueError("gateway model-info response exceeds limit")
+        try:
+            body = response.read(MODEL_INFO_MAX_RESPONSE_BYTES + 1)
+        except (OSError, http.client.HTTPException) as error:
+            raise ValueError("gateway model-info response is truncated") from error
+        if len(body) > MODEL_INFO_MAX_RESPONSE_BYTES:
+            raise ValueError("gateway model-info response exceeds limit")
+        if declared_length is not None and len(body) != declared_length:
+            raise ValueError("gateway model-info response is truncated")
+        if response.status != HTTPStatus.OK:
             raise ValueError("gateway model-info request failed")
         return _validate_pricing_document(strict_json(body))
     finally:
