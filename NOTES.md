@@ -922,3 +922,9 @@ Provenance: deterministic fake-upstream barriers; all calibration, non-Docker, a
 The forwarding path now establishes TCP/TLS before parent-key access. Under the broker lock it requires a connected socket, sets `auto_open=0`, registers the connection, rechecks the exact active child bearer and monotonic lease, and begins the parent-authorized request. Expiry clears authority and closes the registered set under that lock. The pre-send expiry barrier produced zero upstream HTTP requests and zero known cost, released its unforwarded reservation, preserved fatal broker behavior, and proved a later request could not reconnect. A request whose credential send began before expiry remained admitted reserved work and settled its authoritative `$0.125` response after expiry without admitting another request.
 
 All 152 calibration tests, 892 non-Docker tests, and nine Docker tests passed. `uv lock --check`, locked all-group sync, Ruff check/format, ty, Bandit, actionlint, wheel/sdist build, isolated locked-wheel installation and metadata/content smoke, all-groups pip-audit, `git diff --check`, redacted Gitleaks over 33 commits, and Docker residue inspection passed. No owned calibration container or network remained. Hosted CI remains pending.
+
+## 2026-08-30T11:59:58-07:00: E-085 hosted validation
+
+Provenance: GitHub Actions push run `33329238829` for commit `70124d51f13659a5156f25031619703903c34c46`.
+
+The Python 3.12 job passed lock checking, locked installation, lint, format, type checking, Bandit, Docker availability, all nine required Docker tests, all 892 non-Docker tests, package build, isolated-wheel smoke, and the complete dependency audit. The independent full-history Gitleaks job passed. E-085 is complete.
