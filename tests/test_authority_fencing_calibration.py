@@ -2068,8 +2068,169 @@ def test_failed_native_output_retains_only_structure_digests_and_classes(
     assert str(output) not in retained
 
 
-def test_run_attempt_reads_zero_request_ledger_after_cli_failure_and_cleanup(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+@pytest.mark.parametrize(
+    "failed_phase",
+    [
+        "sidecar_start",
+        "topology_probe",
+        "cli_spawn",
+        "main_discovery",
+        "main_config_validation",
+        "broker_activation",
+        "heartbeat_start",
+    ],
+)
+def test_each_preactivation_phase_retains_only_safe_stage_authority(
+    failed_phase: str,
+) -> None:
+    attempt = calibration._started_attempt(
+        ordinal=1,
+        profile="target",
+        model_group="openai/gpt-5.6-sol",
+    )
+
+    class PrivateFailure(RuntimeError):
+        pass
+
+    for phase in calibration.ATTEMPT_PHASES:
+        if phase == failed_phase:
+            with pytest.raises(calibration.CalibrationStageError) as caught:
+                calibration._run_phase(
+                    attempt,
+                    phase,
+                    lambda: (_ for _ in ()).throw(
+                        PrivateFailure("secret message /private/path")
+                    ),
+                )
+            break
+        calibration._run_phase(attempt, phase, lambda: None)
+
+    assert caught.value.evidence == {
+        "cause_class": "PrivateFailure",
+        "failed_stage": failed_phase,
+    }
+    assert attempt["phases"]["failed_stage"] == failed_phase
+    assert [item["phase"] for item in attempt["phases"]["timeline"]] == list(
+        calibration.ATTEMPT_PHASES
+    )
+    failed = next(
+        item for item in attempt["phases"]["timeline"] if item["phase"] == failed_phase
+    )
+    assert failed == {
+        "completed": False,
+        "failed": True,
+        "phase": failed_phase,
+        "started": True,
+    }
+    retained = json.dumps(
+        {"failure": caught.value.evidence, "phases": attempt["phases"]}
+    )
+    assert "secret message" not in retained
+    assert "/private/path" not in retained
+
+
+@pytest.mark.parametrize(
+    ("returncode", "kind", "cause_class"),
+    [
+        (0, "successful_early_exit", "EarlyCommandSuccess"),
+        (7, "nonzero_return", "EarlyCommandNonzeroReturn"),
+    ],
+)
+def test_early_command_result_is_captured_before_main_discovery_failure(
+    tmp_path: Path, returncode: int, kind: str, cause_class: str
+) -> None:
+    attempt = calibration._started_attempt(
+        ordinal=1,
+        profile="target",
+        model_group="openai/gpt-5.6-sol",
+    )
+    future: Future[calibration.CommandResult] = Future()
+    future.set_result(
+        calibration.CommandResult(
+            returncode=returncode,
+            stdout=b'{"schema_version":1,"outcome":"failed","reward":"0"}\n',
+            stderr=b"private stderr bytes",
+            containment={"survivors": 0},
+        )
+    )
+    authority = calibration.DockerMainAuthority(
+        calibration._docker_names("cal-early-result", 1),
+        "private-parent-key",
+        tmp_path / "output",
+        cast(Any, object()),
+        "0" * 64,
+    )
+    with pytest.raises(calibration.CalibrationStageError) as caught:
+        calibration._run_phase(
+            attempt,
+            "main_discovery",
+            lambda: authority._discover_main(future, attempt),
+        )
+    assert caught.value.evidence == {
+        "cause_class": cause_class,
+        "failed_stage": "main_discovery",
+    }
+    outcome = attempt["command_outcome"]
+    assert outcome["return_code"] == returncode
+    assert outcome["completion"] == {
+        "before_main_activation": True,
+        "exception_class": None,
+        "kind": kind,
+    }
+    assert outcome["containment"] == {"survivors": 0}
+    assert "private stderr bytes" not in json.dumps(outcome)
+
+
+@pytest.mark.parametrize(
+    ("error", "kind"),
+    [
+        (TimeoutError("private timeout"), "timeout_exception"),
+        (ValueError("private output"), "output_exception"),
+        (RuntimeError("private containment"), "containment_exception"),
+    ],
+)
+def test_early_command_exception_class_is_captured_without_content(
+    tmp_path: Path, error: BaseException, kind: str
+) -> None:
+    attempt = calibration._started_attempt(
+        ordinal=1,
+        profile="target",
+        model_group="openai/gpt-5.6-sol",
+    )
+    future: Future[calibration.CommandResult] = Future()
+    future.set_exception(error)
+    authority = calibration.DockerMainAuthority(
+        calibration._docker_names("cal-early-exception", 1),
+        "private-parent-key",
+        tmp_path / "output",
+        cast(Any, object()),
+        "0" * 64,
+    )
+    with pytest.raises(calibration.CalibrationStageError) as caught:
+        calibration._run_phase(
+            attempt,
+            "main_discovery",
+            lambda: authority._discover_main(future, attempt),
+        )
+    assert caught.value.evidence == {
+        "cause_class": type(error).__name__,
+        "failed_stage": "main_discovery",
+    }
+    outcome = attempt["command_outcome"]
+    assert outcome["status"] == "exception"
+    assert outcome["completion"] == {
+        "before_main_activation": True,
+        "exception_class": type(error).__name__,
+        "kind": kind,
+    }
+    assert str(error) not in json.dumps(outcome)
+
+
+@pytest.mark.parametrize("preactivation_failure", [False, True])
+def test_run_attempt_captures_result_before_zero_request_ledger_after_cleanup(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    preactivation_failure: bool,
 ) -> None:
     pricing = calibration._validate_pricing_document(pricing_document())
     read_minimums: list[int] = []
@@ -2105,7 +2266,23 @@ def test_run_attempt_reads_zero_request_ledger_after_cli_failure_and_cleanup(
         def __init__(self, *_args: Any) -> None:
             pass
 
-        def wait_inspect_activate(self, _future: Future[Any]) -> dict[str, Any]:
+        def wait_inspect_activate(
+            self, future: Future[Any], attempt: dict[str, Any]
+        ) -> dict[str, Any]:
+            if preactivation_failure:
+
+                def fail_discovery() -> None:
+                    future.result(timeout=5)
+                    raise RuntimeError("private discovery failure")
+
+                calibration._run_phase(attempt, "main_discovery", fail_discovery)
+            for phase in (
+                "main_discovery",
+                "main_config_validation",
+                "broker_activation",
+                "heartbeat_start",
+            ):
+                calibration._run_phase(attempt, phase, lambda: None)
             return {}
 
     def command(*_args: Any, **_kwargs: Any) -> calibration.CommandResult:
@@ -2134,7 +2311,7 @@ def test_run_attempt_reads_zero_request_ledger_after_cli_failure_and_cleanup(
         profile="target",
         model_group="openai/gpt-5.6-sol",
     )
-    with pytest.raises(calibration.AttemptFailure) as caught:
+    with pytest.raises(calibration.CalibrationStageError) as caught:
         calibration._run_attempt(
             ordinal=1,
             profile="target",
@@ -2151,11 +2328,18 @@ def test_run_attempt_reads_zero_request_ledger_after_cli_failure_and_cleanup(
             remaining_budget=Decimal("1"),
             attempt_record=attempt,
         )
-    assert caught.value.evidence["stage"] == "agent_install_or_execution"
+    assert caught.value.evidence == (
+        {"cause_class": "RuntimeError", "failed_stage": "main_discovery"}
+        if preactivation_failure
+        else {"cause_class": "RuntimeError", "failed_stage": "cli_wait"}
+    )
     assert read_minimums == [0]
     assert cleanup_calls == 1
     assert attempt["broker"]["request_count"] == 0
     assert attempt["command_outcome"]["return_code"] == 9
+    assert attempt["command_outcome"]["completion"]["before_main_activation"] is (
+        preactivation_failure
+    )
     assert "private" not in json.dumps(attempt)
 
 
@@ -2322,9 +2506,16 @@ def test_sidecar_network_probe_simulated_client_inspect_and_cleanup(
         )
         calibration._docker(["start", main])
         pending: Future[calibration.CommandResult] = Future()
+        attempt = calibration._started_attempt(
+            ordinal=1,
+            profile="target",
+            model_group="openai/gpt-5.6-sol",
+        )
+        for phase in ("sidecar_start", "topology_probe", "cli_spawn"):
+            calibration._run_phase(attempt, phase, lambda: None)
         activation = calibration.DockerMainAuthority(
             sidecar.names, sidecar.parent_key, output, sidecar, "0" * 64
-        ).wait_inspect_activate(pending)
+        ).wait_inspect_activate(pending, attempt)
         assert activation["boundary"].startswith("immutable-docker-config")
         assert len(activation["config_sha256"]) == 64
         assert activation["activation"]["completed_before_harbor_healthcheck"] is True
@@ -2538,13 +2729,20 @@ def test_harbor_main_is_inspected_and_activated_before_agent_setup(
             env=environment,
             timeout=180,
         )
+        attempt = calibration._started_attempt(
+            ordinal=1,
+            profile="target",
+            model_group="openai/gpt-5.6-sol",
+        )
+        for phase in ("sidecar_start", "topology_probe", "cli_spawn"):
+            calibration._run_phase(attempt, phase, lambda: None)
         activation = calibration.DockerMainAuthority(
             sidecar.names,
             sidecar.parent_key,
             output,
             sidecar,
             overlay.candidate_manifest_sha256,
-        ).wait_inspect_activate(command)
+        ).wait_inspect_activate(command, attempt)
         result = command.result(timeout=180)
         document = json.loads(result.stdout)
         assert document["outcome"] == "succeeded"

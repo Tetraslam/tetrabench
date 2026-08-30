@@ -968,3 +968,19 @@ All 165 focused calibration tests, 908 non-Docker tests, and nine real-Docker te
 Provenance: GitHub Actions push run `33339548116` for implementation commit `267b5e748ed0cf2efbee0c4d4f1d83e5d1df7d63`.
 
 The Python 3.12 job passed lock checking, locked installation, lint, format, type checking, Bandit, Docker availability, all nine required Docker tests, all 908 non-Docker tests, package build, isolated-wheel smoke, and the complete dependency audit. The independent full-history Gitleaks job passed. E-087 is complete. No model completion occurred, and calibration remains `unproven`.
+
+## 2026-08-30T16:11:08-07:00: Third calibration diagnostic and stage-authority contract
+
+Provenance: user-provided third real calibration outcome from the clean `0c8e6c`/`53a3748`/`02452fa` diagnostic path and user-provided preactivation instrumentation contract. No gateway or model completion occurred during this implementation.
+
+The third diagnostic used deny-upstream. Authenticated pricing succeeded, then target attempt 1 failed before command return or main activation with zero broker or model requests and `$0` cost. It produced no report and left no calibration residue. The exact cause remains pending this instrumentation, so this is not calibration evidence and calibration remains `unproven`.
+
+Each attempt now tracks `sidecar_start`, `topology_probe`, `cli_spawn`, `main_discovery`, `main_config_validation`, `broker_activation`, `heartbeat_start`, `cli_wait`, `ledger_read`, `native_validation`, and `cleanup` through ordered started/completed/failed booleans. A typed stage error retains only failed phase and cause class. If the command future completes before activation, returned commands retain only bounded return code, stream sizes and digests, safe canonical fields, containment, and native structural evidence; exceptions retain only their class and bounded native structure. Request-count validation cannot replace that earlier command authority. Full local and hosted validation remain pending.
+
+## 2026-08-30T16:19:27-07:00: E-088 local validation
+
+Provenance: focused phase and early-command regressions; the complete non-Docker and real-Docker suites; package inspection; dependency audit; and local lint, type, security, workflow, diff, worktree secret-scan, and Docker-residue checks. No gateway or model completion occurred.
+
+All seven preactivation phases fail independently with exact started/completed/failed status and content-free phase/cause evidence. Early successful and nonzero command results retain bounded outcome evidence before main discovery failure; early timeout, output, and containment exceptions retain only their class and category. A preactivation failure followed by command completion captures the available `CommandResult` after containment and before the zero-minimum ledger read. Private test messages, stream bytes, and paths are absent from retained evidence.
+
+All 178 focused non-Docker calibration tests, 921 non-Docker tests, and nine real-Docker tests passed. `uv lock --check`, locked all-group sync, Ruff check/format, ty, Bandit, actionlint, wheel/sdist build, isolated locked-wheel installation and metadata/content smoke, all-groups pip-audit, `git diff --check`, redacted worktree Gitleaks, and Docker residue inspection passed. Hosted CI remains pending. Calibration remains `unproven`.

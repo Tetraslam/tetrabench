@@ -354,6 +354,11 @@ performs normal authenticated pricing, then accepts and reserves one valid broke
 request, locks its endpoint, releases the reservation, and returns a fixed local
 503 before opening a completion upstream connection. It proves OpenCode
 installation, configuration, and endpoint routing at zero completion cost.
+Attempt diagnostics retain ordered boolean status for every sidecar, topology,
+CLI, main-admission, broker, heartbeat, ledger, native-validation, and cleanup
+phase. A failed phase retains only its name and cause class. A CLI result or
+exception available before main activation is captured before request-count
+validation, without raw output, messages, paths, prompts, logs, or model content.
 
 Mandatory gates:
 

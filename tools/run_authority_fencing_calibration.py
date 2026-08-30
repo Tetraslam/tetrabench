@@ -23,7 +23,7 @@ import threading
 import time
 import urllib.parse
 import warnings
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from concurrent.futures import Future, ThreadPoolExecutor
 from contextlib import suppress
 from decimal import Decimal, InvalidOperation
@@ -161,6 +161,19 @@ PROFILES = (
     ("target", "openai/gpt-5.6-sol"),
     ("alternate", "anthropic/claude-sonnet-5"),
 )
+ATTEMPT_PHASES = (
+    "sidecar_start",
+    "topology_probe",
+    "cli_spawn",
+    "main_discovery",
+    "main_config_validation",
+    "broker_activation",
+    "heartbeat_start",
+    "cli_wait",
+    "ledger_read",
+    "native_validation",
+    "cleanup",
+)
 CALIBRATION_TOOL = ROOT / "tools/run_authority_fencing_calibration.py"
 CALIBRATION_TEST = ROOT / "tests/test_authority_fencing_calibration.py"
 SOURCE_RELATIVE_PATHS = (
@@ -257,6 +270,80 @@ class AttemptFailure(RuntimeError):
             "stage": self.stage,
             "type": self.failure_type,
         }
+
+
+class CalibrationStageError(RuntimeError):
+    """A content-free attempt-stage failure safe for retained evidence."""
+
+    def __init__(self, phase: str, cause_class: str) -> None:
+        if phase not in ATTEMPT_PHASES:
+            raise ValueError("unknown calibration phase")
+        if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", cause_class):
+            raise ValueError("unsafe calibration cause class")
+        super().__init__(phase, cause_class)
+        self.phase = phase
+        self.cause_class = cause_class
+
+    @property
+    def evidence(self) -> dict[str, str]:
+        return {"cause_class": self.cause_class, "failed_stage": self.phase}
+
+
+class EarlyCommandSuccess(RuntimeError):
+    pass
+
+
+class EarlyCommandNonzeroReturn(RuntimeError):
+    pass
+
+
+def _new_phase_evidence() -> dict[str, Any]:
+    return {
+        "failed_stage": None,
+        "timeline": [
+            {
+                "completed": False,
+                "failed": False,
+                "phase": phase,
+                "started": False,
+            }
+            for phase in ATTEMPT_PHASES
+        ],
+    }
+
+
+def _phase_status(attempt: dict[str, Any], phase: str) -> dict[str, Any]:
+    phases = attempt["phases"]
+    for status in phases["timeline"]:
+        if status["phase"] == phase:
+            return status
+    raise ValueError("attempt phase evidence is incomplete")
+
+
+def _run_phase(attempt: dict[str, Any], phase: str, action: Callable[[], Any]) -> Any:
+    status = _phase_status(attempt, phase)
+    if status["started"]:
+        raise CalibrationStageError(phase, "RepeatedPhase")
+    status["started"] = True
+    try:
+        value = action()
+    except CalibrationStageError as error:
+        status["failed"] = True
+        if attempt["phases"]["failed_stage"] is None:
+            attempt["phases"]["failed_stage"] = phase
+        raise CalibrationStageError(phase, error.cause_class) from None
+    except AttemptFailure as error:
+        status["failed"] = True
+        if attempt["phases"]["failed_stage"] is None:
+            attempt["phases"]["failed_stage"] = phase
+        raise CalibrationStageError(phase, error.cause_class) from None
+    except BaseException as error:
+        status["failed"] = True
+        if attempt["phases"]["failed_stage"] is None:
+            attempt["phases"]["failed_stage"] = phase
+        raise CalibrationStageError(phase, type(error).__name__) from None
+    status["completed"] = True
+    return value
 
 
 class SpendLedger:
@@ -2033,6 +2120,12 @@ class DockerBrokerSidecar:
         if not self.activated:
             raise RuntimeError("broker activation did not complete")
 
+    def start_heartbeat(self) -> None:
+        if not self.activated:
+            raise RuntimeError("broker heartbeat requires activation")
+        if self.heartbeat_thread is not None:
+            raise RuntimeError("broker heartbeat already started")
+
         def heartbeat() -> None:
             sequence = 0
             try:
@@ -2250,13 +2343,51 @@ class DockerMainAuthority:
         self.sidecar = sidecar
         self.candidate_manifest_sha256 = candidate_manifest_sha256
 
-    def wait_inspect_activate(self, command: Future[CommandResult]) -> dict[str, Any]:
+    def wait_inspect_activate(
+        self, command: Future[CommandResult], attempt: dict[str, Any]
+    ) -> dict[str, Any]:
+        main = _run_phase(
+            attempt,
+            "main_discovery",
+            lambda: self._discover_main(command, attempt),
+        )
+        evidence = _run_phase(
+            attempt, "main_config_validation", lambda: self._validate_main(main)
+        )
+        _run_phase(attempt, "broker_activation", self.sidecar.activate)
+        _run_phase(attempt, "heartbeat_start", self.sidecar.start_heartbeat)
+        evidence["activation"] = {
+            "completed_before_harbor_healthcheck": True,
+            "control_channel": "anonymous-stdin-pipe",
+            "main_has_control_channel": False,
+        }
+        return evidence
+
+    def _discover_main(
+        self, command: Future[CommandResult], attempt: dict[str, Any]
+    ) -> dict[str, Any]:
         deadline = time.monotonic() + 300
         main: dict[str, Any] | None = None
         while time.monotonic() < deadline:
             if command.done():
-                command.result()
-                raise RuntimeError("Harbor command ended before main activation")
+                try:
+                    result = command.result()
+                except BaseException as error:
+                    attempt["command_outcome"] = _command_exception_evidence(
+                        error,
+                        self.output_root,
+                        before_main_activation=True,
+                    )
+                    raise
+                evidence, _document, _parse_status = _command_outcome_evidence(
+                    result,
+                    self.output_root,
+                    before_main_activation=True,
+                )
+                attempt["command_outcome"] = evidence
+                if result.returncode == 0:
+                    raise EarlyCommandSuccess()
+                raise EarlyCommandNonzeroReturn()
             listed = _docker(
                 [
                     "ps",
@@ -2284,17 +2415,7 @@ class DockerMainAuthority:
             time.sleep(0.1)
         if main is None:
             raise RuntimeError("Harbor main was not discoverable before activation")
-        evidence = self._validate_main(main)
-        self.sidecar.activate()
-        ledger = self.sidecar.read_ledger()
-        if ledger.get("active") is not True or ledger.get("activated") is not True:
-            raise RuntimeError("broker activation evidence is incomplete")
-        evidence["activation"] = {
-            "completed_before_harbor_healthcheck": True,
-            "control_channel": "anonymous-stdin-pipe",
-            "main_has_control_channel": False,
-        }
-        return evidence
+        return main
 
     def _validate_main(self, inspected: dict[str, Any]) -> dict[str, Any]:
         labels = _resource_labels("container", inspected)
@@ -2577,6 +2698,8 @@ def _validate_harbor_metrics(
 
 
 def _failure_evidence(error: BaseException) -> dict[str, str]:
+    if isinstance(error, CalibrationStageError):
+        return error.evidence
     if isinstance(error, AttemptFailure):
         return error.evidence
     return {
@@ -2651,7 +2774,10 @@ def _native_diagnostic(output: Path) -> dict[str, Any]:
 
 
 def _command_outcome_evidence(
-    result: CommandResult, output: Path
+    result: CommandResult,
+    output: Path,
+    *,
+    before_main_activation: bool = False,
 ) -> tuple[dict[str, Any], Any | None, str]:
     stdout_sha256 = hashlib.sha256(result.stdout).hexdigest()
     stderr_sha256 = hashlib.sha256(result.stderr).hexdigest()
@@ -2682,6 +2808,17 @@ def _command_outcome_evidence(
     return (
         {
             "canonical_cli": canonical_fields,
+            "completion": {
+                "before_main_activation": before_main_activation,
+                "exception_class": None,
+                "kind": (
+                    "successful_early_exit"
+                    if before_main_activation and result.returncode == 0
+                    else "nonzero_return"
+                    if result.returncode != 0
+                    else "successful_return"
+                ),
+            },
             "containment": result.containment,
             "native": _native_diagnostic(output),
             "return_code": result.returncode,
@@ -2696,6 +2833,39 @@ def _command_outcome_evidence(
         document,
         parse_status,
     )
+
+
+def _command_exception_kind(error: BaseException) -> str:
+    if isinstance(error, TimeoutError):
+        return "timeout_exception"
+    if isinstance(error, ValueError):
+        return "output_exception"
+    if isinstance(error, RuntimeError):
+        return "containment_exception"
+    return "command_exception"
+
+
+def _command_exception_evidence(
+    error: BaseException, output: Path, *, before_main_activation: bool
+) -> dict[str, Any]:
+    empty_sha256 = hashlib.sha256(b"").hexdigest()
+    return {
+        "canonical_cli": None,
+        "completion": {
+            "before_main_activation": before_main_activation,
+            "exception_class": type(error).__name__,
+            "kind": _command_exception_kind(error),
+        },
+        "native": _native_diagnostic(output),
+        "return_code": None,
+        "status": "exception",
+        "stderr": {"bytes": 0, "sha256": empty_sha256},
+        "stdout": {
+            "bytes": 0,
+            "parse_status": "unavailable",
+            "sha256": empty_sha256,
+        },
+    }
 
 
 def _validate_cli_outcome(
@@ -2743,6 +2913,11 @@ def _started_attempt(
         },
         "command_outcome": {
             "canonical_cli": None,
+            "completion": {
+                "before_main_activation": False,
+                "exception_class": None,
+                "kind": "not_completed",
+            },
             "native": {"output": {"state": "not_inspected"}},
             "return_code": None,
             "status": "not_returned",
@@ -2761,6 +2936,7 @@ def _started_attempt(
         },
         "ordinal": ordinal,
         "outcome": "started",
+        "phases": _new_phase_evidence(),
         "profile": profile,
         "spend": {
             "known_actual_cost_usd": "0",
@@ -2816,6 +2992,71 @@ def _mark_attempt_failed(
     attempt["admissible"] = False
     attempt["failure"] = _failure_evidence(error)
     attempt["outcome"] = "failed"
+
+
+def _validate_native_attempt(
+    *,
+    output: Path,
+    document: dict[str, Any],
+    ordinal: int,
+    expected_task_checksum: str,
+    expected_task_digest: str,
+    harbor_model: str,
+    snapshot_status: str,
+) -> tuple[NativeSnapshot, dict[str, Any], dict[str, Any], dict[str, Any]]:
+    try:
+        native: NativeSnapshot = snapshot_native_output(output)
+        record = _native_run_record(
+            native,
+            document,
+            ordinal=ordinal,
+            expected_task_checksum=expected_task_checksum,
+            expected_task_digest=expected_task_digest,
+            expected_agent_name="opencode",
+            expected_model_name=harbor_model,
+            expected_reward=int(document["reward"]),
+            require_atif=True,
+        )
+    except BaseException as error:
+        failure_type = "snapshot" if snapshot_status == "failed" else "validation"
+        raise AttemptFailure("native_output", failure_type, error) from error
+    if record["native"]["trial"]["agent"]["name"] != "opencode":
+        raise ValueError("native OpenCode agent identity mismatch")
+    if record["trajectory"]["agent"]["model_name"] != harbor_model:
+        raise ValueError("OpenCode ATIF model identity mismatch")
+    trial_name = record["native"]["trial"]["trial_name"]
+    diagnostics_path = f"harbor-job/{trial_name}/verifier/diagnostics.json"
+    diagnostics = strict_json(native.read(diagnostics_path))
+    gates = diagnostics.get("gates") if isinstance(diagnostics, dict) else None
+    reward = int(document["reward"])
+    if (
+        not isinstance(gates, dict)
+        or set(gates) != set(GATES)
+        or any(
+            type(value) is not int or value not in {0, 1} for value in gates.values()
+        )
+        or diagnostics.get("mandatory_gate_count") != len(GATES)
+        or diagnostics.get("mandatory_gate_pass_count") != sum(gates.values())
+        or diagnostics.get("ok") is not (reward == 1)
+        or diagnostics.get("schema_version") != 1
+        or diagnostics.get("task_id") != TASK_ID
+    ):
+        raise ValueError("trusted verifier gate diagnostics mismatch")
+    trajectory_metrics = _validate_metrics(record)
+    harbor_metrics = _validate_harbor_metrics(
+        native,
+        trial_name=trial_name,
+        trajectory_metrics=trajectory_metrics,
+    )
+    return (
+        native,
+        record,
+        gates,
+        {
+            "atif": trajectory_metrics,
+            "harbor": harbor_metrics,
+        },
+    )
 
 
 def _run_attempt(
@@ -2881,12 +3122,15 @@ def _run_attempt(
     cleanup_evidence: dict[str, Any] | None = None
     network_evidence: dict[str, Any] | None = None
     ledger_document: dict[str, Any] | None = None
+    native_validation: (
+        tuple[NativeSnapshot, dict[str, Any], dict[str, Any], dict[str, Any]] | None
+    ) = None
     security_evidence: dict[str, Any] | None = None
     attempt_error: BaseException | None = None
     try:
         try:
-            sidecar.start()
-            sidecar.probe()
+            _run_phase(attempt_record, "sidecar_start", sidecar.start)
+            _run_phase(attempt_record, "topology_probe", sidecar.probe)
             environment = child_environment(
                 config_root=config_root,
                 private_home=home,
@@ -2896,61 +3140,147 @@ def _run_attempt(
             executor = ThreadPoolExecutor(max_workers=1)
             command_future: Future[CommandResult] | None = None
             try:
-                command_future = executor.submit(
-                    _bounded_command,
-                    [
-                        str(installed_cli.executable),
-                        "run",
-                        "systems-design",
-                        "--profile",
-                        profile,
-                        "--output",
-                        str(output),
-                        "--json",
-                    ],
-                    cwd=project,
-                    env=environment,
-                    timeout=MAX_ATTEMPT_SECONDS,
-                    check=False,
+                command_future = _run_phase(
+                    attempt_record,
+                    "cli_spawn",
+                    lambda: executor.submit(
+                        _bounded_command,
+                        [
+                            str(installed_cli.executable),
+                            "run",
+                            "systems-design",
+                            "--profile",
+                            profile,
+                            "--output",
+                            str(output),
+                            "--json",
+                        ],
+                        cwd=project,
+                        env=environment,
+                        timeout=MAX_ATTEMPT_SECONDS,
+                        check=False,
+                    ),
                 )
-                network_evidence = authority.wait_inspect_activate(command_future)
-                result = command_future.result(timeout=MAX_ATTEMPT_SECONDS)
-                command_evidence, document, parse_status = _command_outcome_evidence(
-                    result, output
+                network_evidence = authority.wait_inspect_activate(
+                    command_future, attempt_record
                 )
-                attempt_record["command_outcome"] = command_evidence
-                document = _validate_cli_outcome(result, document, parse_status)
+
+                def wait_for_cli() -> tuple[CommandResult, dict[str, Any]]:
+                    try:
+                        command_result = command_future.result(
+                            timeout=MAX_ATTEMPT_SECONDS
+                        )
+                    except BaseException as error:
+                        attempt_record["command_outcome"] = _command_exception_evidence(
+                            error, output, before_main_activation=False
+                        )
+                        raise
+                    command_evidence, command_document, parse_status = (
+                        _command_outcome_evidence(command_result, output)
+                    )
+                    attempt_record["command_outcome"] = command_evidence
+                    validated = _validate_cli_outcome(
+                        command_result, command_document, parse_status
+                    )
+                    return command_result, validated
+
+                result, document = _run_phase(attempt_record, "cli_wait", wait_for_cli)
             except BaseException:
                 _remove_owned_attempt_containers(names)
                 if command_future is not None:
-                    with suppress(BaseException):
-                        command_future.result(timeout=30)
+                    try:
+                        completed_result = command_future.result(timeout=30)
+                    except BaseException as command_error:
+                        if (
+                            attempt_record["command_outcome"]["status"]
+                            == "not_returned"
+                        ):
+                            attempt_record["command_outcome"] = (
+                                _command_exception_evidence(
+                                    command_error,
+                                    output,
+                                    before_main_activation=True,
+                                )
+                            )
+                    else:
+                        if (
+                            attempt_record["command_outcome"]["status"]
+                            == "not_returned"
+                        ):
+                            command_evidence, _document, _parse_status = (
+                                _command_outcome_evidence(
+                                    completed_result,
+                                    output,
+                                    before_main_activation=True,
+                                )
+                            )
+                            attempt_record["command_outcome"] = command_evidence
                 raise
             finally:
                 executor.shutdown(wait=True, cancel_futures=True)
-            security_evidence = sidecar.inspect_secret_boundary()
-            try:
-                ledger_document = sidecar.read_ledger(minimum_requests=1)
-            except BaseException as error:
-                raise AttemptFailure(
-                    "broker_evidence", "minimum_requests", error
-                ) from error
+
+            def read_attempt_ledger() -> tuple[dict[str, Any], dict[str, Any]]:
+                security = sidecar.inspect_secret_boundary()
+                try:
+                    ledger = sidecar.read_ledger(minimum_requests=1)
+                except BaseException as error:
+                    raise AttemptFailure(
+                        "broker_evidence", "minimum_requests", error
+                    ) from error
+                requests = ledger["requests"]
+                if not requests:
+                    raise ValueError(
+                        "completed calibration attempt made no model request"
+                    )
+                if ledger["locked_endpoint"] is None or any(
+                    item["endpoint"] != ledger["locked_endpoint"] for item in requests
+                ):
+                    raise ValueError(
+                        "calibration attempt endpoint lock evidence is invalid"
+                    )
+                if ledger["fatal"] is not None:
+                    raise ValueError("calibration attempt ledger is fatal")
+                return security, ledger
+
+            security_evidence, ledger_document = _run_phase(
+                attempt_record, "ledger_read", read_attempt_ledger
+            )
+            snapshot_status = attempt_record["command_outcome"]["native"]["snapshot"][
+                "status"
+            ]
+            native_validation = _run_phase(
+                attempt_record,
+                "native_validation",
+                lambda: _validate_native_attempt(
+                    output=output,
+                    document=document,
+                    ordinal=ordinal,
+                    expected_task_checksum=expected_task_checksum,
+                    expected_task_digest=expected_task_digest,
+                    harbor_model=harbor_model,
+                    snapshot_status=snapshot_status,
+                ),
+            )
         except BaseException as error:
             attempt_error = error
             raise
         finally:
             try:
-                cleanup_evidence = sidecar.cleanup()
+                cleanup_evidence = _run_phase(
+                    attempt_record, "cleanup", sidecar.cleanup
+                )
                 attempt_record["cleanup"] = {"status": "completed"}
             except BaseException as cleanup_error:
                 attempt_record["cleanup"] = {
-                    "exception_class": type(cleanup_error).__name__,
+                    "exception_class": (
+                        cleanup_error.cause_class
+                        if isinstance(cleanup_error, CalibrationStageError)
+                        else type(cleanup_error).__name__
+                    ),
                     "status": "failed",
                 }
                 if attempt_error is None:
-                    raise AttemptFailure(
-                        "resource_cleanup", "cleanup_failed", cleanup_error
-                    ) from cleanup_error
+                    raise cleanup_error
     except BaseException as error:
         if ledger_document is None:
             with suppress(BaseException):
@@ -2977,7 +3307,7 @@ def _run_attempt(
             }
         _mark_attempt_failed(attempt_record, error)
         raise
-    if ledger_document is None or cleanup_evidence is None:
+    if ledger_document is None or cleanup_evidence is None or native_validation is None:
         raise RuntimeError("broker lifecycle evidence is incomplete")
     requests = ledger_document["requests"]
     broker_evidence = {
@@ -3001,69 +3331,14 @@ def _run_attempt(
     attempt_record["outcome"] = "failed"
     duration = time.monotonic() - started
     reward = int(document["reward"])
-    try:
-        native: NativeSnapshot = snapshot_native_output(output)
-        record = _native_run_record(
-            native,
-            document,
-            ordinal=ordinal,
-            expected_task_checksum=expected_task_checksum,
-            expected_task_digest=expected_task_digest,
-            expected_agent_name="opencode",
-            expected_model_name=harbor_model,
-            expected_reward=reward,
-            require_atif=True,
-        )
-    except BaseException as error:
-        snapshot_status = attempt_record["command_outcome"]["native"]["snapshot"][
-            "status"
-        ]
-        failure_type = "snapshot" if snapshot_status == "failed" else "validation"
-        raise AttemptFailure("native_output", failure_type, error) from error
-    if record["native"]["trial"]["agent"]["name"] != "opencode":
-        raise ValueError("native OpenCode agent identity mismatch")
-    if record["trajectory"]["agent"]["model_name"] != harbor_model:
-        raise ValueError("OpenCode ATIF model identity mismatch")
-    trial_name = record["native"]["trial"]["trial_name"]
-    diagnostics_path = f"harbor-job/{trial_name}/verifier/diagnostics.json"
-    diagnostics = strict_json(native.read(diagnostics_path))
-    gates = diagnostics.get("gates") if isinstance(diagnostics, dict) else None
-    if (
-        not isinstance(gates, dict)
-        or set(gates) != set(GATES)
-        or any(
-            type(value) is not int or value not in {0, 1} for value in gates.values()
-        )
-        or diagnostics.get("mandatory_gate_count") != len(GATES)
-        or diagnostics.get("mandatory_gate_pass_count") != sum(gates.values())
-        or diagnostics.get("ok") is not (reward == 1)
-        or diagnostics.get("schema_version") != 1
-        or diagnostics.get("task_id") != TASK_ID
-    ):
-        raise ValueError("trusted verifier gate diagnostics mismatch")
-    if not requests:
-        raise ValueError("completed calibration attempt made no model request")
-    if ledger_document["locked_endpoint"] is None or any(
-        item["endpoint"] != ledger_document["locked_endpoint"] for item in requests
-    ):
-        raise ValueError("calibration attempt endpoint lock evidence is invalid")
-    if ledger_document["fatal"] is not None:
-        raise ValueError(ledger_document["fatal"])
-    trajectory_metrics = _validate_metrics(record)
+    _native, record, gates, metrics = native_validation
     completed = {
         "broker": broker_evidence,
         "command_outcome": attempt_record["command_outcome"],
         "containment": result.containment,
         "duration_seconds": str(round(duration, 3)),
         "gates": gates,
-        "metrics": {
-            "atif": trajectory_metrics,
-            "harbor": _validate_harbor_metrics(
-                native,
-                trial_name=trial_name,
-                trajectory_metrics=trajectory_metrics,
-            ),
-        },
+        "metrics": metrics,
         "native": record["native"],
         "native_output_manifest_sha256": record["output_snapshot"]["manifest_sha256"],
         "task_identity": {
@@ -3088,6 +3363,7 @@ def _run_attempt(
         "model": model_group,
         "model_group": model_group,
         "outcome": "succeeded",
+        "phases": attempt_record["phases"],
         "trajectory": {
             "agent": record["trajectory"]["agent"],
             "schema_version": record["trajectory"]["schema_version"],

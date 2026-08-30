@@ -55,12 +55,17 @@ holds Harbor's native `compose up --wait` boundary until activation, before
 OpenCode installation or execution. Authenticated `/model/info` pricing and
 limits are retained only as an exact redacted canonical snapshot and digest.
 It then starts each attempt with bounded failure evidence before model work.
-When the production CLI returns, the runner records its return code, stream byte
-counts and SHA-256 digests, safe canonical schema/outcome/reward fields, and
-no-follow native structural counts/digests before requiring a model request.
-Nonzero and malformed CLI results therefore keep their execution or schema
-failure type even when the broker observed zero requests. Raw streams, paths,
-exception messages, prompts, model content, logs, and tool output are excluded.
+Each attempt records ordered started/completed/failed booleans for sidecar start,
+topology probe, CLI spawn, main discovery/config validation, broker activation,
+heartbeat start, CLI wait, ledger read, native validation, and cleanup. A stage
+failure retains only its phase and cause class. If the production CLI future
+finishes before activation, the runner immediately retains any returned result:
+return code, stream byte counts and SHA-256 digests, safe canonical
+schema/outcome/reward fields, containment, and no-follow native structural
+counts/digests. A future exception retains only its class and bounded native
+structure. Positive request-count checks cannot mask this evidence. Raw streams,
+paths, exception messages, prompts, model content, logs, and tool output are
+excluded.
 Each attempt locks to its first valid OpenCode endpoint only after successful
 budget reservation. The broker caps output at 8,192 tokens and atomically
 reserves each request's worst-case cost under a shared `$25` limit before
