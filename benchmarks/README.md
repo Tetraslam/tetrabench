@@ -2,9 +2,10 @@
 
 This document defines ten v1 task families and the contract that a fixture must
 satisfy before it can enter a catalog. It is not yet a fixture-local manifest.
-Each future fixture will own the deterministic manifests defined below. The
-catalogs remain empty until each fixture independently passes the mandatory
-gates in [Admission](#admission). Fixtures remain absent.
+Each fixture owns the deterministic manifests defined below. The catalogs
+remain empty until each fixture independently passes the mandatory gates in
+[Admission](#admission). Source-only prototypes and an unlisted candidate exist;
+none is admitted.
 
 ## Scope
 
@@ -153,8 +154,10 @@ A normal hidden-suite run must finish in under 2 minutes.
 
 Fixtures contain no remotes or future commits. Task authors create repository
 snapshots and scenario code for this suite to reduce direct lookup shortcuts.
-Public source tests remain useful development evidence, but they are not
-contamination-resistant. Every task requires an exploit audit for hidden-test
+Public repository source, including candidate verifier source, remains useful
+development evidence but is not contamination-resistant. Runtime hiding claims
+only that Harbor bakes hidden tests into the separate verifier image and does
+not mount them into the agent phase. Every task requires an exploit audit for hidden-test
 discovery, verifier replacement, reward forgery, undeclared-artifact smuggling,
 process persistence, and access outside the declared workspace or forge API.
 
@@ -173,10 +176,11 @@ artifacts. Harbor collection is best-effort, so they do not establish an
 enforceable worst-case bound against arbitrary undeclared output produced inside
 an agent environment.
 
-### Pre-fixture admission prerequisites
+### Pre-admission prerequisites
 
-No fixture work may start until two native boundaries pass version-matched
-prototypes both locally and in detached Modal:
+No fixture may enter a catalog or admission run until two native boundaries
+pass version-matched prototypes both locally and in detached Modal. Local
+candidate authoring may begin before those proofs:
 
 1. Detached submission derives the complete selected fixture set from catalog
    entries, seals every file, and binds destination, mode, size, and digest into
@@ -187,7 +191,7 @@ prototypes both locally and in detached Modal:
    includes a forge sidecar and proves stop-main-first collection of its snapshot
    and event log before clean verification.
 
-They gate the admission system before task fixture work starts.
+They gate catalog and admission authority, not local candidate work.
 
 E-061 locally proves the first boundary. Detached request preparation
 automatically seals the complete selected fixture set, and the
@@ -211,9 +215,12 @@ alone writes exact binary reward bytes and diagnostics. Adversarial tests reject
 agent-owned event files, post-seal API writes, recomputed snapshot tampering,
 missing artifacts, and shared-environment verifier assumptions.
 
-The full Python 3.12 suite passes 607 tests, including three real-Docker tests.
+The Python 3.12 suite and every required real-Docker test pass.
 Wheels contain neither catalog nor source-only fixture files; source
-distributions retain both fixtures. Detached Modal runs of E-064 and automatic
+distributions retain the two prerequisite fixtures. The unadmitted
+`authority-fencing` candidate, its hidden verifier, mutants, gold solution,
+candidate-only admission tool, and candidate-only project test are absent from
+both wheel and source distribution. Detached Modal runs of E-064 and automatic
 catalog sealing remain unproven because the retained storage credentials are
 expired. The catalogs stay empty until detached proof and the remaining
 admission work pass.
@@ -234,6 +241,19 @@ structure.
 The system grants a worker a time-bounded lease and monotonic fencing token for
 a resource. Work may finish after the lease expires, so every authoritative
 write must compare the worker's token with the current token at commit time.
+
+Every hidden fault schedule is a closed table of ID, public checkpoint, and
+publicly declared expected exit code. Fault cases resolve that table by ID. One
+verifier-owned function derives seeded identities, arguments, and order for the
+independent semantic model and subprocess runner. Effect hashes bind the ordered
+operation and argument trace.
+
+Local admission separates stable canonical `subject` identity from
+`run_attestation`. The subject binds task and verifier contexts, matrix contract,
+source revision when available, base image, and tool versions. Each fresh
+no-cache run attestation records its nonce, image ID, tag, repository digests,
+and normalized build command. Fresh builds intentionally differ; neither whole
+attestation bytes nor image IDs are claimed reproducible.
 
 Mandatory gates:
 
@@ -468,7 +488,8 @@ most 8 distinct fault schedules.
    a gate specific to the requested behavior.
 4. Seeded mutants: one seeded mutant targets each mandatory gate, up to eight
    mutants total. Each runs once locally, receives primary integer reward `0`,
-   and fails its intended gate.
+   fails its intended gate, and passes every other mandatory gate. Admission
+   records the full gate vector and rejects broad defects as unattributed.
 5. State schedules: clean state, restart, and every fixed interruption, race,
    delay, or stale-state schedule in `tests/cases.toml` produce the expected
    state and effect hashes.
@@ -492,6 +513,11 @@ most 8 distinct fault schedules.
     stays out of the catalog.
 
 ## Implementation order
+
+| Candidate | Status |
+| --- | --- |
+| `systems-design/authority-fencing` | Local candidate implemented under `benchmarks/tasks/`; intentionally unlisted and excluded from wheel/sdist. One gold Harbor Docker run and one strict bounded no-op/mutant/exploit matrix pass locally. Three local gold repetitions, two detached repetitions, detached admission, calibration, and catalog admission remain `unproven`. |
+| Remaining v1 candidates | Absent. |
 
 1. Run the locally proven E-064 separate-verifier and forge-sidecar prototype in
    detached Modal, then run automatic selected-fixture sealing through live

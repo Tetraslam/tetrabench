@@ -1,0 +1,102 @@
+schema_version = 1
+task_id = "systems-design/authority-fencing"
+initial_workspace_sha256 = "841bfa17a5a9932019b673c80cf26f0511ad4f522534e569396ec392fcafe437"
+initial_workspace_files = ["README.md", "authority.py", "test_public.py"]
+initial_workspace_manifest = [
+  { path = "README.md", sha256 = "c62669cd4da7702090aa24b1099bfa7626f7196080dc26260886c9c9d7ad225b" },
+  { path = "authority.py", sha256 = "ab5c5a3e80afa6699b32c0ef2db9bcfab8458da86d7e5fac42905482d50988e9" },
+  { path = "test_public.py", sha256 = "d218978e0a040ceacd8d83b269a883063f2038b50bd36c211d4f7f1b147748b2" },
+]
+allowed_submission_paths = ["README.md", "authority.py", "contract.toml", "test_public.py"]
+hidden_case_input_sha256 = "07820d2df273f0ee306432acec1a3e3ec0aba903ebda857db044c5dca3fbf442"
+
+[logical_clock]
+representation = "integer-ticks"
+minimum = 0
+maximum = 4611686018427387903
+expiry_rule = "now >= deadline"
+deadline_rule = "claim: now + ttl; renew: max(previous_deadline, now + ttl)"
+ttl_rule = "positive integer; sum must not exceed maximum"
+
+[cli.output]
+success_exit_code = 0
+rejection_exit_code = 2
+fault_exit_code = 86
+success_stream = "stdout only; stderr empty"
+rejection_stream = "stderr only; stdout empty"
+fault_stream = "stdout and stderr empty"
+canonical_json = "UTF-8, sorted object keys, no insignificant whitespace, one trailing LF"
+success_schema = '''{"idempotent":boolean,"job":{"deadline":integer|null,"fence_token":integer,"job_id":string,"status":"pending"|"running"|"completed"|"failed","terminal_op":null|"complete"|"fail","worker_id":string|null},"ok":true}'''
+rejection_schema = '''{"error":string,"ok":false}'''
+normal_success_idempotent = false
+terminal_replay_idempotent = true
+rejection_stability = "A rejected action emits canonical rejection JSON, exits 2, and leaves existing database bytes and semantic state unchanged."
+
+[lease]
+fields = ["job_id", "worker_id", "fence_token", "deadline"]
+current_rule = "status running, exact worker_id and fence_token, and now < deadline"
+reclaim_rule = "pending or expired running job; committed token is prior token plus one"
+terminal_replay_rule = "same terminal operation, worker_id, and fence_token returns unchanged state"
+
+[[cli.commands]]
+id = "create"
+syntax = "authority.py --db PATH create --job ID"
+
+[[cli.commands]]
+id = "claim"
+syntax = "authority.py --db PATH claim --job ID --worker ID --now INT --ttl INT [--fault claim.precommit]"
+
+[[cli.commands]]
+id = "renew"
+syntax = "authority.py --db PATH renew --job ID --worker ID --token INT --now INT --ttl INT"
+
+[[cli.commands]]
+id = "complete"
+syntax = "authority.py --db PATH complete --job ID --worker ID --token INT --now INT [--fault transition.precommit]"
+
+[[cli.commands]]
+id = "fail"
+syntax = "authority.py --db PATH fail --job ID --worker ID --token INT --now INT [--fault transition.precommit]"
+
+[[cli.commands]]
+id = "inspect"
+syntax = "authority.py --db PATH inspect --job ID"
+
+[[faults]]
+id = "claim.precommit"
+exit_code = 86
+effect = "terminate after the claim row update and before commit"
+
+[[faults]]
+id = "transition.precommit"
+exit_code = 86
+effect = "terminate after the complete or fail row update and before commit"
+
+[[gates]]
+id = "single-authority"
+case_ids = ["concurrent-expiry-claim", "shorter-renewal", "tick-domain-boundaries"]
+
+[[gates]]
+id = "monotonic-fence"
+case_ids = ["different-worker-reclaim", "same-worker-reclaim"]
+
+[[gates]]
+id = "stale-rejection"
+case_ids = ["delayed-stale-actions", "exact-expiry-rejection", "invalid-ttl-rejection", "invalid-tick-overflow-rejection"]
+
+[[gates]]
+id = "restart-durability"
+case_ids = ["active-restart", "terminal-restart"]
+
+[[gates]]
+id = "transaction-rollback"
+case_ids = ["claim-precommit-crash", "transition-precommit-crash"]
+
+[[gates]]
+id = "terminal-idempotence"
+case_ids = ["matching-terminal-replay", "conflicting-terminal-rejection"]
+
+[[public_cases]]
+id = "public-happy-path"
+gate_ids = ["restart-durability"]
+scope = "CLI shape plus create, initial claim, renew, complete, and fresh-process inspect"

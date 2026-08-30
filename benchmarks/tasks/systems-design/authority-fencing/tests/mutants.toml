@@ -1,0 +1,43 @@
+schema_version = 1
+
+[[mutants]]
+id = "single-authority-current-claim"
+gate_id = "single-authority"
+old = '''if row["status"] == "running" and args.now < row["deadline"]:'''
+new = '''if False:'''
+
+[[mutants]]
+id = "monotonic-fence-same-worker-reset"
+gate_id = "monotonic-fence"
+old = '''token = row["fence_token"] + 1'''
+new = '''token = 1 if row["worker_id"] == args.worker else row["fence_token"] + 1'''
+
+[[mutants]]
+id = "stale-rejection-ignore-token"
+gate_id = "stale-rejection"
+old = '''and row["worker_id"] == worker
+        and row["fence_token"] == token'''
+new = '''and True
+        and True'''
+
+[[mutants]]
+id = "restart-durability-inspect-disabled"
+gate_id = "restart-durability"
+old = '''if args.command == "inspect":
+            return {"idempotent": False, "job": state(get(connection, args.job)), "ok": True}'''
+new = '''if args.command == "inspect":
+            raise Rejected("restart disabled")'''
+
+[[mutants]]
+id = "transaction-rollback-commit-before-crash"
+gate_id = "transaction-rollback"
+old = '''os._exit(86)'''
+new = '''connection.commit()
+                os._exit(86)'''
+replace_all = true
+
+[[mutants]]
+id = "terminal-idempotence-disabled"
+gate_id = "terminal-idempotence"
+old = '''row["terminal_op"] == args.command'''
+new = '''False'''

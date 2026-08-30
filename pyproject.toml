@@ -27,7 +27,12 @@ build-backend = "hatchling.build"
 packages = ["src/tetrabench"]
 
 [tool.hatch.build]
-exclude = ["/questionnaire-meme.png"]
+exclude = [
+    "/benchmarks/tasks/systems-design/authority-fencing",
+    "/questionnaire-meme.png",
+    "/tests/test_authority_fencing_task.py",
+    "/tools/run_authority_fencing_admission.py",
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

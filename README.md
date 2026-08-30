@@ -86,8 +86,9 @@ Python 3.12 is required. Package metadata rejects Python 3.13 and newer.
 
 GitHub Actions runs on pushes to `master` and pull requests with read-only
 repository access. The Python 3.12 job checks the lockfile, installs locked
-dependencies, runs Ruff and ty, requires the Docker daemon and all three marked
-Docker tests, runs the full pytest suite, scans production source and tools with
+dependencies, runs Ruff and ty, requires the Docker daemon and every required
+marked Docker test exactly once, runs the remaining non-Docker suite, scans
+production source and tools with
 Bandit, builds both distributions, smoke-tests an isolated wheel installation,
 and audits all locked dependency groups. A
 separate job scans the full Git history with a digest-pinned Gitleaks image and

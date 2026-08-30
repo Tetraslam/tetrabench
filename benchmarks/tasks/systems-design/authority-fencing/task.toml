@@ -1,0 +1,24 @@
+schema_version = "1.4"
+artifacts = [
+  { source = "/workspace", destination = "workspace", service = "main" },
+]
+
+[environment]
+build_timeout_sec = 300
+network_mode = "public"
+cpus = 1
+memory_mb = 512
+storage_mb = 1024
+
+[agent]
+timeout_sec = 2100
+
+[verifier]
+environment_mode = "separate"
+timeout_sec = 240
+
+[verifier.environment]
+network_mode = "no-network"
+cpus = 1
+memory_mb = 384
+storage_mb = 512

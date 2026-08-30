@@ -1,0 +1,135 @@
+schema_version = 2
+task_id = "systems-design/authority-fencing"
+input_manifest_sha256 = "07820d2df273f0ee306432acec1a3e3ec0aba903ebda857db044c5dca3fbf442"
+
+[[fault_schedules]]
+id = "claim-precommit-exit"
+checkpoint_id = "claim.precommit"
+exit_code = 86
+
+[[fault_schedules]]
+id = "transition-precommit-exit"
+checkpoint_id = "transition.precommit"
+exit_code = 86
+
+[[cases]]
+id = "concurrent-expiry-claim"
+scenario = "concurrent-expiry-claim"
+seed = 104729
+gate_ids = ["single-authority"]
+expected_state_sha256 = "a05271274d0ccb97851ec63b3025345e3c173175e062cf81301d1a732268a044"
+expected_effect_sha256 = "d5f6befab1295c69047782bbdbf498dd7530c93182d7b99d0f1f57ac69872d21"
+
+[[cases]]
+id = "shorter-renewal"
+scenario = "shorter-renewal"
+seed = 117191
+gate_ids = ["single-authority"]
+expected_state_sha256 = "e9cbf9ae1c79efb7d40f95d72f178e17f756bbde0e0aec8394e8aba279661831"
+expected_effect_sha256 = "a0e4c72bca729e7ef549bd90026c35923a33649d41989e0bc70bd3f2e5b7b305"
+
+[[cases]]
+id = "tick-domain-boundaries"
+scenario = "tick-domain-boundaries"
+seed = 122921
+gate_ids = ["single-authority"]
+expected_state_sha256 = "49c453065f4f3fd2d362bd5242e8c9dde4097c09794b41000d79c5ffe8060e2b"
+expected_effect_sha256 = "0aed449ae0e124bee094b75dfada66da4801734f2f199e6969c12cefe7b55184"
+
+[[cases]]
+id = "different-worker-reclaim"
+scenario = "different-worker-reclaim"
+seed = 130363
+gate_ids = ["monotonic-fence"]
+expected_state_sha256 = "c80835fa8c7c950ddda98954747f919b3c172c91b49f9ae25fa4e780037597af"
+expected_effect_sha256 = "dd77f1f2ac832feda7e42a79ba52ecf7af91a868806770b4c8f422d197311bab"
+
+[[cases]]
+id = "same-worker-reclaim"
+scenario = "same-worker-reclaim"
+seed = 155921
+gate_ids = ["monotonic-fence"]
+expected_state_sha256 = "06979b9b9cbbd51bd07598b7a40e1d8fe357544fc2e8d117888f1527046de4ff"
+expected_effect_sha256 = "63b35d3ff6a12943fc4ab7d09ae01e7ed4378d56edc5d3b3d084368cc231ad30"
+
+[[cases]]
+id = "delayed-stale-actions"
+scenario = "delayed-stale-actions"
+seed = 180503
+gate_ids = ["stale-rejection"]
+expected_state_sha256 = "d6515779839f69d3a70e5a350cdedb74840c54df7c76baf1dd08314c6e66b391"
+expected_effect_sha256 = "688bc4cc82631fd450437898169d8768bc9037b90ead5ffb6f6123c2729b9b99"
+
+[[cases]]
+id = "exact-expiry-rejection"
+scenario = "exact-expiry-rejection"
+seed = 205019
+gate_ids = ["stale-rejection"]
+expected_state_sha256 = "1c635463a3c83fc85548b6df125e40b9b91c260532989f3bae506642026e09a9"
+expected_effect_sha256 = "6d15b47e74b496e9c9a1739f426a100ac34bcbb7220b328121fb6debb7c18359"
+
+[[cases]]
+id = "invalid-ttl-rejection"
+scenario = "invalid-ttl-rejection"
+seed = 211693
+gate_ids = ["stale-rejection"]
+expected_state_sha256 = "5fb15cee6ff54704c568408ab82e8c8f5f7eedc7d5c661dbd4e69579c0daf389"
+expected_effect_sha256 = "2a27ed635c90ae6cd3e0696ba52b1e91e49696ee1eed0ad2f3f1ae4d872b5cf9"
+
+[[cases]]
+id = "invalid-tick-overflow-rejection"
+scenario = "invalid-tick-overflow-rejection"
+seed = 218081
+gate_ids = ["stale-rejection"]
+expected_state_sha256 = "bb8164319d5b3827db0325f84a3deb4ab8a89a92006536b3b459d6ab76c4efc8"
+expected_effect_sha256 = "cd40ba2963f6a10e47aac9ad5bd40a1b2f87e0c866c2babcdb10ef9dcdae7783"
+
+[[cases]]
+id = "active-restart"
+scenario = "active-restart"
+seed = 229499
+gate_ids = ["restart-durability"]
+expected_state_sha256 = "0086ce4257c3bcc5a74ca9e0b3493d25bdb050cd006540f94f33ccd9e92d7f05"
+expected_effect_sha256 = "6fd87b3dd0f49adefe604b258dc908bd733fbe8fc10bd5e27da21dd27e6632e6"
+
+[[cases]]
+id = "terminal-restart"
+scenario = "terminal-restart"
+seed = 253907
+gate_ids = ["restart-durability"]
+expected_state_sha256 = "f7b5d37980e5839c74c152587a159cd5316cfd2f299968943e73465ca610e988"
+expected_effect_sha256 = "2620688ff9c8b798e80406ca19147af9e8daab64461c917de55446564a770124"
+
+[[cases]]
+id = "claim-precommit-crash"
+scenario = "claim-precommit-crash"
+seed = 278363
+gate_ids = ["transaction-rollback"]
+fault_schedule_id = "claim-precommit-exit"
+expected_state_sha256 = "96ea336fe1efa106965443a7d00bf8a8bc12e76cc5fc33a2aade855389465239"
+expected_effect_sha256 = "d06afcbac2d82556ae05934d209d8039cee35e25a2dca20469a9a71a093436a5"
+
+[[cases]]
+id = "transition-precommit-crash"
+scenario = "transition-precommit-crash"
+seed = 303007
+gate_ids = ["transaction-rollback"]
+fault_schedule_id = "transition-precommit-exit"
+expected_state_sha256 = "1f1c1facdcff99f9ce56a9c8929c202c41cc09162efbb635be050bc8835d243b"
+expected_effect_sha256 = "1889f73d6b7ae179e07ec7d9270909491214b4337b2d8d237b8064020f54a69a"
+
+[[cases]]
+id = "matching-terminal-replay"
+scenario = "matching-terminal-replay"
+seed = 327673
+gate_ids = ["terminal-idempotence"]
+expected_state_sha256 = "f40aeda895cb0bc4d59549eabab1166264377b6a014b35c60a85137c3e6f85f9"
+expected_effect_sha256 = "a8598761edb9cd6daecf1154192912b0ac26361e302191382273214b821c331b"
+
+[[cases]]
+id = "conflicting-terminal-rejection"
+scenario = "conflicting-terminal-rejection"
+seed = 352007
+gate_ids = ["terminal-idempotence"]
+expected_state_sha256 = "80ad052c2581df757df7f09d25578b6ee28101ba0f34dbe12d094eb9516525dc"
+expected_effect_sha256 = "83f5e578507a49fa4dd336c6eeb0f467a4a486a76b88364f4f783a84760a9322"
