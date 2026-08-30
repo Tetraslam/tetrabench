@@ -944,3 +944,21 @@ All 160 calibration tests, 900 non-Docker tests, and nine Docker tests passed. `
 Provenance: GitHub Actions push run `33331034746` for implementation commit `586ebc26827bacf4553d9a715f8a34d5ea552718`.
 
 The Python 3.12 job passed lock checking, locked installation, lint, format, type checking, Bandit, Docker availability, all nine required Docker tests, all 900 non-Docker tests, package build, isolated-wheel smoke, and the complete dependency audit. The independent full-history Gitleaks job passed. E-086 is complete, while the exact clean four-attempt calibration remains `unproven`.
+
+## 2026-08-30T13:07:22-07:00: E-087 calibration failure-diagnosis contract and second run
+
+Provenance: user-provided second real calibration outcome from clean commit `53a3748`; user-provided command-evidence and deny-upstream diagnostic contract; focused local fake-upstream, command-outcome, native-snapshot, and parser tests. No model completion occurred during this implementation or validation.
+
+The second real calibration completed authenticated pricing, began target attempt 1, made zero broker or model requests, incurred `$0`, and failed with the old masked request-count error. It produced no report and left no calibration resource residue. This is not calibration evidence; calibration remains `unproven`.
+
+A returned production CLI command now owns failure classification before a positive broker-request requirement. Attempt evidence retains only return code, stdout/stderr byte counts and SHA-256 digests, safe canonical schema/outcome/reward fields, bounded containment, and no-follow native structural status/counts/digests/exception class names. It retains no raw stream, path, exception message, prompt, model content, log, or tool output. Nonzero execution and malformed output clean resources, read the ledger with a zero request minimum, and retain precise stage/type.
+
+The explicit `--debug-deny-upstream` mode is limited to debug's one attempt per profile and forbids proof output. After real pricing, its broker authenticates and validates a completion request, locks the endpoint, records the safe request/reservation shape, releases the reservation, and returns a fixed local 503 without opening completion upstream transport or using parent completion authority. It is always non-admissible and has zero completion cost. Full local and hosted validation remain pending.
+
+## 2026-08-30T15:34:18-07:00: E-087 local validation
+
+Provenance: 165 focused non-Docker calibration tests; the complete nine-test real-Docker selection; the complete 908-test non-Docker suite; fake pricing and completion-upstream accounting; package inspection; dependency audit; and local lint, type, security, workflow, diff, residue, and full-history secret scans. No gateway request or model completion occurred.
+
+The fake pricing test made one authenticated model-info request, then the diagnostic broker accepted one valid completion request, locked `/v1/responses`, retained its reservation shape, returned local 503, released the reservation, opened no upstream completion transport, sent no parent completion authorization, and recorded zero cost. Zero-request nonzero execution retained `agent_install_or_execution/nonzero_exit` after cleanup and a min-zero ledger read. Malformed stdout retained `cli_schema/malformed_stdout`; failed native output retained only structural counts, manifest digest, and `ValidationError`, with private bytes and paths absent.
+
+All 165 focused calibration tests, 908 non-Docker tests, and nine real-Docker tests passed. `uv lock --check`, locked all-group sync, Ruff check/format, ty, Bandit, actionlint, wheel/sdist build, isolated locked-wheel installation and metadata/content smoke, all-groups pip-audit, `git diff --check`, redacted Gitleaks over 37 commits, and Docker residue inspection passed. Hosted CI remains pending. Calibration remains `unproven`.

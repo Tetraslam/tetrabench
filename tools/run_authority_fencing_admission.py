@@ -105,6 +105,7 @@ class InstalledCLI:
 
 @dataclasses.dataclass(frozen=True, slots=True)
 class CommandResult:
+    returncode: int
     stdout: bytes
     stderr: bytes
     containment: dict[str, Any]
@@ -1113,6 +1114,7 @@ def _bounded_command(
     cwd: Path,
     env: dict[str, str],
     timeout: int,
+    check: bool = True,
 ) -> CommandResult:
     become_child_subreaper()
     baseline = _descendants(os.getpid(), _process_parents())
@@ -1182,9 +1184,14 @@ def _bounded_command(
         raise failure
     stdout = bytes(retained["stdout"])
     stderr = bytes(retained["stderr"])
-    if process.returncode != 0:
+    if check and process.returncode != 0:
         raise ValueError(f"production CLI exited {process.returncode}")
-    return CommandResult(stdout=stdout, stderr=stderr, containment=containment)
+    return CommandResult(
+        returncode=process.returncode,
+        stdout=stdout,
+        stderr=stderr,
+        containment=containment,
+    )
 
 
 def _copy_verified_tree(source: Path, destination: Path) -> list[dict[str, Any]]:

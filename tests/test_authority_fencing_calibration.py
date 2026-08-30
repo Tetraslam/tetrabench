@@ -141,6 +141,7 @@ def running_broker(
     timeout: int = 30,
     ledger: calibration.SpendLedger | None = None,
     max_input_tokens: int = calibration.MAX_BODY_BYTES,
+    debug_deny_upstream: bool = False,
 ):
     broker = calibration.CalibrationBroker(
         host="127.0.0.1",
@@ -151,6 +152,7 @@ def running_broker(
         max_input_tokens=max_input_tokens,
         timeout=timeout,
         upstream_url=f"http://127.0.0.1:{upstream.server_address[1]}",
+        debug_deny_upstream=debug_deny_upstream,
     )
     broker.start()
     try:
@@ -298,6 +300,37 @@ def test_authenticated_model_info_selects_exact_groups_and_redacts_snapshot() ->
     serialized = json.dumps(dataclasses.asdict(snapshot))
     assert "secret" not in serialized
     assert len(snapshot.sha256) == 64
+
+
+def test_debug_deny_upstream_prices_then_records_request_without_completion() -> None:
+    document = pricing_document()
+    with fake_upstream(
+        headers=[("Content-Type", "application/json")],
+        body=json.dumps(document).encode(),
+    ) as upstream:
+        pricing = calibration.query_model_pricing(
+            parent_key="parent-only-secret",
+            upstream_url=f"http://127.0.0.1:{upstream.server_address[1]}",
+        )
+        assert pricing.models
+        with running_broker(upstream, debug_deny_upstream=True) as broker:
+            status, _headers, _body = request(broker)
+            assert status == 503
+            deadline = time.monotonic() + 2
+            while not broker.state.records and time.monotonic() < deadline:
+                time.sleep(0.01)
+            assert broker.state.locked_endpoint == "/v1/responses"
+            assert broker.state.request_count == 1
+            assert broker.state.ledger.cost == 0
+            assert broker.state.ledger.reserved == 0
+            record = broker.state.records[0]
+            assert record.status == 503
+            assert record.settlement == "released_unforwarded"
+            assert record.upstream_opened is False
+            assert record.parent_authorization_sent is False
+    assert upstream.requests == [
+        {"authorization": "Bearer parent-only-secret", "path": "/model/info"}
+    ]
 
 
 def test_model_info_accepts_large_document_and_discards_irrelevant_rows() -> None:
@@ -1919,6 +1952,9 @@ def test_attach_timeout_is_terminated_and_reaped(
         ["--host-address", "127.0.0.1"],
         ["--broker-port", "49151"],
         ["--broker-port", "65536"],
+        ["--debug-deny-upstream"],
+        ["--debug-deny-upstream", "--output", "proof.json"],
+        ["--debug", "--debug-deny-upstream", "--attempts-per-profile", "2"],
     ],
 )
 def test_parser_rejects_noncanonical_attempt_or_listener_contract(
@@ -1947,6 +1983,180 @@ def test_debug_two_attempts_rejects_before_pricing_or_listener(
     assert not any(
         thread.name == "calibration-broker" for thread in threading.enumerate()
     )
+
+
+def test_zero_request_nonzero_cli_failure_keeps_command_precedence(
+    tmp_path: Path,
+) -> None:
+    result = calibration.CommandResult(
+        returncode=7,
+        stdout=b'{"error":"credential-shaped private material"}\n',
+        stderr=b"private stderr material",
+        containment={"survivors": 0},
+    )
+    evidence, document, parse_status = calibration._command_outcome_evidence(
+        result, tmp_path / "absent-output"
+    )
+    attempt = calibration._started_attempt(
+        ordinal=1,
+        profile="target",
+        model_group="openai/gpt-5.6-sol",
+    )
+    attempt["command_outcome"] = evidence
+    with pytest.raises(calibration.AttemptFailure) as caught:
+        calibration._validate_cli_outcome(result, document, parse_status)
+    calibration._mark_attempt_failed(attempt, caught.value)
+    assert attempt["failure"] == {
+        "exception_class": "RuntimeError",
+        "stage": "agent_install_or_execution",
+        "type": "nonzero_exit",
+    }
+    assert attempt["broker"]["request_count"] == 0
+    retained = json.dumps(attempt)
+    assert "credential-shaped" not in retained
+    assert "private stderr" not in retained
+
+
+def test_malformed_cli_stdout_is_digest_only_cli_schema_failure(tmp_path: Path) -> None:
+    result = calibration.CommandResult(
+        returncode=0,
+        stdout=b"malformed secret-bearing stdout",
+        stderr=b"",
+        containment={"survivors": 0},
+    )
+    evidence, document, parse_status = calibration._command_outcome_evidence(
+        result, tmp_path / "absent-output"
+    )
+    with pytest.raises(calibration.AttemptFailure) as caught:
+        calibration._validate_cli_outcome(result, document, parse_status)
+    assert caught.value.evidence == {
+        "exception_class": "ValueError",
+        "stage": "cli_schema",
+        "type": "malformed_stdout",
+    }
+    assert evidence["stdout"]["bytes"] == len(result.stdout)
+    assert len(evidence["stdout"]["sha256"]) == 64
+    assert evidence["canonical_cli"] is None
+    assert "secret-bearing" not in json.dumps(evidence)
+
+
+def test_failed_native_output_retains_only_structure_digests_and_classes(
+    tmp_path: Path,
+) -> None:
+    output = tmp_path / "output"
+    output.mkdir(mode=0o700)
+    harbor = output / "harbor-job"
+    harbor.mkdir()
+    (harbor / "result.json").write_text('{"exception":"private model output"}')
+    result = calibration.CommandResult(
+        returncode=1,
+        stdout=b"{}\n",
+        stderr=b"",
+        containment={"survivors": 0},
+    )
+    evidence, _document, _parse_status = calibration._command_outcome_evidence(
+        result, output
+    )
+    native = evidence["native"]
+    assert native["snapshot"]["status"] == "captured"
+    assert native["snapshot"]["file_count"] == 1
+    assert len(native["snapshot"]["manifest_sha256"]) == 64
+    assert native["structure"]["status"] == "invalid"
+    assert native["structure"]["exception_classes"] == ["ValidationError"]
+    retained = json.dumps(native)
+    assert "private model output" not in retained
+    assert str(output) not in retained
+
+
+def test_run_attempt_reads_zero_request_ledger_after_cli_failure_and_cleanup(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pricing = calibration._validate_pricing_document(pricing_document())
+    read_minimums: list[int] = []
+    cleanup_calls = 0
+
+    class Sidecar:
+        def __init__(self, **_kwargs: Any) -> None:
+            pass
+
+        def start(self) -> None:
+            pass
+
+        def probe(self) -> None:
+            pass
+
+        def cleanup(self) -> dict[str, Any]:
+            nonlocal cleanup_calls
+            cleanup_calls += 1
+            return {"broker_absent": True, "network_absent": True}
+
+        def read_ledger(self, *, minimum_requests: int = 0) -> dict[str, Any]:
+            assert cleanup_calls == 1
+            read_minimums.append(minimum_requests)
+            return {
+                "known_actual_cost_usd": "0",
+                "locked_endpoint": None,
+                "request_count": 0,
+                "requests": [],
+                "retained_unknown_reservation_usd": "0",
+            }
+
+    class Authority:
+        def __init__(self, *_args: Any) -> None:
+            pass
+
+        def wait_inspect_activate(self, _future: Future[Any]) -> dict[str, Any]:
+            return {}
+
+    def command(*_args: Any, **_kwargs: Any) -> calibration.CommandResult:
+        return calibration.CommandResult(
+            returncode=9,
+            stdout=b'{"error":"private failure"}\n',
+            stderr=b"private stderr",
+            containment={"survivors": 0},
+        )
+
+    monkeypatch.setattr(calibration, "DockerBrokerSidecar", Sidecar)
+    monkeypatch.setattr(calibration, "DockerMainAuthority", Authority)
+    monkeypatch.setattr(calibration, "_bounded_command", command)
+    monkeypatch.setattr(
+        calibration, "_remove_owned_attempt_containers", lambda _n: None
+    )
+    snapshot = calibration.SourceSnapshot(
+        root=ROOT,
+        revision="0" * 40,
+        source_state="dirty-debug",
+        archive_sha256=None,
+        mode="debug-worktree-copy",
+    )
+    attempt = calibration._started_attempt(
+        ordinal=1,
+        profile="target",
+        model_group="openai/gpt-5.6-sol",
+    )
+    with pytest.raises(calibration.AttemptFailure) as caught:
+        calibration._run_attempt(
+            ordinal=1,
+            profile="target",
+            model_group="openai/gpt-5.6-sol",
+            installed_cli=calibration.InstalledCLI(
+                executable=Path("unused"), python=Path("unused"), attestation={}
+            ),
+            snapshot=snapshot,
+            private_root=tmp_path,
+            run_id="cal-test",
+            parent_key="private-parent-key",
+            pricing=pricing,
+            model_pricing=pricing.models[0],
+            remaining_budget=Decimal("1"),
+            attempt_record=attempt,
+        )
+    assert caught.value.evidence["stage"] == "agent_install_or_execution"
+    assert read_minimums == [0]
+    assert cleanup_calls == 1
+    assert attempt["broker"]["request_count"] == 0
+    assert attempt["command_outcome"]["return_code"] == 9
+    assert "private" not in json.dumps(attempt)
 
 
 def _docker_sidecar(
@@ -2361,9 +2571,11 @@ def test_missing_parent_key_fails_without_output_or_network(
     assert result == 1
     assert output["admissible"] is False
     assert output["attempt_count"] == 0
-    assert output["error"] == (
-        "RuntimeError: calibration gateway key environment is required"
-    )
+    assert output["failure"] == {
+        "exception_class": "RuntimeError",
+        "stage": "calibration_harness",
+        "type": "unexpected_failure",
+    }
     assert not any(
         thread.name == "calibration-broker" for thread in threading.enumerate()
     )
@@ -2390,7 +2602,11 @@ def test_startup_sweep_precedes_pricing_and_failure_starts_no_attempt(
     output = json.loads(capsys.readouterr().out)
     assert result == 1
     assert output["attempt_count"] == 0
-    assert output["error"] == "ValueError: pricing rejected"
+    assert output["failure"] == {
+        "exception_class": "ValueError",
+        "stage": "calibration_harness",
+        "type": "unexpected_failure",
+    }
     assert sweep_calls == 1
 
 

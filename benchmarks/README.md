@@ -320,6 +320,13 @@ mode only, while retained proof requires all four attempts from a clean committe
 snapshot. Native ATIF aggregate prompt and completion tokens must both be
 positive, cached tokens may
 be zero, and all three must agree with Harbor's native trial and job metrics.
+After the production CLI returns, command classification precedes the positive
+broker-request gate. Every attempt retains only return code, stream sizes and
+digests, safe canonical schema/outcome/reward fields, and bounded native
+structural status/counts/digests/exception class names. A nonzero or malformed
+CLI result cleans up and reads zero-request broker evidence without retaining
+raw output, paths, exception messages, prompts, model content, logs, or tool
+output.
 
 The broker runs the source snapshot in a pinned Python image mounted read-only.
 Its parent key arrives through anonymous stdin and remains process memory.
@@ -340,8 +347,13 @@ authority and owned resources absent. Docker daemon/root is trusted. Network
 peers and unrelated host containers are not containment evidence. Docker's
 reported IPAM gateway and `Internal` value are recorded as topology only;
 authenticated pricing and later forwarding prove actual egress. This transport
-requires no host reachability or firewall change. No real calibration attempt
-has run, so difficulty calibration remains unproven.
+requires no host reachability or firewall change. No real calibration has
+completed, so difficulty calibration remains unproven. `--debug-deny-upstream` is
+a non-admissible one-attempt-per-profile diagnostic with no proof output. It
+performs normal authenticated pricing, then accepts and reserves one valid broker
+request, locks its endpoint, releases the reservation, and returns a fixed local
+503 before opening a completion upstream connection. It proves OpenCode
+installation, configuration, and endpoint routing at zero completion cost.
 
 Mandatory gates:
 

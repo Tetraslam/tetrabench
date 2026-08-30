@@ -55,6 +55,12 @@ holds Harbor's native `compose up --wait` boundary until activation, before
 OpenCode installation or execution. Authenticated `/model/info` pricing and
 limits are retained only as an exact redacted canonical snapshot and digest.
 It then starts each attempt with bounded failure evidence before model work.
+When the production CLI returns, the runner records its return code, stream byte
+counts and SHA-256 digests, safe canonical schema/outcome/reward fields, and
+no-follow native structural counts/digests before requiring a model request.
+Nonzero and malformed CLI results therefore keep their execution or schema
+failure type even when the broker observed zero requests. Raw streams, paths,
+exception messages, prompts, model content, logs, and tool output are excluded.
 Each attempt locks to its first valid OpenCode endpoint only after successful
 budget reservation. The broker caps output at 8,192 tokens and atomically
 reserves each request's worst-case cost under a shared `$25` limit before
@@ -93,7 +99,12 @@ Cleanup reconciles exact random names and labels regardless of create-call
 outcomes, reaps the attach client, and proves no active authority or owned
 resource remains. A dead parent may leave an inert network; the next startup's
 exact-label sweep removes it. No host port is published. The required clean
-four-attempt report remains unproven.
+four-attempt report remains unproven. Debug mode also supports
+`--debug-deny-upstream`. It requires one attempt per profile and forbids proof
+output. After normal authenticated pricing, the broker accepts one valid request,
+records its endpoint and reservation shape, releases the reservation, and
+returns a fixed local 503 without opening a completion upstream connection. This
+zero-cost route diagnostic is always non-admissible.
 
 Catalog tasks now bind `reward_policy = "numeric" | "binary"` into resolved-plan
 identity. Existing catalogs default to numeric, and retained plans without the

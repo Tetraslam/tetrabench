@@ -15,6 +15,7 @@ import secrets
 import signal
 import socket
 import ssl
+import stat
 import subprocess  # nosec B404
 import sys
 import tempfile
@@ -60,7 +61,6 @@ if not BROKER_CHILD_MODE:
         install_snapshot_cli,
         manifest_digest,
         open_proof_output_authority,
-        safe_error,
         snapshot_native_output,
         source_manifest,
         tree_digest,
@@ -191,6 +191,8 @@ class RequestRecord:
     disconnected: bool
     settlement: str
     retained_unknown_reservation_usd: str
+    upstream_opened: bool
+    parent_authorization_sent: bool
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
@@ -239,6 +241,22 @@ class Reservation:
 @dataclasses.dataclass(slots=True)
 class ForwardingAdmission:
     started: bool = False
+
+
+class AttemptFailure(RuntimeError):
+    def __init__(self, stage: str, failure_type: str, cause: BaseException) -> None:
+        super().__init__(f"{stage}:{failure_type}")
+        self.stage = stage
+        self.failure_type = failure_type
+        self.cause_class = type(cause).__name__
+
+    @property
+    def evidence(self) -> dict[str, str]:
+        return {
+            "exception_class": self.cause_class,
+            "stage": self.stage,
+            "type": self.failure_type,
+        }
 
 
 class SpendLedger:
@@ -340,6 +358,7 @@ class BrokerState:
         fake_response_cost: Decimal | None = None,
         pricing_sha256: str | None = None,
         shutdown_event: threading.Event | None = None,
+        debug_deny_upstream: bool = False,
     ) -> None:
         self.parent_key = parent_key
         self._token: str | None = token
@@ -355,6 +374,7 @@ class BrokerState:
         self.fake_response_cost = fake_response_cost
         self.pricing_sha256 = pricing_sha256
         self.shutdown_event = shutdown_event
+        self.debug_deny_upstream = debug_deny_upstream
         self.lock = threading.Lock()
         self.semaphore = threading.BoundedSemaphore(MAX_CONCURRENCY)
         self.request_count = 0
@@ -1502,8 +1522,15 @@ class CalibrationBrokerHandler(BaseHTTPRequestHandler):
         settlement = "unforwarded"
         response: http.client.HTTPResponse | None = None
         forwarding = ForwardingAdmission()
+        upstream_opened = False
         try:
-            if state.fake_response_cost is not None:
+            if state.debug_deny_upstream:
+                response_body = b'{"error":"diagnostic upstream denied"}'
+                status = HTTPStatus.SERVICE_UNAVAILABLE
+                state.release_unforwarded(reservation)
+                settlement = "released_unforwarded"
+                settlement_finalized = True
+            elif state.fake_response_cost is not None:
                 response_body = b'{"ok":true}'
                 status = HTTPStatus.OK
                 cost = state.fake_response_cost
@@ -1515,6 +1542,7 @@ class CalibrationBrokerHandler(BaseHTTPRequestHandler):
                 parsed = urllib.parse.urlsplit(state.upstream_url)
                 upstream = _upstream_connection(parsed)
                 upstream.connect()
+                upstream_opened = True
                 state.send_connected_request(
                     upstream,
                     self.headers,
@@ -1610,6 +1638,8 @@ class CalibrationBrokerHandler(BaseHTTPRequestHandler):
                             disconnected=disconnected,
                             settlement=settlement,
                             retained_unknown_reservation_usd=str(retained),
+                            upstream_opened=upstream_opened,
+                            parent_authorization_sent=forwarding.started,
                         )
                     )
                 state.write_evidence()
@@ -1634,6 +1664,7 @@ class CalibrationBroker:
         pricing_sha256: str | None = None,
         inactive: bool = False,
         shutdown_event: threading.Event | None = None,
+        debug_deny_upstream: bool = False,
     ) -> None:
         self.host = host
         self.port = port
@@ -1651,6 +1682,7 @@ class CalibrationBroker:
             fake_response_cost=fake_response_cost,
             pricing_sha256=pricing_sha256,
             shutdown_event=shutdown_event,
+            debug_deny_upstream=debug_deny_upstream,
         )
         self.server: CalibrationHTTPServer | None = None
         self.thread: threading.Thread | None = None
@@ -1726,6 +1758,7 @@ def _broker_child_main(argv: list[str]) -> int:
     parser.add_argument("--pricing-json", required=True)
     parser.add_argument("--pricing-sha256", required=True)
     parser.add_argument("--fake-response-cost")
+    parser.add_argument("--debug-deny-upstream", action="store_true")
     args = parser.parse_args(argv)
     models = strict_json(args.pricing_json.encode())
     _validate_broker_pricing_binding(
@@ -1771,6 +1804,7 @@ def _broker_child_main(argv: list[str]) -> int:
         pricing_sha256=args.pricing_sha256,
         inactive=True,
         shutdown_event=stop,
+        debug_deny_upstream=args.debug_deny_upstream,
     )
     credentials["parent_key"] = ""  # nosec B105 - best-effort replacement
     credentials["probe_token"] = ""  # nosec B105 - best-effort replacement
@@ -1845,6 +1879,7 @@ class DockerBrokerSidecar:
         budget_cap: Decimal,
         upstream_url: str = UPSTREAM_URL,
         fake_response_cost: Decimal | None = None,
+        debug_deny_upstream: bool = False,
     ) -> None:
         self.names = names
         self.snapshot_root = snapshot_root
@@ -1858,6 +1893,7 @@ class DockerBrokerSidecar:
         self.budget_cap = budget_cap
         self.upstream_url = upstream_url
         self.fake_response_cost = fake_response_cost
+        self.debug_deny_upstream = debug_deny_upstream
         self.process: subprocess.Popen[bytes] | None = None
         self.created_network = False
         self.created_container = False
@@ -1941,6 +1977,8 @@ class DockerBrokerSidecar:
         ]
         if self.fake_response_cost is not None:
             argv.extend(["--fake-response-cost", str(self.fake_response_cost)])
+        if self.debug_deny_upstream:
+            argv.append("--debug-deny-upstream")
         _docker(argv)
         self.created_container = True
         self.process = subprocess.Popen(  # nosec B603 B607
@@ -2538,7 +2576,164 @@ def _validate_harbor_metrics(
     return harbor_metrics
 
 
-def _started_attempt(*, ordinal: int, profile: str, model_group: str) -> dict[str, Any]:
+def _failure_evidence(error: BaseException) -> dict[str, str]:
+    if isinstance(error, AttemptFailure):
+        return error.evidence
+    return {
+        "exception_class": type(error).__name__,
+        "stage": "calibration_harness",
+        "type": "unexpected_failure",
+    }
+
+
+def _native_diagnostic(output: Path) -> dict[str, Any]:
+    try:
+        metadata = os.lstat(output)
+    except FileNotFoundError:
+        return {"output": {"state": "absent"}, "snapshot": {"status": "absent"}}
+    output_state = {
+        "mode": oct(stat.S_IMODE(metadata.st_mode)),
+        "state": "directory" if stat.S_ISDIR(metadata.st_mode) else "unsafe_type",
+    }
+    try:
+        native = snapshot_native_output(output)
+    except BaseException as error:
+        return {
+            "output": output_state,
+            "snapshot": {
+                "exception_classes": [type(error).__name__],
+                "status": "failed",
+            },
+        }
+    files = [item for item in native.manifest if item["type"] == "file"]
+    directories = [item for item in native.manifest if item["type"] == "directory"]
+    result_count = 0
+    parsed_results = 0
+    exception_classes: set[str] = set()
+    for path, data in native.files.items():
+        if path == "harbor-job/result.json":
+            result_count += 1
+            try:
+                JobResult.model_validate_json(data)
+                parsed_results += 1
+            except BaseException as error:
+                exception_classes.add(type(error).__name__)
+        elif path.startswith("harbor-job/") and path.endswith("/result.json"):
+            result_count += 1
+            try:
+                TrialResult.model_validate_json(data)
+                parsed_results += 1
+            except BaseException as error:
+                exception_classes.add(type(error).__name__)
+    inspection_status = (
+        "valid"
+        if result_count >= 1 and result_count == parsed_results
+        else "invalid"
+        if exception_classes
+        else "incomplete"
+    )
+    return {
+        "output": output_state,
+        "snapshot": {
+            "directory_count": len(directories),
+            "entry_count": len(native.manifest),
+            "file_count": len(files),
+            "manifest_sha256": manifest_digest(native.manifest),
+            "status": "captured",
+        },
+        "structure": {
+            "exception_classes": sorted(exception_classes),
+            "parsed_result_count": parsed_results,
+            "result_count": result_count,
+            "status": inspection_status,
+        },
+    }
+
+
+def _command_outcome_evidence(
+    result: CommandResult, output: Path
+) -> tuple[dict[str, Any], Any | None, str]:
+    stdout_sha256 = hashlib.sha256(result.stdout).hexdigest()
+    stderr_sha256 = hashlib.sha256(result.stderr).hexdigest()
+    document: Any | None = None
+    parse_status = "malformed"
+    canonical_fields: dict[str, Any] | None = None
+    try:
+        candidate = strict_json(result.stdout)
+        if result.stdout == (canonical(candidate) + "\n").encode():
+            document = candidate
+            parse_status = "canonical"
+            if isinstance(candidate, dict):
+                fields: dict[str, Any] = {}
+                schema_version = candidate.get("schema_version")
+                outcome = candidate.get("outcome")
+                reward = candidate.get("reward")
+                if type(schema_version) is int:
+                    fields["schema_version"] = schema_version
+                if outcome in {"succeeded", "failed", "cancelled"}:
+                    fields["outcome"] = outcome
+                if reward in {"0", "1"}:
+                    fields["reward"] = reward
+                canonical_fields = fields
+        else:
+            parse_status = "noncanonical"
+    except BaseException:
+        pass
+    return (
+        {
+            "canonical_cli": canonical_fields,
+            "containment": result.containment,
+            "native": _native_diagnostic(output),
+            "return_code": result.returncode,
+            "status": "returned",
+            "stderr": {"bytes": len(result.stderr), "sha256": stderr_sha256},
+            "stdout": {
+                "bytes": len(result.stdout),
+                "parse_status": parse_status,
+                "sha256": stdout_sha256,
+            },
+        },
+        document,
+        parse_status,
+    )
+
+
+def _validate_cli_outcome(
+    result: CommandResult, document: Any | None, parse_status: str
+) -> dict[str, Any]:
+    if result.returncode != 0:
+        raise AttemptFailure(
+            "agent_install_or_execution", "nonzero_exit", RuntimeError()
+        )
+    if result.stderr:
+        raise AttemptFailure(
+            "agent_install_or_execution", "unexpected_stderr", ValueError()
+        )
+    if parse_status != "canonical" or not isinstance(document, dict):
+        raise AttemptFailure("cli_schema", "malformed_stdout", ValueError())
+    if set(document) != {
+        "job_directory",
+        "outcome",
+        "reward",
+        "schema_version",
+        "summary",
+    }:
+        raise AttemptFailure("cli_schema", "schema_mismatch", ValueError())
+    if document.get("schema_version") != 1:
+        raise AttemptFailure("cli_schema", "schema_version", ValueError())
+    if document["outcome"] != "succeeded" or document["reward"] not in {"0", "1"}:
+        raise AttemptFailure("cli_outcome", "not_succeeded", ValueError())
+    return document
+
+
+def _started_attempt(
+    *,
+    ordinal: int,
+    profile: str,
+    model_group: str,
+    debug_deny_upstream: bool = False,
+) -> dict[str, Any]:
+    empty_sha256 = hashlib.sha256(b"").hexdigest()
     return {
         "admissible": False,
         "broker": {
@@ -2546,8 +2741,24 @@ def _started_attempt(*, ordinal: int, profile: str, model_group: str) -> dict[st
             "request_count": 0,
             "requests": [],
         },
+        "command_outcome": {
+            "canonical_cli": None,
+            "native": {"output": {"state": "not_inspected"}},
+            "return_code": None,
+            "status": "not_returned",
+            "stderr": {"bytes": 0, "sha256": empty_sha256},
+            "stdout": {
+                "bytes": 0,
+                "parse_status": "not_returned",
+                "sha256": empty_sha256,
+            },
+        },
         "model": model_group,
         "model_group": model_group,
+        "diagnostic": {
+            "admissible": False,
+            "deny_upstream": debug_deny_upstream,
+        },
         "ordinal": ordinal,
         "outcome": "started",
         "profile": profile,
@@ -2603,7 +2814,7 @@ def _mark_attempt_failed(
         attempt["broker"] = broker_evidence
         attempt["spend"] = spend
     attempt["admissible"] = False
-    attempt["error"] = safe_error(error)
+    attempt["failure"] = _failure_evidence(error)
     attempt["outcome"] = "failed"
 
 
@@ -2621,6 +2832,7 @@ def _run_attempt(
     model_pricing: dict[str, Any],
     remaining_budget: Decimal,
     attempt_record: dict[str, Any],
+    debug_deny_upstream: bool = False,
 ) -> dict[str, Any]:
     model = model_group
     harbor_model = f"openai/{model_group}"
@@ -2657,6 +2869,7 @@ def _run_attempt(
         pricing=pricing,
         max_input_tokens=model_pricing["max_input_tokens"],
         budget_cap=remaining_budget,
+        debug_deny_upstream=debug_deny_upstream,
     )
     authority = DockerMainAuthority(
         names,
@@ -2669,6 +2882,7 @@ def _run_attempt(
     network_evidence: dict[str, Any] | None = None
     ledger_document: dict[str, Any] | None = None
     security_evidence: dict[str, Any] | None = None
+    attempt_error: BaseException | None = None
     try:
         try:
             sidecar.start()
@@ -2697,12 +2911,17 @@ def _run_attempt(
                     cwd=project,
                     env=environment,
                     timeout=MAX_ATTEMPT_SECONDS,
+                    check=False,
                 )
                 network_evidence = authority.wait_inspect_activate(command_future)
                 result = command_future.result(timeout=MAX_ATTEMPT_SECONDS)
+                command_evidence, document, parse_status = _command_outcome_evidence(
+                    result, output
+                )
+                attempt_record["command_outcome"] = command_evidence
+                document = _validate_cli_outcome(result, document, parse_status)
             except BaseException:
                 _remove_owned_attempt_containers(names)
-                cleanup_evidence = sidecar.cleanup()
                 if command_future is not None:
                     with suppress(BaseException):
                         command_future.result(timeout=30)
@@ -2710,9 +2929,28 @@ def _run_attempt(
             finally:
                 executor.shutdown(wait=True, cancel_futures=True)
             security_evidence = sidecar.inspect_secret_boundary()
-            ledger_document = sidecar.read_ledger(minimum_requests=1)
+            try:
+                ledger_document = sidecar.read_ledger(minimum_requests=1)
+            except BaseException as error:
+                raise AttemptFailure(
+                    "broker_evidence", "minimum_requests", error
+                ) from error
+        except BaseException as error:
+            attempt_error = error
+            raise
         finally:
-            cleanup_evidence = sidecar.cleanup()
+            try:
+                cleanup_evidence = sidecar.cleanup()
+                attempt_record["cleanup"] = {"status": "completed"}
+            except BaseException as cleanup_error:
+                attempt_record["cleanup"] = {
+                    "exception_class": type(cleanup_error).__name__,
+                    "status": "failed",
+                }
+                if attempt_error is None:
+                    raise AttemptFailure(
+                        "resource_cleanup", "cleanup_failed", cleanup_error
+                    ) from cleanup_error
     except BaseException as error:
         if ledger_document is None:
             with suppress(BaseException):
@@ -2762,37 +3000,26 @@ def _run_attempt(
     attempt_record["spend"] = spend
     attempt_record["outcome"] = "failed"
     duration = time.monotonic() - started
-    if result.stderr:
-        raise ValueError("production calibration CLI stderr was not empty")
-    document = strict_json(result.stdout)
-    if (
-        not isinstance(document, dict)
-        or result.stdout != (canonical(document) + "\n").encode()
-    ):
-        raise ValueError("production calibration CLI output was not canonical JSON")
-    if set(document) != {
-        "job_directory",
-        "outcome",
-        "reward",
-        "schema_version",
-        "summary",
-    }:
-        raise ValueError("production calibration CLI JSON schema changed")
-    if document["outcome"] != "succeeded" or document["reward"] not in {"0", "1"}:
-        raise ValueError("production calibration did not complete normally")
     reward = int(document["reward"])
-    native: NativeSnapshot = snapshot_native_output(output)
-    record = _native_run_record(
-        native,
-        document,
-        ordinal=ordinal,
-        expected_task_checksum=expected_task_checksum,
-        expected_task_digest=expected_task_digest,
-        expected_agent_name="opencode",
-        expected_model_name=harbor_model,
-        expected_reward=reward,
-        require_atif=True,
-    )
+    try:
+        native: NativeSnapshot = snapshot_native_output(output)
+        record = _native_run_record(
+            native,
+            document,
+            ordinal=ordinal,
+            expected_task_checksum=expected_task_checksum,
+            expected_task_digest=expected_task_digest,
+            expected_agent_name="opencode",
+            expected_model_name=harbor_model,
+            expected_reward=reward,
+            require_atif=True,
+        )
+    except BaseException as error:
+        snapshot_status = attempt_record["command_outcome"]["native"]["snapshot"][
+            "status"
+        ]
+        failure_type = "snapshot" if snapshot_status == "failed" else "validation"
+        raise AttemptFailure("native_output", failure_type, error) from error
     if record["native"]["trial"]["agent"]["name"] != "opencode":
         raise ValueError("native OpenCode agent identity mismatch")
     if record["trajectory"]["agent"]["model_name"] != harbor_model:
@@ -2825,6 +3052,7 @@ def _run_attempt(
     trajectory_metrics = _validate_metrics(record)
     completed = {
         "broker": broker_evidence,
+        "command_outcome": attempt_record["command_outcome"],
         "containment": result.containment,
         "duration_seconds": str(round(duration, 3)),
         "gates": gates,
@@ -2905,7 +3133,11 @@ def _failure(
         "attempt_count": len(completed),
         "attempts": completed,
         "attempts_per_profile": args.attempts_per_profile,
-        "error": safe_error(error),
+        "diagnostic": {
+            "admissible": False,
+            "deny_upstream": args.debug_deny_upstream,
+        },
+        "failure": _failure_evidence(error),
         "ok": False,
         "schema_version": 1,
         "spend_exposure": {
@@ -2932,6 +3164,7 @@ def parse_arguments(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--attempts-per-profile", type=int)
     parser.add_argument("--debug", action="store_true")
+    parser.add_argument("--debug-deny-upstream", action="store_true")
     parser.add_argument("--output", type=Path)
     args = parser.parse_args(argv)
     expected_attempts = 1 if args.debug else 2
@@ -2943,6 +3176,10 @@ def parse_arguments(argv: list[str]) -> argparse.Namespace:
         )
     if args.output is not None and (args.debug or args.attempts_per_profile != 2):
         parser.error("--output requires a clean exact-four calibration")
+    if args.debug_deny_upstream and not args.debug:
+        parser.error("--debug-deny-upstream requires --debug")
+    if args.debug_deny_upstream and args.output is not None:
+        parser.error("--debug-deny-upstream does not permit --output")
     return args
 
 
@@ -2990,6 +3227,7 @@ def main(argv: list[str] | None = None) -> int:
                         ordinal=ordinal,
                         profile=profile,
                         model_group=model_group,
+                        debug_deny_upstream=args.debug_deny_upstream,
                     )
                     attempts.append(attempt_record)
                     try:
@@ -3006,15 +3244,14 @@ def main(argv: list[str] | None = None) -> int:
                             model_pricing=pricing_by_model[model_group],
                             remaining_budget=MAX_TOTAL_COST - total_cost,
                             attempt_record=attempt_record,
+                            debug_deny_upstream=args.debug_deny_upstream,
                         )
                         total_cost += Decimal(
                             attempt_record["spend"]["known_actual_cost_usd"]
                         )
                     except BaseException as error:
-                        if attempt_record.get("outcome") != "failed":
+                        if "failure" not in attempt_record:
                             _mark_attempt_failed(attempt_record, error)
-                        elif "error" not in attempt_record:
-                            attempt_record["error"] = safe_error(error)
                         raise
             source_unchanged = (
                 source_manifest(
@@ -3091,6 +3328,10 @@ def main(argv: list[str] | None = None) -> int:
                     *evidence_argv(effective_argv),
                 ],
                 "debug": args.debug,
+                "diagnostic": {
+                    "admissible": False,
+                    "deny_upstream": args.debug_deny_upstream,
+                },
                 "ok": admissible,
                 "profiles": [
                     {
@@ -3147,10 +3388,15 @@ def main(argv: list[str] | None = None) -> int:
             try:
                 sweep_calibration_run(run_id)
             except BaseException as cleanup_error:
-                error = RuntimeError(
-                    f"{safe_error(error)}; final Docker cleanup failed: "
-                    f"{safe_error(cleanup_error)}"
-                )
+                if attempts:
+                    attempts[-1]["final_cleanup"] = {
+                        "exception_class": type(cleanup_error).__name__,
+                        "status": "failed",
+                    }
+                if not isinstance(error, AttemptFailure):
+                    error = AttemptFailure(
+                        "resource_cleanup", "final_cleanup_failed", cleanup_error
+                    )
         _emit(
             _failure(
                 args,
