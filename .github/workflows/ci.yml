@@ -59,7 +59,7 @@ jobs:
         run: docker info
 
       - name: Run required Docker tests
-        run: TETRABENCH_EXPECT_DOCKER_TESTS=6 uv run pytest --strict-markers -m docker
+        run: TETRABENCH_EXPECT_DOCKER_TESTS=7 uv run pytest --strict-markers -m docker
 
       - name: Run non-Docker test suite
         run: uv run pytest --strict-markers -m "not docker"

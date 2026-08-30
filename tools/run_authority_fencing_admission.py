@@ -33,6 +33,7 @@ from harbor.models.job.config import JobConfig
 from harbor.models.job.lock import JobLock, TrialLock
 from harbor.models.job.result import JobResult
 from harbor.models.task.task import Task
+from harbor.models.trajectories import Trajectory
 from harbor.models.trial.artifact_manifest import ArtifactManifestEntry
 from harbor.models.trial.config import TrialConfig
 from harbor.models.trial.result import TrialResult
@@ -1375,6 +1376,10 @@ def _native_run_record(
     ordinal: int,
     expected_task_checksum: str,
     expected_task_digest: str,
+    expected_agent_name: str = "oracle",
+    expected_model_name: str | None = None,
+    expected_reward: int = 1,
+    require_atif: bool = False,
 ) -> dict[str, Any]:
     job_prefix = "harbor-job"
     root_entries = [
@@ -1398,8 +1403,8 @@ def _native_run_record(
         or config.environment.type is None
         or config.environment.type.value != "docker"
         or len(config.agents) != 1
-        or config.agents[0].name != "oracle"
-        or config.agents[0].model_name is not None
+        or config.agents[0].name != expected_agent_name
+        or config.agents[0].model_name != expected_model_name
         or config.retry.max_retries != 0
         or lock.retry.max_retries != 0
         or lock.n_concurrent_trials != 1
@@ -1413,6 +1418,7 @@ def _native_run_record(
         result.n_total_trials != 1
         or result.stats.n_completed_trials != 1
         or result.stats.n_errored_trials != 0
+        or result.stats.n_retries != 0
         or result.stats.n_cancelled_trials != 0
         or result.stats.n_running_trials != 0
         or result.stats.n_pending_trials != 0
@@ -1460,15 +1466,34 @@ def _native_run_record(
         or type(raw_rewards) is not dict
         or set(raw_rewards) != {"reward"}
         or type(raw_rewards["reward"]) is not int
-        or raw_rewards["reward"] != 1
+        or raw_rewards["reward"] != expected_reward
         or trial.task_checksum != expected_task_checksum
         or trial_lock.task.digest != expected_task_digest
         or trial_lock != lock.trials[0]
         or trial.config != trial_config
+        or trial_config.agent.name != expected_agent_name
+        or trial_config.agent.model_name != expected_model_name
         or trial_config.task.path is None
         or trial_config.task.path.name != "authority-fencing"
     ):
         raise ValueError("native Harbor trial evidence mismatch")
+    expected_provider: str | None = None
+    expected_native_model: str | None = None
+    if expected_model_name is not None:
+        expected_provider, expected_native_model = expected_model_name.split("/", 1)
+    if (
+        trial.agent_info.name != expected_agent_name
+        or (expected_model_name is None and trial.agent_info.model_info is not None)
+        or (
+            expected_model_name is not None
+            and (
+                trial.agent_info.model_info is None
+                or trial.agent_info.model_info.provider != expected_provider
+                or trial.agent_info.model_info.name != expected_native_model
+            )
+        )
+    ):
+        raise ValueError("native Harbor agent identity mismatch")
     manifest_path = f"{trial_directory}/artifacts/manifest.json"
     manifest_data = strict_json(snapshot.read(manifest_path))
     if not isinstance(manifest_data, list):
@@ -1496,8 +1521,8 @@ def _native_run_record(
     if (
         summary_record.policy != "binary"
         or summary_record.aggregate_kind != "binary_pass_rate"
-        or summary_record.aggregate != "1"
-        or summary_record.pass_count != 1
+        or summary_record.aggregate != str(expected_reward)
+        or summary_record.pass_count != expected_reward
         or summary_record.sample_count != 1
         or summary_record.task_count != 1
         or len(summary_record.tasks) != 1
@@ -1505,9 +1530,29 @@ def _native_run_record(
         or len(summary_record.trials) != 1
         or summary_record.trials[0].task_id != "authority-fencing"
         or summary_record.trials[0].trial_name != trial.trial_name
-        or summary_record.trials[0].value != "1"
+        or summary_record.trials[0].value != str(expected_reward)
     ):
         raise ValueError("production CLI binary reward summary mismatch")
+    trajectory_path = f"{trial_directory}/agent/trajectory.json"
+    trajectory_record: dict[str, Any] | None = None
+    if trajectory_path in snapshot.files:
+        trajectory = Trajectory.model_validate_json(snapshot.read(trajectory_path))
+        metrics = trajectory.final_metrics
+        trajectory_record = {
+            "agent": {
+                "model_name": trajectory.agent.model_name,
+                "name": trajectory.agent.name,
+                "version": trajectory.agent.version,
+            },
+            "final_metrics": (
+                metrics.model_dump(mode="json") if metrics is not None else None
+            ),
+            "schema_version": trajectory.schema_version,
+            "sha256": _snapshot_digest(snapshot, trajectory_path),
+            "step_count": len(trajectory.steps),
+        }
+    if require_atif and trajectory_record is None:
+        raise ValueError("production OpenCode run omitted its ATIF trajectory")
     return {
         "artifact_manifest": {
             "entries": [item.model_dump(mode="json") for item in manifest],
@@ -1529,6 +1574,15 @@ def _native_run_record(
                 "started_at": result.started_at.isoformat(),
             },
             "trial": {
+                "agent": {
+                    "model": (
+                        trial.agent_info.model_info.model_dump(mode="json")
+                        if trial.agent_info.model_info is not None
+                        else None
+                    ),
+                    "name": trial.agent_info.name,
+                    "version": trial.agent_info.version,
+                },
                 "config_sha256": _snapshot_digest(snapshot, trial_config_path),
                 "finished_at": trial.finished_at.isoformat(),
                 "id": str(trial.id),
@@ -1545,6 +1599,7 @@ def _native_run_record(
             "manifest_sha256": manifest_digest(snapshot.manifest),
         },
         "ordinal": ordinal,
+        "trajectory": trajectory_record,
     }
 
 

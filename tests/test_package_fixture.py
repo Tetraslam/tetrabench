@@ -54,3 +54,11 @@ def test_fixture_is_source_only_and_absent_from_installed_wheel(tmp_path: Path) 
         assert not any(
             name.endswith("tools/run_authority_fencing_admission.py") for name in names
         )
+        assert not any(
+            name.endswith("tools/run_authority_fencing_calibration.py")
+            for name in names
+        )
+        assert not any(
+            name.endswith("tests/test_authority_fencing_calibration.py")
+            for name in names
+        )

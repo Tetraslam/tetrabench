@@ -42,6 +42,45 @@ the returned addresses; Harbor's Docker egress control may permit that lookup.
 Direct-IP and hostname TCP connection attempts must both fail, and either
 connection succeeding forces reward `0`. Detached Modal proof remains unproven
 because the retained storage credentials are expired.
+The unlisted candidate also has a source-only local calibration runner with two
+fixed OpenCode model groups. Proof mode first discovers Docker's default bridge,
+binds only its gateway and configured high port `62017`, and requires a one-shot
+ephemeral-token probe from a disposable default-bridge container. Loopback is
+debug-only. Before its deadline, missing or invalid authorization leaves the
+probe token usable, and exactly one of concurrent valid probes succeeds. At or
+after the deadline, the broker rejects the probe without consuming its token and
+permanently invalidates the broker. A blocked probe stops before
+authenticated pricing or a model request, reports exact temporary UFW add/delete
+commands for the discovered topology, and produces no admissible evidence. After
+a successful probe, the runner reads authenticated `/model/info` pricing and
+limits, rejects rates above fixed hard ceilings, and retains only a redacted
+canonical snapshot and digest.
+It then starts each attempt with bounded failure evidence before model work.
+Each attempt locks to its first valid OpenCode endpoint only after successful
+budget reservation. The broker caps output at 8,192 tokens and atomically
+reserves each request's worst-case cost under a shared `$25` limit before
+forwarding. Every upstream status requires one finite nonnegative authoritative
+cost. Missing or malformed settlement makes the ledger fatal, retains the full
+reservation as unknown exposure, and prevents later forwarding. Child responses
+use only `text/event-stream` for a validated streaming request or
+`application/json` otherwise; upstream content type, encoding, and other headers
+are not reflected. Fake-upstream tests cover this boundary without a model call.
+The required clean four-attempt report remains unproven.
+
+Real local calibration may need a temporary operator-managed firewall rule.
+Discover the current default bridge interface, subnet, and gateway, then allow
+only that interface and source subnet to the exact gateway TCP port `62017` for
+the duration of one run. The blocked-topology report fills in this exact pair:
+
+```console
+sudo ufw allow in on <interface> from <subnet> to <gateway> port 62017 proto tcp
+sudo ufw delete allow in on <interface> from <subnet> to <gateway> port 62017 proto tcp
+```
+
+Treat them as a try/finally pair: install the first rule immediately before the
+run and execute the second in cleanup after success, failure, or interruption.
+The runner does not invoke either command, alter UFW, bind `0.0.0.0`, or create a
+standing rule.
 
 Catalog tasks now bind `reward_policy = "numeric" | "binary"` into resolved-plan
 identity. Existing catalogs default to numeric, and retained plans without the

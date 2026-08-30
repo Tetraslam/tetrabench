@@ -758,3 +758,91 @@ The clean local admission passed all 17 gold, no-op, focused-mutant, broad-mutan
 The canonical subject is `55008e986151650fcd441496f9cd1f651471a746611b9cbbcf7d5a5c4e95bce4`. Its source manifest is `fdf94bf71970b20bd76df6519b5f4ea01df0d1d6c82822e4ed3f45350597bc40`, task context is `7b6bfb34f19910ca832de6c6c05ac12d76ef1ecc832c7dd711aa4a41967ccc1d`, and equal task-tests/verifier context is `460f3fd934ee4c6ba63f0214aae3c5cb5b2213fe20cafa5b9ee2b75d1d63374a`. The locked wheel is bound by SHA-256 `515c88567e8d1ae777a7fa6b99403dbda61cf608ff0b73a6630dcb13794a78c8`, the fresh verifier image by `sha256:a51f6011aa7b272dbb84d9e3836b819e1fbc71c0b17f5f6ed3238f2a9339faef`, and every native trial by task digest `sha256:1b100e6225edaf5ce9fe646d135bb7b86298c76709ce4dc4b0f62eef6b340ddd`.
 
 The retained report is `~/.local/share/opencode/tetrabench-research/authority-fencing-admission/2026-08-30/authority-fencing-local-n3.json`, mode `0600`, 52,944 bytes, SHA-256 `df0e0b1e38325708e187f09ac1ad4a0b851f5f1ab212e7947994f817e308d3c5`. Local gold repetition, no-op, mutant, and exploit gates are passed. Two detached repetitions, the detached audit, two-profile calibration, budget completion, and catalog admission remain `unproven`.
+
+## 2026-08-30T02:30:41-07:00: E-078 local calibration runner boundary
+
+Provenance: user-provided calibration and credential-broker contract; pinned Harbor 0.22 OpenCode adapter inspection; current OpenCode provider documentation; fake-upstream adversarial tests; production `tetrabench plan` compilation for both fixed profiles; and an unauthenticated gateway liveliness request. No model completion, calibration attempt, credential file, proof output, commit, or push occurred.
+
+The source-only runner fixes `target` to Harbor model `openai/openai/gpt-5.6-sol` and `alternate` to `openai/anthropic/claude-sonnet-5`, with two ordered unretried attempts each. The parent gateway key is read only from `TETRABENCH_CALIBRATION_GATEWAY_KEY`. A host broker issues one high-entropy token per attempt and accepts only the exact route, model, method, framing, bounded body, output-token count, request count, concurrency, and deadline. It forwards to the fixed LiteLLM gateway after replacing authorization, strips sensitive response headers, streams boundedly, records no model content, and requires an authoritative finite nonnegative response-cost header for every successful model response under one `$25` ledger and conservative `$5` final-request margin.
+
+The runner reuses the admission tool's clean single-HEAD archive, locked wheel installation, absolute production CLI, subreaper containment, no-follow native snapshot, native Harbor validation, and private fd-anchored evidence writer. Exact four-attempt clean execution is the only admissible mode; one attempt per profile is dirty diagnostics without proof output. Fake-upstream tests cover the broker and production profile compilation without model spend. The gateway liveliness endpoint returned HTTP 200 from this host. The broad virtual key is not revoked because it remains in OpenCode auth; the runner creates no key file. Real calibration remains `unproven` until this code is committed and the clean four attempts are explicitly run.
+
+## 2026-08-30T02:48:59-07:00: E-078 local validation
+
+Provenance: final local Python 3.12 validation, six real-Docker tests, fake-upstream broker adversaries, production profile compilation, package inspection, dependency audit, and redacted secret scans. No model completion, calibration attempt, credential file, proof output, commit, or push occurred.
+
+All six Docker tests and 779 non-Docker tests passed. The broker suite covers wrong, expired, invalidated, and duplicate credentials; forbidden methods, routes, traversal, framing, body, headers, models, output tokens, requests, and concurrency; response streaming, disconnect, malformed or missing costs, shared spend margin, sensitive response headers, inflight shutdown, and child-environment credential exclusion. Both fixed profiles compile through the production `tetrabench plan` command without network or model access.
+
+Lock and locked-environment checks, Ruff check and format, ty, Bandit, actionlint, wheel/sdist build and source-only exclusion, isolated locked-wheel installation and metadata/content smoke, all-groups pip-audit, `git diff --check`, and redacted full-history plus worktree Gitleaks passed. The only network request was the unauthenticated gateway liveliness check, which returned HTTP 200. Real calibration remains `unproven` and no final attempt ran.
+
+## 2026-08-30T03:28:54-07:00: E-078 calibration review correction
+
+Provenance: user-provided three-review correction contract; LiteLLM `/model/info` interface inspection; fake-upstream and direct ledger tests; 814-test non-Docker suite; six pre-existing real-Docker tests; package, audit, lint, type, security, and secret-scan checks; and one Docker default-bridge reachability test. No authenticated gateway request, model completion, calibration attempt, proof output, commit, or push occurred.
+
+The runner now performs one authenticated exact-group pricing and model-limit preflight before any broker. It retains only selected rates, limits, and their canonical digest. Finite positive rates above the fixed `$10` input/cache or `$50` output per-million ceilings fail closed. Each request reserves its exact forwarded-body byte upper bound and 8,192 output tokens at those ceilings plus `$0.25`; the shared ledger makes reservation and settlement atomic under `$25`. Endpoint-specific output-token schemas, the first-valid-request endpoint lock, bounded accepted-socket workers, pre-forward success-metadata validation, mandatory coherent ATIF aggregate token metrics, and actual endpoint/reservation/cost evidence are covered by fake-upstream tests.
+
+Proof mode now rejects caller-selected addresses and discovers the rootful Docker default `bridge` gateway and host interface. Debug mode accepts loopback only and exactly one attempt per profile. The bridge reachability test exposed this workstation's UFW boundary: a container on Docker's default bridge timed out connecting to the host gateway listener because host `INPUT` defaults to drop and has no matching TCP allow rule. The six existing Docker tests pass under the CI-parity `uv run` environment, and all 814 non-Docker tests pass. Successful container-to-broker reachability remains `unproven` on this host; the broker made no paid upstream call.
+
+## 2026-08-30T03:59:03-07:00: E-078 fixed-port fail-closed topology completion
+
+Provenance: user-provided topology correction; one real disposable-container probe on Docker's default bridge; a substituted-connector success test; fake-upstream and adversarial HTTP tests; all 818 non-Docker tests; all seven Docker tests; and complete local lint, type, package, dependency, security, workflow, diff, and secret-scan parity. No authenticated gateway request, model completion, calibration attempt, firewall mutation, proof output, commit, or push occurred.
+
+Proof mode now binds only the discovered default-bridge gateway and fixed/configured high port `62017`. Before authenticated `/model/info` or any model request, a broker accepts one distinct ephemeral-token `204` probe from a disposable default-bridge container; this route cannot forward upstream. On this workstation the container timed out at the firewall, the probe returned a fixed failure, pricing was never called, authoritative cost remained zero, and no evidence was admissible. The successful route is covered through a substituted connector that performs the same authenticated HTTP exchange against a loopback test broker.
+
+The runner contains no `sudo`, UFW, or firewall mutation path and never binds a wildcard interface. User documentation permits only an operator-installed temporary rule scoped to the discovered bridge interface, source subnet, gateway, and TCP port `62017`, with deletion of that exact rule after success or failure. There is no standing-rule contract.
+
+The retained pricing snapshot still selects only the two exact model groups and finite positive rates/limits, redacts provider configuration, and enforces `$10` input/cache and `$50` output per-million ceilings. Forwarded UTF-8 bytes bound input tokens; endpoint-specific output fields include `max_completion_tokens`; output is capped at 8,192. Decimal reservations and authoritative settlement are atomic under `$25`, each actual cost must fit its reservation, and the recorded total must equal ledger cost. Accepted-socket workers are bounded before thread creation, each attempt locks its first valid endpoint, invalid successful upstream metadata returns an immediate closing `502`, and native ATIF prompt and completion tokens must both be positive and agree with Harbor evidence.
+
+`uv lock --check`, locked all-group sync, Ruff check/format, ty, Bandit, actionlint, wheel/sdist build and source-only exclusion, isolated locked-wheel metadata/content smoke, all-groups pip-audit, `git diff --check`, and redacted Gitleaks over 30 commits plus the worktree passed. Successful bridge reachability and the clean exact-four calibration remain `unproven`.
+
+## 2026-08-30T05:07:18-07:00: E-081 probe-expiry validation and note-order correction
+
+Provenance: focused deadline/race tests, complete local Python 3.12 validation, seven real-Docker tests, package inspection, dependency audit, and a redacted staged-diff secret scan. No authenticated gateway request, model call, firewall command, or proof output occurred.
+
+The 05:00:19 probe-expiry contract entry was accidentally inserted before the existing 04:09:57 through 04:53:22 entries instead of appended at the end. This entry records that ordering error without rewriting any prior note. The contract itself remains unchanged.
+
+Ten focused probe tests, all 843 non-Docker tests, and all seven Docker tests passed. `uv lock --check`, locked all-group sync, Ruff check/format, ty, Bandit, actionlint, wheel/sdist build and source-only exclusion, isolated locked-wheel metadata/content smoke, all-groups pip-audit, and `git diff --check` passed. Digest-pinned Gitleaks scanned the complete staged diff and found no leaks. Successful bridge reachability and the clean exact-four calibration remain `unproven`.
+
+## 2026-08-30T05:00:19-07:00: Probe-expiry atomicity contract
+
+Provenance: user-provided probe-expiry correction and focused local regressions. No firewall, gateway, provider, or model call is authorized.
+
+`consume_probe` must evaluate `now >= deadline` while holding the same broker state lock that owns active state, token authentication, and one-shot consumption. Exact equality is expired. Expiry rejects before comparing or consuming the token, clears usable broker credentials, and permanently marks the broker inactive. Moving the clock backward cannot reactivate it. A request admitted before the deadline may consume the token; concurrent requests blocked on the lock evaluate expiry only after acquiring it.
+
+Focused tests cover immediately before, exactly at, and immediately after the deadline plus two valid callers held across expiry. Ten focused probe tests pass. Full validation remains pending and will be recorded separately.
+
+## 2026-08-30T04:09:57-07:00: Calibration final-finding contract
+
+Provenance: user-provided six-finding calibration contract. Implementation and validation evidence are pending. No firewall, gateway, provider, or model call is authorized.
+
+Every forwarded upstream response, including 4xx and 5xx, must carry exactly one finite nonnegative authoritative `X-Litellm-Response-Cost`. Missing, malformed, ambiguous, or otherwise unavailable settlement makes the shared ledger fatal, retains the full worst-case reservation as unknown spend exposure, closes the upstream response, and prevents every later request from forwarding. Known cost above its reservation or the total cap remains fatal. Endpoint lock and request count commit only after reservation succeeds, atomically under the broker state lock.
+
+The broker derives child response metadata solely from the validated request stream mode: `text/event-stream` for streaming and `application/json` otherwise. It never reflects upstream content type, encoding, or other header values. Before potentially paid work, the runner appends one bounded started attempt record. Any later harness, native, or validation failure changes that record to failed with ordinal, profile, model, locked endpoint when present, request count, known actual cost, retained unknown-cost reservation, and no model content. Failure reports count started attempts and spend exposure, while failed attempts can never become admissible or reach proof output.
+
+Proof order is the unauthenticated disposable-container broker probe, authenticated pricing, then attempts. A blocked topology report must include exact paired `sudo ufw allow ...` and `sudo ufw delete allow ...` commands derived from the validated discovered interface, subnet, gateway, and fixed port. Those commands contain no credential. Documentation must show their form and require try/finally removal; no standing firewall rule is permitted. D-086 records this boundary.
+
+## 2026-08-30T04:31:44-07:00: E-079 calibration final-finding validation
+
+Provenance: fake-upstream and direct concurrency regressions, all 836 non-Docker tests, all seven real-Docker tests, and complete local CI/security/package parity. No authenticated gateway request, model completion, calibration attempt, firewall command, proof output, commit, or push occurred.
+
+Every forwarded 2xx, 4xx, or 5xx response now requires one finite nonnegative authoritative cost. Missing, malformed, ambiguous, negative, and nonfinite settlement returns a closing `502`, leaves the exact reservation retained, marks the shared ledger fatal, and makes a later valid request stop before upstream. Valid 4xx and 5xx responses settle and forward. Known-cost later response validation failures settle that known cost before invalidating the ledger. The upstream response closes on every path.
+
+Reservation occurs while the broker state lock is held and precedes endpoint/count commitment. Direct failure and concurrent one-winner tests prove that a failed reservation changes neither endpoint nor count. Validated boolean stream mode alone selects `text/event-stream` or `application/json`; upstream content type and encoding never cross the broker, and response length is derived from retained bytes.
+
+The runner appends a started record before each potentially paid attempt. Failure retains ordinal, profile, model, locked endpoint when available, committed request count, known authoritative cost, unknown-cost reservation exposure, and no content. The failure report includes started attempts and summed exposure, while proof publication remains reachable only from a complete admissible run. Proof execution order is disposable-container reachability, authenticated pricing, then attempts. A blocked topology report now includes exact secret-free UFW add/delete commands derived from the validated interface, subnet, gateway, and port, plus an explicit try/finally removal requirement.
+
+All 836 non-Docker tests and all seven Docker tests passed. `uv lock --check`, locked all-group sync, Ruff check/format, ty, Bandit, actionlint, wheel/sdist build and source-only exclusion, isolated locked-wheel metadata/content smoke, all-groups pip-audit, `git diff --check`, and redacted Gitleaks over 30 commits passed. Successful bridge reachability and the clean exact-four calibration remain `unproven`.
+
+## 2026-08-30T04:53:22-07:00: E-080 topology-probe token-consumption correction
+
+Provenance: user-provided final calibration finding; invalid-then-valid, missing-then-valid, and synchronized concurrent-valid HTTP regressions; all 839 non-Docker tests; all seven real-Docker tests; and complete local CI/security/package parity. No authenticated gateway request, model completion, calibration attempt, firewall command, proof output, commit, or push occurred.
+
+The topology-probe broker now validates active state and one exact bearer Authorization value while holding the same state lock that owns one-shot token consumption. Missing or invalid authentication leaves the token usable. Concurrent valid requests serialize at that boundary, so exactly one receives `204` and consumes the token while the other receives `401`. Calibration documentation now states the execution order directly: topology probe, authenticated pricing, then attempts.
+
+`uv lock --check`, locked all-group sync, Ruff check/format, ty, Bandit, actionlint, wheel/sdist build and source-only exclusion, isolated locked-wheel metadata/content smoke, all-groups pip-audit, `git diff --check`, and redacted Gitleaks over 30 commits plus the worktree passed. Successful bridge reachability and the clean exact-four calibration remain `unproven`.
+
+## 2026-08-30T05:08:53-07:00: E-081 note-placement correction
+
+Provenance: local inspection of the append-only notes after recording E-081.
+
+The 05:07:18 validation entry was also inserted after the 03:59:03 entry because its patch anchor matched repeated validation text. The intended append-only order is represented by this final entry: the 05:00:19 contract and 05:07:18 validation were created after E-080, and the E-081 validation evidence in the 05:07:18 entry is authoritative. No earlier entry was rewritten or deleted.

@@ -284,6 +284,49 @@ followed by exactly three ordered, distinct, unretried production CLI runs with
 raw integer reward `1`, pass rate `1/1`, separate verification, native
 provenance, and no surviving child or current-run Docker residue.
 
+The source-only calibration runner fixes the ordered profiles `target`
+(`openai/openai/gpt-5.6-sol`) and `alternate`
+(`openai/anthropic/claude-sonnet-5`) at two unretried attempts each. Calibration
+runs the topology probe first, reads authenticated `/model/info` pricing second,
+and starts attempts last. The pricing read must return finite positive input,
+output, cache-read, and cache-write rates plus positive model limits for exactly
+those groups. Input and cache rates above `$10` per million tokens or output
+rates above `$50` per million make calibration fail. Evidence retains a redacted
+canonical pricing snapshot and digest.
+
+Each attempt receives one ephemeral OpenAI credential. Its first valid request
+locks that attempt to either `/v1/responses` or `/v1/chat/completions`; later
+requests must use the same endpoint. The broker applies the endpoint's exact
+output-limit fields and caps them at 8,192 tokens. It treats the forwarded UTF-8
+body's byte length as the input-token upper bound because the supported
+tokenizers fall back to at most one token per byte. Before forwarding, the
+shared ledger atomically reserves that bound at the hard pricing ceilings plus
+a fixed safety margin. The authoritative response-cost header settles the
+reservation, and a missing, invalid, or excessive settlement fails the run.
+
+Proof mode discovers and binds only the host address assigned to Docker's
+default `bridge` gateway and fixed/configured high port `62017`. Rootless Docker
+and arbitrary host addresses fail closed; loopback is available only to
+non-admissible debug tests. Before authenticated pricing or a model request, a
+disposable default-bridge container must complete a one-shot ephemeral-token
+probe against that broker. Failure stops before upstream access and produces no
+admissible evidence. The probe is valid only while `now < deadline`; equality is
+expired. Expiry is checked under the token lock, rejects without consuming the
+token, and permanently invalidates the broker. One attempt per profile is debug
+mode only, while retained proof requires all four attempts from a clean committed
+snapshot. Native ATIF aggregate prompt and completion tokens must both be
+positive, cached tokens may
+be zero, and all three must agree with Harbor's native trial and job metrics.
+
+A real local run may require an operator-scoped temporary firewall rule. The
+operator must discover the exact default bridge interface, subnet, and gateway,
+allow only that source/interface to gateway TCP port `62017`, and remove the
+same rule after success or failure. For UFW, use the shape `allow in on
+<interface> from <subnet> to <gateway> port 62017 proto tcp`, then delete that
+exact rule. The runner never invokes `sudo` or UFW, broadens its bind interface,
+or installs a standing rule. No real calibration attempt has run, so difficulty
+calibration remains unproven.
+
 Mandatory gates:
 
 1. A current unexpired holder can commit, and a non-holder cannot.

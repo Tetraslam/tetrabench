@@ -32,6 +32,8 @@ exclude = [
     "/questionnaire-meme.png",
     "/tests/test_authority_fencing_task.py",
     "/tools/run_authority_fencing_admission.py",
+    "/tests/test_authority_fencing_calibration.py",
+    "/tools/run_authority_fencing_calibration.py",
 ]
 
 [tool.pytest.ini_options]
