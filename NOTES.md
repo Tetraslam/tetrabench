@@ -984,3 +984,9 @@ Provenance: focused phase and early-command regressions; the complete non-Docker
 All seven preactivation phases fail independently with exact started/completed/failed status and content-free phase/cause evidence. Early successful and nonzero command results retain bounded outcome evidence before main discovery failure; early timeout, output, and containment exceptions retain only their class and category. A preactivation failure followed by command completion captures the available `CommandResult` after containment and before the zero-minimum ledger read. Private test messages, stream bytes, and paths are absent from retained evidence.
 
 All 178 focused non-Docker calibration tests, 921 non-Docker tests, and nine real-Docker tests passed. `uv lock --check`, locked all-group sync, Ruff check/format, ty, Bandit, actionlint, wheel/sdist build, isolated locked-wheel installation and metadata/content smoke, all-groups pip-audit, `git diff --check`, redacted worktree Gitleaks, and Docker residue inspection passed. Hosted CI remains pending. Calibration remains `unproven`.
+
+## 2026-08-30T16:38:11-07:00: E-088 hosted validation
+
+Provenance: GitHub Actions push run `33341954636` for implementation commit `6e3f1671efcf371f1e8dcb41a6ec5b42bd14d05e`.
+
+The Python 3.12 job passed lock checking, locked installation, lint, format, type checking, Bandit, Docker availability, all nine required Docker tests, all 921 non-Docker tests, package build, isolated-wheel smoke, and the complete dependency audit. The independent full-history Gitleaks job passed. E-088 is complete. No gateway or model completion occurred, and calibration remains `unproven` pending a diagnostic rerun with the new stage evidence.
