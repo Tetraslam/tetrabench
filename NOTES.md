@@ -962,3 +962,9 @@ Provenance: 165 focused non-Docker calibration tests; the complete nine-test rea
 The fake pricing test made one authenticated model-info request, then the diagnostic broker accepted one valid completion request, locked `/v1/responses`, retained its reservation shape, returned local 503, released the reservation, opened no upstream completion transport, sent no parent completion authorization, and recorded zero cost. Zero-request nonzero execution retained `agent_install_or_execution/nonzero_exit` after cleanup and a min-zero ledger read. Malformed stdout retained `cli_schema/malformed_stdout`; failed native output retained only structural counts, manifest digest, and `ValidationError`, with private bytes and paths absent.
 
 All 165 focused calibration tests, 908 non-Docker tests, and nine real-Docker tests passed. `uv lock --check`, locked all-group sync, Ruff check/format, ty, Bandit, actionlint, wheel/sdist build, isolated locked-wheel installation and metadata/content smoke, all-groups pip-audit, `git diff --check`, redacted Gitleaks over 37 commits, and Docker residue inspection passed. Hosted CI remains pending. Calibration remains `unproven`.
+
+## 2026-08-30T15:43:28-07:00: E-087 hosted validation
+
+Provenance: GitHub Actions push run `33339548116` for implementation commit `267b5e748ed0cf2efbee0c4d4f1d83e5d1df7d63`.
+
+The Python 3.12 job passed lock checking, locked installation, lint, format, type checking, Bandit, Docker availability, all nine required Docker tests, all 908 non-Docker tests, package build, isolated-wheel smoke, and the complete dependency audit. The independent full-history Gitleaks job passed. E-087 is complete. No model completion occurred, and calibration remains `unproven`.
