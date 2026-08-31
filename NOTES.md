@@ -1006,3 +1006,9 @@ Provenance: broker-payload and activation regressions; archive-mounted real-Dock
 The archive-mounted broker accepted the deployed-shaped 25-character parent-key boundary, wrote its initial zero-request ledger, consumed the separate one-shot probe, accepted a distinct simulated-client token, settled one fake `$0.125` response, and left no owned container or network. Dedicated payload regressions reject a 15-character key, missing `sk-`, whitespace, tab, newline, NUL, DEL, and a value above 512 characters. Probe and activation tokens reject values below 32 or above 512 characters and non-URL-safe characters. Fake forwarding tests now use the deployed parent-key shape instead of bypassing the mismatch with arbitrary strings.
 
 All 194 focused non-Docker calibration tests, 937 non-Docker tests, and nine real-Docker tests passed. `uv lock --check`, locked all-group sync, Ruff check/format, ty, Bandit, actionlint, wheel/sdist build, isolated locked-wheel installation and metadata/content smoke, all-groups pip-audit, `git diff --check`, redacted worktree Gitleaks, and Docker residue inspection passed. Runtime evidence contains only `parent_key_absent=true`; it contains no parent-key value, prefix, or length. Hosted CI remains pending, and calibration remains `unproven`.
+
+## 2026-08-30T21:55:43-07:00: E-089 hosted validation
+
+Provenance: GitHub Actions push run `33358291569` for implementation commit `9c0563dbfa9796a4061daba9620c37e0d78a0931`.
+
+The Python 3.12 job passed lock checking, locked installation, lint, format checking, type checking, Bandit, Docker availability, all nine required Docker tests, all 937 non-Docker tests, package build, isolated-wheel smoke, and the complete dependency audit. The independent full-history Gitleaks job passed. E-089 is complete. No gateway or model completion occurred, and calibration remains `unproven` pending a diagnostic rerun through the corrected boundary.
