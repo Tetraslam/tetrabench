@@ -8,6 +8,7 @@ import shutil
 import socket
 import subprocess
 import sys
+import tarfile
 import threading
 import time
 import urllib.parse
@@ -27,6 +28,10 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from tools import run_authority_fencing_calibration as calibration  # noqa: E402
+
+TEST_PARENT_KEY = "sk-test-deployed-key-1234"
+TEST_PROBE_TOKEN = "probe-token-0123456789-abcdefghijklmnopqr"
+TEST_ATTEMPT_TOKEN = "attempt-token-0123456789-abcdefghijklmnop"
 
 
 class FakeUpstreamServer(ThreadingHTTPServer):
@@ -146,7 +151,7 @@ def running_broker(
     broker = calibration.CalibrationBroker(
         host="127.0.0.1",
         port=0,
-        parent_key="parent-only-secret",
+        parent_key=TEST_PARENT_KEY,
         model="openai/gpt-5.6-sol",
         ledger=ledger or calibration.SpendLedger(),
         max_input_tokens=max_input_tokens,
@@ -162,7 +167,7 @@ def running_broker(
 
 
 @contextmanager
-def running_probe_broker(probe_token: str = "probe-only-token"):
+def running_probe_broker(probe_token: str = TEST_PROBE_TOKEN):
     broker = calibration.CalibrationBroker(
         host="127.0.0.1",
         port=0,
@@ -263,6 +268,61 @@ def pricing_document() -> dict[str, Any]:
     }
 
 
+@pytest.mark.parametrize(
+    "parent_key",
+    [
+        "sk-123456789012",
+        "deployed-key-without-prefix",
+        "sk-test deployed-key",
+        "sk-test\tdeployed-key",
+        "sk-test\ndeployed-key",
+        "sk-test\0deployed-key",
+        "sk-test\x7fdeployed-key",
+        "sk-" + "a" * 510,
+    ],
+)
+def test_broker_credential_payload_rejects_invalid_parent_key(
+    parent_key: str,
+) -> None:
+    with pytest.raises(ValueError, match="credential payload rejected"):
+        calibration._validate_broker_credential_payload(
+            {"parent_key": parent_key, "probe_token": TEST_PROBE_TOKEN}
+        )
+
+
+@pytest.mark.parametrize(
+    "token",
+    ["a" * 31, "a" * 513, "a" * 31 + "=", "a" * 31 + " "],
+)
+def test_broker_credential_payload_rejects_weak_or_unbounded_probe_token(
+    token: str,
+) -> None:
+    with pytest.raises(ValueError, match="credential payload rejected"):
+        calibration._validate_broker_credential_payload(
+            {"parent_key": TEST_PARENT_KEY, "probe_token": token}
+        )
+
+
+@pytest.mark.parametrize(
+    "token",
+    ["a" * 31, "a" * 513, "a" * 31 + "=", "a" * 31 + "\n"],
+)
+def test_broker_activation_rejects_weak_or_unbounded_attempt_token(
+    token: str,
+) -> None:
+    state = calibration.BrokerState(
+        parent_key=TEST_PARENT_KEY,
+        token=None,
+        probe_token=None,
+        model="model",
+        max_input_tokens=100,
+        deadline=time.monotonic() + 30,
+        ledger=calibration.SpendLedger(),
+    )
+    with pytest.raises(ValueError, match="activation token rejected"):
+        state.activate(token, (1, 2))
+
+
 def test_profiles_are_exact_ordered_and_candidate_only(tmp_path: Path) -> None:
     project, config_root = calibration._write_project(tmp_path, calibration.TASK)
     config = (config_root / "tetrabench/config.toml").read_text()
@@ -288,11 +348,11 @@ def test_authenticated_model_info_selects_exact_groups_and_redacts_snapshot() ->
         body=json.dumps(document).encode(),
     ) as upstream:
         snapshot = calibration.query_model_pricing(
-            parent_key="parent-secret",
+            parent_key=TEST_PARENT_KEY,
             upstream_url=f"http://127.0.0.1:{upstream.server_address[1]}",
         )
     assert upstream.requests == [
-        {"authorization": "Bearer parent-secret", "path": "/model/info"}
+        {"authorization": f"Bearer {TEST_PARENT_KEY}", "path": "/model/info"}
     ]
     assert [item["model_group"] for item in snapshot.models] == [
         model for _profile, model in calibration.PROFILES
@@ -309,7 +369,7 @@ def test_debug_deny_upstream_prices_then_records_request_without_completion() ->
         body=json.dumps(document).encode(),
     ) as upstream:
         pricing = calibration.query_model_pricing(
-            parent_key="parent-only-secret",
+            parent_key=TEST_PARENT_KEY,
             upstream_url=f"http://127.0.0.1:{upstream.server_address[1]}",
         )
         assert pricing.models
@@ -329,7 +389,7 @@ def test_debug_deny_upstream_prices_then_records_request_without_completion() ->
             assert record.upstream_opened is False
             assert record.parent_authorization_sent is False
     assert upstream.requests == [
-        {"authorization": "Bearer parent-only-secret", "path": "/model/info"}
+        {"authorization": f"Bearer {TEST_PARENT_KEY}", "path": "/model/info"}
     ]
 
 
@@ -345,7 +405,7 @@ def test_model_info_accepts_large_document_and_discards_irrelevant_rows() -> Non
     assert 2 << 20 < len(body) <= calibration.MODEL_INFO_MAX_RESPONSE_BYTES
     with fake_upstream(body=body) as upstream:
         snapshot = calibration.query_model_pricing(
-            parent_key="parent-secret",
+            parent_key=TEST_PARENT_KEY,
             upstream_url=f"http://127.0.0.1:{upstream.server_address[1]}",
         )
     assert len(snapshot.models) == 2
@@ -379,7 +439,7 @@ def test_model_info_rejects_response_above_four_mib(
     ) as upstream:
         with pytest.raises(ValueError, match="exceeds limit"):
             calibration.query_model_pricing(
-                parent_key="parent-secret",
+                parent_key=TEST_PARENT_KEY,
                 upstream_url=f"http://127.0.0.1:{upstream.server_address[1]}",
             )
 
@@ -410,7 +470,7 @@ def test_model_info_rejects_ambiguous_malformed_or_oversized_content_length(
     ) as upstream:
         with pytest.raises(ValueError, match=r"framing|exceeds limit"):
             calibration.query_model_pricing(
-                parent_key="parent-secret",
+                parent_key=TEST_PARENT_KEY,
                 upstream_url=f"http://127.0.0.1:{upstream.server_address[1]}",
             )
 
@@ -424,13 +484,13 @@ def test_model_info_rejects_truncated_or_malformed_document() -> None:
     ) as upstream:
         with pytest.raises(ValueError, match="truncated"):
             calibration.query_model_pricing(
-                parent_key="parent-secret",
+                parent_key=TEST_PARENT_KEY,
                 upstream_url=f"http://127.0.0.1:{upstream.server_address[1]}",
             )
     with fake_upstream(body=b"not-json") as upstream:
         with pytest.raises(ValueError, match="invalid JSON"):
             calibration.query_model_pricing(
-                parent_key="parent-secret",
+                parent_key=TEST_PARENT_KEY,
                 upstream_url=f"http://127.0.0.1:{upstream.server_address[1]}",
             )
 
@@ -573,7 +633,7 @@ def test_child_environment_is_clean_and_contains_only_ephemeral_provider_access(
     tmp_path: Path,
 ) -> None:
     ambient = {
-        calibration.PARENT_KEY_ENV: "parent",
+        calibration.PARENT_KEY_ENV: TEST_PARENT_KEY,
         "OPENAI_API_KEY": "broad",
         "ANTHROPIC_API_KEY": "provider",
         "AWS_SECRET_ACCESS_KEY": "storage",
@@ -621,7 +681,7 @@ def test_broker_forwards_exact_model_caps_output_and_strips_sensitive_headers() 
             assert "set-cookie" not in returned_headers
             assert "authorization" not in returned_headers
             observed = upstream.requests[0]
-            assert observed["authorization"] == "Bearer parent-only-secret"
+            assert observed["authorization"] == f"Bearer {TEST_PARENT_KEY}"
             assert observed["path"] == "/v1/responses"
             assert observed["body"]["model"] == "openai/gpt-5.6-sol"
             assert observed["body"]["max_output_tokens"] == 8192
@@ -1117,7 +1177,7 @@ def test_overlay_byte_drift_fails_closed(
 
 
 def test_probe_invalid_then_valid_preserves_one_shot_token() -> None:
-    token = "probe-only-token"
+    token = TEST_PROBE_TOKEN
     with running_probe_broker(token) as broker:
         assert probe_request(broker, "Bearer wrong-token") == 401
         assert broker.state.probe_consumed is False
@@ -1126,7 +1186,7 @@ def test_probe_invalid_then_valid_preserves_one_shot_token() -> None:
 
 
 def test_probe_missing_then_valid_preserves_one_shot_token() -> None:
-    token = "probe-only-token"
+    token = TEST_PROBE_TOKEN
     with running_probe_broker(token) as broker:
         assert probe_request(broker, None) == 401
         assert broker.state.probe_consumed is False
@@ -1135,7 +1195,7 @@ def test_probe_missing_then_valid_preserves_one_shot_token() -> None:
 
 
 def test_concurrent_valid_probes_have_exactly_one_success() -> None:
-    token = "probe-only-token"
+    token = TEST_PROBE_TOKEN
     barrier = threading.Barrier(3)
 
     def invoke(broker: calibration.CalibrationBroker) -> int:
@@ -1152,7 +1212,7 @@ def test_concurrent_valid_probes_have_exactly_one_success() -> None:
 
 
 def test_probe_before_deadline_consumes_token(monkeypatch: pytest.MonkeyPatch) -> None:
-    token = "probe-only-token"
+    token = TEST_PROBE_TOKEN
     broker = calibration.CalibrationBroker(
         host="127.0.0.1",
         port=0,
@@ -1174,7 +1234,7 @@ def test_probe_before_deadline_consumes_token(monkeypatch: pytest.MonkeyPatch) -
 def test_probe_at_or_after_deadline_expires_without_consuming(
     monkeypatch: pytest.MonkeyPatch, now: float
 ) -> None:
-    token = "probe-only-token"
+    token = TEST_PROBE_TOKEN
     broker = calibration.CalibrationBroker(
         host="127.0.0.1",
         port=0,
@@ -1199,7 +1259,7 @@ def test_probe_at_or_after_deadline_expires_without_consuming(
 def test_concurrent_probes_waiting_at_expiry_never_consume_token(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    token = "probe-only-token"
+    token = TEST_PROBE_TOKEN
     broker = calibration.CalibrationBroker(
         host="127.0.0.1",
         port=0,
@@ -1421,8 +1481,8 @@ def test_reservation_failure_does_not_commit_endpoint_or_request_count() -> None
     ledger = calibration.SpendLedger()
     ledger.reserve(calibration.MAX_TOTAL_COST)
     state = calibration.BrokerState(
-        parent_key="parent",
-        token="token",
+        parent_key=TEST_PARENT_KEY,
+        token=TEST_ATTEMPT_TOKEN,
         probe_token=None,
         model="model",
         max_input_tokens=100,
@@ -1438,8 +1498,8 @@ def test_reservation_failure_does_not_commit_endpoint_or_request_count() -> None
 def test_concurrent_begin_request_commits_only_the_reserved_winner() -> None:
     ledger = calibration.SpendLedger()
     state = calibration.BrokerState(
-        parent_key="parent",
-        token="token",
+        parent_key=TEST_PARENT_KEY,
+        token=TEST_ATTEMPT_TOKEN,
         probe_token=None,
         model="model",
         max_input_tokens=100,
@@ -1529,7 +1589,7 @@ def test_shutdown_invalidates_token_closes_listener_and_leaves_no_thread() -> No
         broker = calibration.CalibrationBroker(
             host="127.0.0.1",
             port=0,
-            parent_key="parent",
+            parent_key=TEST_PARENT_KEY,
             model="openai/gpt-5.6-sol",
             ledger=calibration.SpendLedger(),
             upstream_url=f"http://127.0.0.1:{upstream.server_address[1]}",
@@ -1550,7 +1610,7 @@ def test_shutdown_waits_for_inflight_upstream_and_leaves_no_request_thread() -> 
         broker = calibration.CalibrationBroker(
             host="127.0.0.1",
             port=0,
-            parent_key="parent",
+            parent_key=TEST_PARENT_KEY,
             model="openai/gpt-5.6-sol",
             ledger=calibration.SpendLedger(),
             upstream_url=f"http://127.0.0.1:{upstream.server_address[1]}",
@@ -1597,9 +1657,9 @@ def test_shutdown_waits_for_inflight_upstream_and_leaves_no_request_thread() -> 
 
 def test_attempt_token_is_inactive_until_probe_then_activation_and_lease() -> None:
     state = calibration.BrokerState(
-        parent_key="parent",
+        parent_key=TEST_PARENT_KEY,
         token=None,
-        probe_token="probe-token",
+        probe_token=TEST_PROBE_TOKEN,
         model="model",
         max_input_tokens=100,
         deadline=time.monotonic() + 30,
@@ -1608,7 +1668,7 @@ def test_attempt_token_is_inactive_until_probe_then_activation_and_lease() -> No
     attempt_headers = probe_headers("attempt-token-0123456789-abcdefghijklmnop")
     with pytest.raises(PermissionError):
         state.authorize(attempt_headers)
-    state.consume_probe(probe_headers("probe-token"))
+    state.consume_probe(probe_headers(TEST_PROBE_TOKEN))
     channel = (1, 2)
     state.activate("attempt-token-0123456789-abcdefghijklmnop", channel)
     state.authorize(attempt_headers)
@@ -1624,9 +1684,9 @@ def test_authorize_at_exact_lease_expiry_revokes_all_authority(
 ) -> None:
     shutdown = threading.Event()
     state = calibration.BrokerState(
-        parent_key="parent",
+        parent_key=TEST_PARENT_KEY,
         token="attempt-token-0123456789-abcdefghijklmnop",
-        probe_token="probe-token",
+        probe_token=TEST_PROBE_TOKEN,
         model="model",
         max_input_tokens=100,
         deadline=1_000,
@@ -1718,7 +1778,7 @@ def test_expiry_closes_registered_socket_and_disables_reconnect() -> None:
     token = "attempt-token-0123456789-abcdefghijklmnop"
     with fake_upstream() as upstream:
         state = calibration.BrokerState(
-            parent_key="parent",
+            parent_key=TEST_PARENT_KEY,
             token=token,
             probe_token=None,
             model="model",
@@ -1742,7 +1802,7 @@ def test_expiry_closes_registered_socket_and_disables_reconnect() -> None:
         response = connection.getresponse()
         response.read()
         assert admission.started is True
-        assert upstream.requests[0]["authorization"] == "Bearer parent"
+        assert upstream.requests[0]["authorization"] == f"Bearer {TEST_PARENT_KEY}"
         state.last_heartbeat = time.monotonic() - calibration.HEARTBEAT_LEASE_SECONDS
         with pytest.raises(PermissionError, match="heartbeat rejected"):
             state.heartbeat((1, 2))
@@ -1815,7 +1875,7 @@ def test_concurrent_authorize_vs_exact_expiry_accepts_nothing(
 ) -> None:
     token = "attempt-token-0123456789-abcdefghijklmnop"
     state = calibration.BrokerState(
-        parent_key="parent",
+        parent_key=TEST_PARENT_KEY,
         token=token,
         probe_token=None,
         model="model",
@@ -2155,7 +2215,7 @@ def test_early_command_result_is_captured_before_main_discovery_failure(
     )
     authority = calibration.DockerMainAuthority(
         calibration._docker_names("cal-early-result", 1),
-        "private-parent-key",
+        TEST_PARENT_KEY,
         tmp_path / "output",
         cast(Any, object()),
         "0" * 64,
@@ -2201,7 +2261,7 @@ def test_early_command_exception_class_is_captured_without_content(
     future.set_exception(error)
     authority = calibration.DockerMainAuthority(
         calibration._docker_names("cal-early-exception", 1),
-        "private-parent-key",
+        TEST_PARENT_KEY,
         tmp_path / "output",
         cast(Any, object()),
         "0" * 64,
@@ -2322,7 +2382,7 @@ def test_run_attempt_captures_result_before_zero_request_ledger_after_cleanup(
             snapshot=snapshot,
             private_root=tmp_path,
             run_id="cal-test",
-            parent_key="private-parent-key",
+            parent_key=TEST_PARENT_KEY,
             pricing=pricing,
             model_pricing=pricing.models[0],
             remaining_budget=Decimal("1"),
@@ -2346,7 +2406,8 @@ def test_run_attempt_captures_result_before_zero_request_ledger_after_cleanup(
 def _docker_sidecar(
     tmp_path: Path,
     *,
-    parent_key: str = "parent-secret-never-in-docker-config-0123456789",
+    parent_key: str = TEST_PARENT_KEY,
+    snapshot_root: Path = ROOT,
 ) -> calibration.DockerBrokerSidecar:
     pricing = calibration._validate_pricing_document(pricing_document())
     names = calibration._docker_names("cal-test-sidecar", 1)
@@ -2354,7 +2415,7 @@ def _docker_sidecar(
     evidence.mkdir(mode=0o700)
     return calibration.DockerBrokerSidecar(
         names=names,
-        snapshot_root=ROOT,
+        snapshot_root=snapshot_root,
         evidence_root=evidence,
         parent_key=parent_key,
         attempt_token="attempt-token-0123456789-abcdefghijklmnop",
@@ -2365,6 +2426,22 @@ def _docker_sidecar(
         budget_cap=Decimal("1"),
         fake_response_cost=Decimal("0.125"),
     )
+
+
+def _archive_mounted_source(tmp_path: Path) -> Path:
+    archive_path = tmp_path / "source.tar"
+    member_name = "tools/run_authority_fencing_calibration.py"
+    with tarfile.open(archive_path, "w") as archive:
+        archive.add(ROOT / member_name, arcname=member_name)
+    source_root = tmp_path / "source"
+    target = source_root / member_name
+    target.parent.mkdir(parents=True)
+    with tarfile.open(archive_path, "r") as archive:
+        source = archive.extractfile(member_name)
+        if source is None:
+            raise RuntimeError("calibration source missing from archive")
+        target.write_bytes(source.read())
+    return source_root
 
 
 def _main_inspect_document(
@@ -2460,13 +2537,16 @@ def test_main_inspect_rejects_every_port_publication_surface(
 def test_sidecar_network_probe_simulated_client_inspect_and_cleanup(
     tmp_path: Path,
 ) -> None:
-    sidecar = _docker_sidecar(tmp_path)
+    sidecar = _docker_sidecar(tmp_path, snapshot_root=_archive_mounted_source(tmp_path))
     try:
         sidecar.start()
+        initial_ledger = sidecar.read_ledger()
+        assert initial_ledger["probe_consumed"] is False
+        assert initial_ledger["request_count"] == 0
+        assert initial_ledger["requests"] == []
         sidecar.probe()
         security = sidecar.inspect_secret_boundary()
-        assert security["config_parent_key_absent"] is True
-        assert security["logs_parent_key_absent"] is True
+        assert security["parent_key_absent"] is True
         assert security["mounts"] == {"evidence_rw": True, "source_ro": True}
         assert security["network"]["driver"] == "bridge"
         assert security["network"]["gateway"]
@@ -2596,7 +2676,7 @@ root=Path(__file__).parent
 evidence=root/'evidence'; evidence.mkdir(mode=0o700)
 names=c._docker_names('cal-parent-death',1)
 sidecar=c.DockerBrokerSidecar(names=names,snapshot_root=c.ROOT,evidence_root=evidence,
- parent_key='parent-secret-never-in-docker-config-0123456789',
+ parent_key='sk-test-deployed-key-1234',
  attempt_token='attempt-token-0123456789-abcdefghijklmnop',
  probe_token='probe-token-0123456789-abcdefghijklmnopqr',
  model='openai/gpt-5.6-sol',pricing=pricing,max_input_tokens=200000,
@@ -2782,7 +2862,7 @@ def test_missing_parent_key_fails_without_output_or_network(
 def test_startup_sweep_precedes_pricing_and_failure_starts_no_attempt(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    monkeypatch.setenv(calibration.PARENT_KEY_ENV, "fake-parent")
+    monkeypatch.setenv(calibration.PARENT_KEY_ENV, TEST_PARENT_KEY)
     sweep_calls = 0
 
     def sweep() -> dict[str, int]:

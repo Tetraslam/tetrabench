@@ -131,6 +131,11 @@ MAX_BODY_BYTES = 512 << 10
 MAX_HEADER_BYTES = 16 << 10
 MAX_RESPONSE_BYTES = 64 << 20
 MODEL_INFO_MAX_RESPONSE_BYTES = 4 << 20
+MIN_PARENT_KEY_LENGTH = 16
+MAX_PARENT_KEY_LENGTH = 512
+MIN_BROKER_TOKEN_LENGTH = 32
+MAX_BROKER_TOKEN_LENGTH = 512
+URLSAFE_TOKEN_PATTERN = re.compile(r"[A-Za-z0-9_-]+")
 BACKPRESSURE_TIMEOUT_SECONDS = 30
 HEADER_READ_TIMEOUT_SECONDS = 2
 ALLOWED_PATHS = frozenset({"/v1/chat/completions", "/v1/responses"})
@@ -187,6 +192,38 @@ SOURCE_RELATIVE_PATHS = (
     Path("tests/test_authority_fencing_task.py"),
     CALIBRATION_TEST.relative_to(ROOT),
 )
+
+
+def _validate_parent_key(value: Any) -> str:
+    if (
+        type(value) is not str
+        or not MIN_PARENT_KEY_LENGTH <= len(value) <= MAX_PARENT_KEY_LENGTH
+        or not value.startswith("sk-")
+        or any(not 0x21 <= ord(character) <= 0x7E for character in value)
+    ):
+        raise ValueError("broker credential payload rejected")
+    return value
+
+
+def _validate_broker_token(value: Any, *, error: str) -> str:
+    if (
+        type(value) is not str
+        or not MIN_BROKER_TOKEN_LENGTH <= len(value) <= MAX_BROKER_TOKEN_LENGTH
+        or URLSAFE_TOKEN_PATTERN.fullmatch(value) is None
+    ):
+        raise ValueError(error)
+    return value
+
+
+def _validate_broker_credential_payload(value: Any) -> tuple[str, str]:
+    if not isinstance(value, dict) or set(value) != {"parent_key", "probe_token"}:
+        raise ValueError("broker credential payload schema rejected")
+    return (
+        _validate_parent_key(value["parent_key"]),
+        _validate_broker_token(
+            value["probe_token"], error="broker credential payload rejected"
+        ),
+    )
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
@@ -594,8 +631,7 @@ class BrokerState:
         self.write_evidence()
 
     def activate(self, token: str, channel_identity: tuple[int, int]) -> None:
-        if len(token) < 32:
-            raise ValueError("broker activation token rejected")
+        token = _validate_broker_token(token, error="broker activation token rejected")
         expired = False
         with self.lock:
             now = time.monotonic()
@@ -1858,25 +1894,16 @@ def _broker_child_main(argv: list[str]) -> int:
         credentials = strict_json(bytes(raw))
     finally:
         raw[:] = b"\0" * len(raw)
-    if not isinstance(credentials, dict) or set(credentials) != {
-        "parent_key",
-        "probe_token",
-    }:
-        raise ValueError("broker credential payload schema rejected")
-    if not all(
-        isinstance(credentials[name], str) and len(credentials[name]) >= 32
-        for name in credentials
-    ):
-        raise ValueError("broker credential payload rejected")
+    parent_key, probe_token = _validate_broker_credential_payload(credentials)
     stop = threading.Event()
     for signum in (signal.SIGINT, signal.SIGTERM):
         signal.signal(signum, lambda *_args: stop.set())
     broker = CalibrationBroker(
         host="0.0.0.0",  # nosec B104 - isolated, un-published Docker network
         port=DEFAULT_BROKER_PORT,
-        parent_key=credentials["parent_key"],
+        parent_key=parent_key,
         token=None,
-        probe_token=credentials["probe_token"],
+        probe_token=probe_token,
         model=args.model,
         ledger=SpendLedger(Decimal(args.budget_cap)),
         max_input_tokens=args.max_input_tokens,
@@ -2183,8 +2210,7 @@ class DockerBrokerSidecar:
         ):
             raise RuntimeError("calibration network contract changed")
         return {
-            "config_parent_key_absent": True,
-            "logs_parent_key_absent": True,
+            "parent_key_absent": True,
             "mounts": {"evidence_rw": True, "source_ro": True},
             "network": {
                 "driver": "bridge",

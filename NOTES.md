@@ -990,3 +990,19 @@ All 178 focused non-Docker calibration tests, 921 non-Docker tests, and nine rea
 Provenance: GitHub Actions push run `33341954636` for implementation commit `6e3f1671efcf371f1e8dcb41a6ec5b42bd14d05e`.
 
 The Python 3.12 job passed lock checking, locked installation, lint, format, type checking, Bandit, Docker availability, all nine required Docker tests, all 921 non-Docker tests, package build, isolated-wheel smoke, and the complete dependency audit. The independent full-history Gitleaks job passed. E-088 is complete. No gateway or model completion occurred, and calibration remains `unproven` pending a diagnostic rerun with the new stage evidence.
+
+## 2026-08-30T21:34:13-07:00: Parent-key schema mismatch diagnosis and correction contract
+
+Provenance: user-provided third deny-upstream diagnostic and isolated real-key sidecar reproduction, followed by local source inspection. No gateway or model completion is authorized for this correction.
+
+The third deny-upstream diagnostic and the real-key sidecar isolation identified one arbitrary shared credential rule that required both broker payload strings to have length at least 32. A valid deployed-shaped 25-character parent key was therefore rejected before initial ledger progress or the topology probe, with zero broker/model requests, zero cost, no report, and no resource residue. This explains the previously unresolved preactivation failure and remains non-calibration evidence.
+
+The broker payload must validate `parent_key` separately against the deployed LiteLLM interface: exact string, `sk-` prefix, length 16..512, and printable non-whitespace ASCII only. The probe token remains a separately generated and validated URL-safe token of length 32..512, and activation applies the same token boundary to the distinct attempt token. Runtime evidence may retain only `parent_key_absent=true`; it may not retain the key value, prefix, or length. D-096 records this boundary. Full local and hosted validation remain pending.
+
+## 2026-08-30T21:45:42-07:00: E-089 local validation
+
+Provenance: broker-payload and activation regressions; archive-mounted real-Docker sidecar execution; complete non-Docker and real-Docker suites; package inspection; dependency audit; and local lint, type, security, workflow, diff, worktree secret-scan, and Docker-residue checks. No gateway or model completion occurred.
+
+The archive-mounted broker accepted the deployed-shaped 25-character parent-key boundary, wrote its initial zero-request ledger, consumed the separate one-shot probe, accepted a distinct simulated-client token, settled one fake `$0.125` response, and left no owned container or network. Dedicated payload regressions reject a 15-character key, missing `sk-`, whitespace, tab, newline, NUL, DEL, and a value above 512 characters. Probe and activation tokens reject values below 32 or above 512 characters and non-URL-safe characters. Fake forwarding tests now use the deployed parent-key shape instead of bypassing the mismatch with arbitrary strings.
+
+All 194 focused non-Docker calibration tests, 937 non-Docker tests, and nine real-Docker tests passed. `uv lock --check`, locked all-group sync, Ruff check/format, ty, Bandit, actionlint, wheel/sdist build, isolated locked-wheel installation and metadata/content smoke, all-groups pip-audit, `git diff --check`, redacted worktree Gitleaks, and Docker residue inspection passed. Runtime evidence contains only `parent_key_absent=true`; it contains no parent-key value, prefix, or length. Hosted CI remains pending, and calibration remains `unproven`.
