@@ -1129,6 +1129,8 @@ def test_task_overlay_changes_only_compose_and_binds_external_network(
     compose = (overlay.task / "environment/docker-compose.yaml").read_text()
     assert "context: ." in compose
     assert "dockerfile: Dockerfile" in compose
+    assert ("    dns:\n      - 1.1.1.1\n      - 9.9.9.9\n    networks:\n") in compose
+    assert compose.count("    dns:\n") == 1
     assert "external: true" in compose
     assert "name: tb-cal-safe-1" in compose
     candidate = {
@@ -2186,12 +2188,14 @@ def test_create_disconnect_still_reconciles_exact_owned_resources(
 ) -> None:
     sidecar = _docker_sidecar(tmp_path)
     exists = {sidecar.names.broker: False, sidecar.names.network: False}
+    create_argv: list[str] = []
 
     def docker(argv: list[str], **_kwargs: Any) -> subprocess.CompletedProcess[bytes]:
         if argv[:2] == ["network", "create"]:
             exists[sidecar.names.network] = True
             return subprocess.CompletedProcess(argv, 0, b"", b"")
         if argv and argv[0] == "create":
+            create_argv.extend(argv)
             exists[sidecar.names.broker] = True
             raise subprocess.TimeoutExpired(argv, 120)
         if argv[:3] == ["rm", "--force", sidecar.names.broker]:
@@ -2221,6 +2225,15 @@ def test_create_disconnect_still_reconciles_exact_owned_resources(
     assert cleanup["broker_absent"] is True
     assert cleanup["network_absent"] is True
     assert exists == {sidecar.names.broker: False, sidecar.names.network: False}
+    assert create_argv[create_argv.index("--network-alias") + 2 :][:2] == [
+        "--dns",
+        "100.100.100.100",
+    ]
+    assert [
+        create_argv[index + 1]
+        for index, value in enumerate(create_argv)
+        if value == "--dns"
+    ] == list(calibration.BROKER_DNS)
 
 
 def test_attach_timeout_is_terminated_and_reaped(
@@ -2735,6 +2748,7 @@ def _main_inspect_document(
             "CapAdd": None,
             "DeviceRequests": [],
             "Devices": [],
+            "Dns": list(calibration.MAIN_DNS),
             "IpcMode": "private",
             "NetworkMode": sidecar.names.network,
             "PidMode": "",
@@ -2758,6 +2772,112 @@ def _main_inspect_document(
             "Ports": {},
         },
     }
+
+
+def _broker_inspect_documents(
+    sidecar: calibration.DockerBrokerSidecar, dns: Any
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    subnet = "10.224.0.0/28"
+    gateway = "10.224.0.1"
+    sidecar.network_allocation = calibration.DockerNetworkAllocation(
+        subnet=subnet,
+        candidate_probe=0,
+        route_prefixes_checked=0,
+        docker_subnets_checked=0,
+        route_collision_rejections=0,
+        docker_collision_rejections=0,
+        create_overlap_retries=0,
+    )
+    inspected = {
+        "Config": {"Labels": sidecar.names.role_labels("broker")},
+        "HostConfig": {"Dns": dns},
+        "Mounts": [
+            {"Destination": "/source", "RW": False},
+            {"Destination": "/evidence", "RW": True},
+        ],
+        "NetworkSettings": {"Networks": {sidecar.names.network: {"Gateway": gateway}}},
+    }
+    network = {
+        "Driver": "bridge",
+        "Internal": False,
+        "IPAM": {"Config": [{"Gateway": gateway, "Subnet": subnet}]},
+        "Labels": sidecar.names.role_labels("network"),
+    }
+    return inspected, network
+
+
+@pytest.mark.parametrize(
+    "dns",
+    [None, [], ["1.1.1.1"], ["100.100.100.100", "1.1.1.1"]],
+)
+def test_broker_inspect_rejects_changed_resolver_policy(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, dns: Any
+) -> None:
+    sidecar = _docker_sidecar(tmp_path)
+    inspected, network = _broker_inspect_documents(sidecar, dns)
+    monkeypatch.setattr(
+        calibration,
+        "_inspect_one",
+        lambda kind, _name: inspected if kind == "container" else network,
+    )
+    monkeypatch.setattr(
+        calibration,
+        "_docker",
+        lambda argv, **_kwargs: subprocess.CompletedProcess(argv, 0, b"", b""),
+    )
+    with pytest.raises(RuntimeError, match="broker resolver policy rejected"):
+        sidecar.inspect_secret_boundary()
+
+
+def test_broker_inspect_records_exact_resolver_policy_without_secret(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    sidecar = _docker_sidecar(tmp_path)
+    inspected, network = _broker_inspect_documents(
+        sidecar, list(calibration.BROKER_DNS)
+    )
+    monkeypatch.setattr(
+        calibration,
+        "_inspect_one",
+        lambda kind, _name: inspected if kind == "container" else network,
+    )
+    monkeypatch.setattr(
+        calibration,
+        "_docker",
+        lambda argv, **_kwargs: subprocess.CompletedProcess(argv, 0, b"", b""),
+    )
+    evidence = sidecar.inspect_secret_boundary()
+    assert evidence["resolver_policy"] == {
+        "addresses": ["100.100.100.100"],
+        "purpose": "tailnet-upstream",
+        "role": "broker",
+    }
+    assert sidecar.parent_key not in json.dumps(evidence)
+
+
+@pytest.mark.parametrize(
+    "dns",
+    [
+        None,
+        [],
+        ["1.1.1.1"],
+        ["9.9.9.9", "1.1.1.1"],
+        ["1.1.1.1", "8.8.8.8"],
+        ["1.1.1.1", "9.9.9.9", "8.8.8.8"],
+    ],
+)
+def test_main_inspect_rejects_changed_resolver_policy(tmp_path: Path, dns: Any) -> None:
+    sidecar = _docker_sidecar(tmp_path)
+    output = tmp_path / "output"
+    for name in ("agent", "verifier", "artifacts"):
+        (output / name).mkdir(parents=True, exist_ok=True)
+    inspected = _main_inspect_document(sidecar, output)
+    inspected["HostConfig"]["Dns"] = dns
+    authority = calibration.DockerMainAuthority(
+        sidecar.names, sidecar.parent_key, output, sidecar, "0" * 64
+    )
+    with pytest.raises(RuntimeError, match="Harbor main resolver policy rejected"):
+        authority._validate_main(inspected)
 
 
 @pytest.mark.parametrize(
@@ -2821,6 +2941,11 @@ def test_sidecar_network_probe_simulated_client_inspect_and_cleanup(
         security = sidecar.inspect_secret_boundary()
         assert security["parent_key_absent"] is True
         assert security["mounts"] == {"evidence_rw": True, "source_ro": True}
+        assert security["resolver_policy"] == {
+            "addresses": ["100.100.100.100"],
+            "purpose": "tailnet-upstream",
+            "role": "broker",
+        }
         assert security["network"]["driver"] == "bridge"
         assert security["network"]["gateway"]
         assert security["network"]["allocation"]["subnet"].startswith("10.")
@@ -2844,6 +2969,11 @@ def test_sidecar_network_probe_simulated_client_inspect_and_cleanup(
                 main,
                 "--network",
                 sidecar.names.network,
+                *[
+                    value
+                    for resolver in calibration.MAIN_DNS
+                    for value in ("--dns", resolver)
+                ],
                 *[
                     value
                     for key, value in labels.items()
@@ -2946,6 +3076,47 @@ def test_sidecar_network_probe_simulated_client_inspect_and_cleanup(
         "stdin_closed": True,
         "tokens_expired": True,
     }
+
+
+@pytest.mark.docker
+def test_safe_attempt_subnet_resolves_public_package_host_with_approved_dns() -> None:
+    names = calibration._docker_names(
+        f"cal-public-dns-{calibration.secrets.token_hex(6)}", 1
+    )
+    allocation = calibration._create_attempt_network(names)
+    try:
+        result = calibration._docker(
+            [
+                "run",
+                "--rm",
+                "--network",
+                names.network,
+                *[
+                    value
+                    for resolver in calibration.MAIN_DNS
+                    for value in ("--dns", resolver)
+                ],
+                "--read-only",
+                "--cap-drop",
+                "ALL",
+                calibration.BROKER_IMAGE,
+                "python",
+                "-c",
+                (
+                    "import socket;"
+                    "addresses=sorted({item[4][0] for item in "
+                    "socket.getaddrinfo('deb.debian.org',443,type=socket.SOCK_STREAM)});"
+                    "print('\\n'.join(addresses))"
+                ),
+            ],
+            check=False,
+        )
+        assert result.returncode == 0, result.stderr.decode(errors="replace")
+        assert result.stdout.strip()
+        assert allocation.subnet.startswith("10.")
+    finally:
+        calibration._docker(["network", "rm", names.network], check=False)
+        assert calibration._wait_resource_absent("network", names.network)
 
 
 @pytest.mark.docker
@@ -3126,6 +3297,11 @@ def test_harbor_main_is_inspected_and_activated_before_agent_setup(
         document = json.loads(result.stdout)
         assert document["outcome"] == "succeeded"
         assert activation["activation"]["completed_before_harbor_healthcheck"] is True
+        assert activation["resolver_policy"] == {
+            "addresses": ["1.1.1.1", "9.9.9.9"],
+            "purpose": "public-package-resolution",
+            "role": "main",
+        }
         assert activation["mount_targets"] == [
             "/logs/agent",
             "/logs/artifacts",

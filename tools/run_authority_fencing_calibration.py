@@ -107,6 +107,8 @@ def strict_json(data: bytes) -> Any:
 
 
 UPSTREAM_URL = "https://litellm-proxy.taildb21e0.ts.net"
+MAIN_DNS = ("1.1.1.1", "9.9.9.9")
+BROKER_DNS = ("100.100.100.100",)
 PARENT_KEY_ENV = "TETRABENCH_CALIBRATION_GATEWAY_KEY"
 TASK_ID = "systems-design/authority-fencing"
 MAX_ATTEMPT_SECONDS = 35 * 60
@@ -1435,6 +1437,7 @@ def _compose_bytes(names: DockerAttemptNames, candidate_manifest_sha256: str) ->
         f"      {json.dumps(key)}: {json.dumps(value)}"
         for key, value in main_labels.items()
     )
+    dns = "".join(f"      - {resolver}\n" for resolver in MAIN_DNS)
     return (
         "services:\n"
         "  main:\n"
@@ -1455,6 +1458,8 @@ def _compose_bytes(names: DockerAttemptNames, candidate_manifest_sha256: str) ->
         "      timeout: 2s\n"
         "      retries: 1800\n"
         "      start_period: 1s\n"
+        "    dns:\n"
+        f"{dns}"
         "    networks:\n"
         "      - calibration\n"
         "networks:\n"
@@ -2238,6 +2243,7 @@ class DockerBrokerSidecar:
             self.names.network,
             "--network-alias",
             self.names.alias,
+            *[value for resolver in BROKER_DNS for value in ("--dns", resolver)],
             *broker_label_args,
             "--read-only",
             "--tmpfs",
@@ -2389,6 +2395,9 @@ class DockerBrokerSidecar:
             raise RuntimeError("broker evidence mount is not writable")
         if b"docker.sock" in serialized:
             raise RuntimeError("broker received Docker socket")
+        host = inspected.get("HostConfig")
+        if not isinstance(host, dict) or host.get("Dns") != list(BROKER_DNS):
+            raise RuntimeError("broker resolver policy rejected")
         attached = inspected.get("NetworkSettings", {}).get("Networks")
         if not isinstance(attached, dict) or set(attached) != {self.names.network}:
             raise RuntimeError("broker network attachment changed")
@@ -2441,6 +2450,11 @@ class DockerBrokerSidecar:
         return {
             "parent_key_absent": True,
             "mounts": {"evidence_rw": True, "source_ro": True},
+            "resolver_policy": {
+                "addresses": list(BROKER_DNS),
+                "purpose": "tailnet-upstream",
+                "role": "broker",
+            },
             "network": {
                 "allocation": dataclasses.asdict(allocation),
                 "driver": "bridge",
@@ -2720,6 +2734,8 @@ class DockerMainAuthority:
             raise RuntimeError("Harbor main host namespace mode rejected")
         if host.get("NetworkMode") not in {"default", self.names.network}:
             raise RuntimeError("Harbor main host network mode rejected")
+        if host.get("Dns") != list(MAIN_DNS):
+            raise RuntimeError("Harbor main resolver policy rejected")
         if host.get("CapAdd") not in (None, []):
             raise RuntimeError("Harbor main added capabilities rejected")
         if host.get("Devices") not in (None, []) or host.get("DeviceRequests") not in (
@@ -2780,6 +2796,11 @@ class DockerMainAuthority:
             "mount_targets": sorted(approved_mounts),
             "parent_key_absent": True,
             "published_ports_absent": True,
+            "resolver_policy": {
+                "addresses": list(MAIN_DNS),
+                "purpose": "public-package-resolution",
+                "role": "main",
+            },
             "runtime_sockets_absent": True,
         }
 

@@ -51,7 +51,12 @@ Evidence retains only the selected subnet, gateway, and bounded collision counts
 The network carries one broker sidecar with a unique alias. The broker image is pinned,
 mounts the source snapshot read-only, and receives the parent gateway key through
 anonymous stdin after start. The key is absent from Docker env, argv, labels,
-mounts, config, and logs. A disposable container completes a one-shot probe. The
+mounts, config, and logs. Generated Harbor `main` uses the exact public DNS list
+`1.1.1.1`, `9.9.9.9`; the broker uses exact Tailscale MagicDNS
+`100.100.100.100` for its tailnet-only upstream. Immutable preactivation
+inspection requires those exact ordered lists. A disposable container completes
+a one-shot probe through Docker's embedded alias resolution without an external
+DNS override. The
 attempt token remains inactive until the runner discovers the uniquely labeled
 Harbor `main`, validates its immutable Docker config, records one config digest,
 and activates the token through that same private pipe. A `main` healthcheck
