@@ -1046,3 +1046,9 @@ The independent full-history secret scan passed, but all three calibration Docke
 Provenance: 210 focused non-Docker calibration tests, all nine required Docker tests, Ruff, format, and ty after the hosted-IPAM correction. No gateway or model request occurred.
 
 The corrected inspection path passes locally, including direct-IP HTTPS reachability and strict cleanup. No owned calibration container or network remains. Hosted CI retry remains pending.
+
+## 2026-08-30T23:17:18-07:00: E-090 hosted validation
+
+Provenance: GitHub Actions push run `33362931059` for correction commit `e9929898c7d930b1442d9ebac73633e3df00658c`.
+
+The Python 3.12 job passed lock checking, locked installation, lint, formatting, type checking, Bandit, Docker availability, all nine required Docker tests, all 953 non-Docker tests, package build, isolated-wheel smoke, and the complete dependency audit. The independent full-history Gitleaks job passed. E-090 is complete. No gateway or model request, cost, real calibration, provider route, host-network mutation, proof report, or resource residue occurred.
