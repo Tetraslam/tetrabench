@@ -1062,3 +1062,9 @@ Locked diagnostics progressed from `NetworkConnectionError` to `AgentSetupTimeou
 Generated Harbor `main` now uses exact ordered resolvers `1.1.1.1`, `9.9.9.9`; the broker create path uses exact `100.100.100.100`; and the alias-only disposable probe receives no external resolver override. Main and broker inspection reject missing, reordered, changed, or additional `HostConfig.Dns` values before activation. Evidence records only role, purpose, and approved resolver addresses. The attempt network, parent key, probe token, attempt token, and one-network topology are unchanged.
 
 All 964 non-Docker tests and ten required Docker tests passed. The new Docker test allocated a safe explicit 10/8 `/28` and resolved `deb.debian.org` through the approved public list. Lock checking, locked all-group sync, Ruff check/format, ty, Bandit, actionlint, wheel/sdist build, all-groups pip-audit, `git diff --check`, full-history Gitleaks, and Docker residue cleanup passed. MagicDNS resolution of the configured tailnet hostname remains live diagnostic evidence rather than a deterministic provider-free CI assertion. Hosted CI is pending, and calibration remains `unproven`.
+
+## 2026-08-31T05:10:29-07:00: E-091 hosted validation
+
+Provenance: GitHub Actions push run [33389717586](https://github.com/Tetraslam/tetrabench/actions/runs/33389717586) for implementation commit `b205142c47dca50564accd87e7fdf0f2f1223b88`.
+
+The Python 3.12 job passed lock checking, locked installation, lint, formatting, type checking, Bandit, Docker availability, all ten required Docker tests, all 964 non-Docker tests, package build, isolated-wheel smoke, and the complete dependency audit. The independent full-history Gitleaks job passed. This corrects the preceding entry's hosted-CI-pending state. E-091 is complete, while live calibration remains `unproven` and was not run.
