@@ -1012,3 +1012,25 @@ All 194 focused non-Docker calibration tests, 937 non-Docker tests, and nine rea
 Provenance: GitHub Actions push run `33358291569` for implementation commit `9c0563dbfa9796a4061daba9620c37e0d78a0931`.
 
 The Python 3.12 job passed lock checking, locked installation, lint, format checking, type checking, Bandit, Docker availability, all nine required Docker tests, all 937 non-Docker tests, package build, isolated-wheel smoke, and the complete dependency audit. The independent full-history Gitleaks job passed. E-089 is complete. No gateway or model completion occurred, and calibration remains `unproven` pending a diagnostic rerun through the corrected boundary.
+
+## 2026-08-30T22:21:16-07:00: Calibration attempt-network authority contract
+
+Provenance: user-provided zero-cost diagnostic sequence, exact host policy-route diagnosis, and implementation contract. No gateway, provider, model, host Tailscale, or firewall mutation is authorized.
+
+Three zero-cost diagnostics established the boundary in order: the parent-key schema was fixed; Harbor `main` was then activated successfully; native Harbor next emitted `NetworkConnectionError` during agent setup. The host routes table 52 before main and advertises 172.16.0.0/28 through 172.21.0.0/28 over `tailscale0`. Docker assigned attempt networks from 172.18/16 and 172.19/16, so reverse-NAT SYN-ACK delivery selected `tailscale0` for the container destination even though outbound SYN and inbound SYN-ACK reached the host. No model request, cost, proof report, or owned resource residue occurred.
+
+One sequential attempt is the allocation unit, but independent runners may overlap. Before broker or Harbor creation, the parent must parse all host policy-table routes and Docker network IPAM, deterministically probe bounded `/28` candidates from a dedicated 10/8 calibration pool keyed by run ID and ordinal, and reject every overlap. Docker `network create --subnet` is the atomic race arbiter. Only an explicit address-pool overlap race may retry; malformed command JSON, command failure, ambiguity, and exhaustion fail closed. Evidence retains only the selected subnet, Docker gateway, and bounded collision checks, not full host routes. Broker and `main` remain attached only to the exact attempt network, and strict cleanup remains unchanged. D-097 and E-090 record this work; implementation and validation are pending.
+
+## 2026-08-30T22:46:09-07:00: E-090 local validation
+
+Provenance: host-policy and Docker-IPAM parser regressions; deterministic two-runner allocation race; one real archive-mounted fake broker sidecar; direct-IP HTTPS reachability; all non-Docker and Docker tests; and complete local lint, type, security, package, dependency, diff, residue, and full-history secret-scan parity. No gateway or model request occurred.
+
+The parent now reads `ip -json route show table all`, excludes every parsed non-default IPv4 prefix and every existing Docker IPAM prefix, and deterministically probes at most 256 `/28` candidates in `10.224.0.0/12` from the run ID and ordinal. `docker network create --subnet` owns race arbitration. Only Docker's explicit pool-overlap error retries; discovery failure, malformed or ambiguous JSON, unrelated create failure, and exhaustion fail closed. Inspection requires Docker's actual subnet to equal the allocation and its gateway to belong to that subnet. Retained evidence contains the selected subnet, gateway, checked-prefix counts, collision rejections, probe index, and overlap retries, never the route set.
+
+The real fake-sidecar test allocated a 10/8 attempt `/28`, kept broker and simulated Harbor `main` attached only to that network, settled only its local fake response, and completed an HTTPS HEAD to Cloudflare's direct `1.1.1.1` address without DNS, gateway, or model access. Cleanup left no owned calibration container or network. All 208 focused non-Docker calibration tests, 951 complete non-Docker tests, and nine required Docker tests passed. Lock/sync, Ruff check/format, ty, Bandit, actionlint, wheel/sdist build, isolated locked-wheel smoke, all-groups pip-audit, `git diff --check`, and full-history Gitleaks over 43 commits passed. No cost, proof report, host Tailscale/firewall mutation, or resource residue occurred. Hosted CI remains pending; exact four-attempt calibration remains `unproven`.
+
+## 2026-08-30T22:51:35-07:00: E-090 validation-count correction
+
+Provenance: two final fail-closed regressions and repeated focused and complete non-Docker validation.
+
+The preceding E-090 counts are superseded by 210 focused non-Docker calibration tests and 953 complete non-Docker tests. The added tests prove candidate exhaustion rejects before Docker creation and Docker network-inspection command failure rejects without allocation. Nine required Docker tests and all other local parity evidence remain unchanged and passing. No gateway or model request occurred.

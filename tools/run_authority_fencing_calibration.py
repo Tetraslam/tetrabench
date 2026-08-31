@@ -7,6 +7,7 @@ import argparse
 import dataclasses
 import hashlib
 import http.client
+import ipaddress
 import json
 import math
 import os
@@ -280,6 +281,17 @@ class DockerAttemptNames:
 
     def role_labels(self, role: str) -> dict[str, str]:
         return {**self.labels, "org.tetrabench.calibration.role": role}
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class DockerNetworkAllocation:
+    subnet: str
+    candidate_probe: int
+    route_prefixes_checked: int
+    docker_subnets_checked: int
+    route_collision_rejections: int
+    docker_collision_rejections: int
+    create_overlap_retries: int
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
@@ -1027,6 +1039,12 @@ def query_model_pricing(
 
 
 DOCKER_NAME = re.compile(r"\A[a-z0-9][a-z0-9_.-]{0,62}\Z")
+CALIBRATION_NETWORK_POOL = ipaddress.IPv4Network("10.224.0.0/12")
+CALIBRATION_NETWORK_PREFIX = 28
+MAX_NETWORK_CANDIDATES = 256
+DOCKER_POOL_OVERLAP = re.compile(
+    rb"\bpool overlaps with other one on this address space\b", re.IGNORECASE
+)
 
 
 def _safe_docker_name(value: str, field: str) -> str:
@@ -1063,6 +1081,190 @@ def _docker(
         env=environment,
         timeout=120,
     )
+
+
+def _ip_routes() -> subprocess.CompletedProcess[bytes]:
+    environment = dict(os.environ)
+    environment.pop(PARENT_KEY_ENV, None)
+    result = subprocess.run(  # nosec B603 B607
+        ["ip", "-json", "route", "show", "table", "all"],
+        check=False,
+        capture_output=True,
+        env=environment,
+        timeout=30,
+    )
+    if result.returncode != 0:
+        raise RuntimeError("host policy route discovery failed")
+    return result
+
+
+def _parse_host_policy_subnets(data: bytes) -> tuple[ipaddress.IPv4Network, ...]:
+    document = strict_json(data)
+    if not isinstance(document, list):
+        raise ValueError("host policy route schema rejected")
+    networks: set[ipaddress.IPv4Network] = set()
+    for route in document:
+        if not isinstance(route, dict):
+            raise ValueError("host policy route schema rejected")
+        destination = route.get("dst")
+        if destination in (None, "default"):
+            continue
+        if not isinstance(destination, str):
+            raise ValueError("host policy route destination rejected")
+        try:
+            network = ipaddress.ip_network(destination, strict=False)
+        except ValueError as error:
+            raise ValueError("host policy route destination rejected") from error
+        if isinstance(network, ipaddress.IPv4Network):
+            networks.add(network)
+    return tuple(
+        sorted(
+            networks, key=lambda value: (int(value.network_address), value.prefixlen)
+        )
+    )
+
+
+def _host_policy_subnets() -> tuple[ipaddress.IPv4Network, ...]:
+    return _parse_host_policy_subnets(_ip_routes().stdout)
+
+
+def _parse_docker_network_subnets(
+    document: Any,
+) -> tuple[ipaddress.IPv4Network, ...]:
+    if not isinstance(document, list):
+        raise ValueError("Docker network IPAM schema rejected")
+    networks: set[ipaddress.IPv4Network] = set()
+    for inspected in document:
+        if not isinstance(inspected, dict):
+            raise ValueError("Docker network IPAM schema rejected")
+        ipam = inspected.get("IPAM")
+        if not isinstance(ipam, dict):
+            raise ValueError("Docker network IPAM schema rejected")
+        configs = ipam.get("Config")
+        if configs is None:
+            configs = []
+        if not isinstance(configs, list):
+            raise ValueError("Docker network IPAM schema rejected")
+        for config in configs:
+            if not isinstance(config, dict):
+                raise ValueError("Docker network IPAM schema rejected")
+            subnet = config.get("Subnet")
+            if subnet is None:
+                if config.get("Gateway") is not None:
+                    raise ValueError("Docker network IPAM schema rejected")
+                continue
+            if not isinstance(subnet, str):
+                raise ValueError("Docker network IPAM subnet rejected")
+            try:
+                network = ipaddress.ip_network(subnet, strict=False)
+            except ValueError as error:
+                raise ValueError("Docker network IPAM subnet rejected") from error
+            if isinstance(network, ipaddress.IPv4Network):
+                networks.add(network)
+    return tuple(
+        sorted(
+            networks, key=lambda value: (int(value.network_address), value.prefixlen)
+        )
+    )
+
+
+def _docker_network_subnets() -> tuple[ipaddress.IPv4Network, ...]:
+    listed = _docker(["network", "ls", "-q"], check=False)
+    if listed.returncode != 0:
+        raise RuntimeError("Docker network discovery failed")
+    identifiers = listed.stdout.decode("utf-8", errors="strict").split()
+    if len(identifiers) != len(set(identifiers)):
+        raise ValueError("Docker network discovery is ambiguous")
+    if not identifiers:
+        return ()
+    inspected = _docker(["network", "inspect", *identifiers], check=False)
+    if inspected.returncode != 0:
+        raise RuntimeError("Docker network inspection failed")
+    document = strict_json(inspected.stdout)
+    if not isinstance(document, list) or len(document) != len(identifiers):
+        raise ValueError("Docker network inspection is ambiguous")
+    inspected_ids = []
+    for network in document:
+        if not isinstance(network, dict) or not isinstance(network.get("Id"), str):
+            raise ValueError("Docker network inspection is ambiguous")
+        inspected_ids.append(network["Id"])
+    if len(inspected_ids) != len(set(inspected_ids)) or any(
+        sum(inspected_id.startswith(identifier) for inspected_id in inspected_ids) != 1
+        for identifier in identifiers
+    ):
+        raise ValueError("Docker network inspection is ambiguous")
+    return _parse_docker_network_subnets(document)
+
+
+def _network_candidates(run_id: str, ordinal: int) -> tuple[ipaddress.IPv4Network, ...]:
+    _safe_docker_name(run_id, "run id")
+    if ordinal <= 0:
+        raise ValueError("Docker attempt ordinal must be positive")
+    subnet_count = 1 << (
+        CALIBRATION_NETWORK_PREFIX - CALIBRATION_NETWORK_POOL.prefixlen
+    )
+    digest = hashlib.sha256(f"{run_id}:{ordinal}".encode()).digest()
+    start = int.from_bytes(digest[:8], "big") % subnet_count
+    step = (int.from_bytes(digest[8:16], "big") % subnet_count) | 1
+    block_size = 1 << (32 - CALIBRATION_NETWORK_PREFIX)
+    base = int(CALIBRATION_NETWORK_POOL.network_address)
+    return tuple(
+        ipaddress.IPv4Network(
+            (
+                base + ((start + probe * step) % subnet_count) * block_size,
+                CALIBRATION_NETWORK_PREFIX,
+            )
+        )
+        for probe in range(MAX_NETWORK_CANDIDATES)
+    )
+
+
+def _create_attempt_network(names: DockerAttemptNames) -> DockerNetworkAllocation:
+    routes = _host_policy_subnets()
+    docker_subnets = _docker_network_subnets()
+    labels = [
+        value
+        for key, value in names.role_labels("network").items()
+        for value in ("--label", f"{key}={value}")
+    ]
+    route_rejections = 0
+    docker_rejections = 0
+    overlap_retries = 0
+    for probe, candidate in enumerate(_network_candidates(names.run_id, names.ordinal)):
+        if any(candidate.overlaps(route) for route in routes):
+            route_rejections += 1
+            continue
+        if any(candidate.overlaps(network) for network in docker_subnets):
+            docker_rejections += 1
+            continue
+        argv = [
+            "network",
+            "create",
+            "--driver",
+            "bridge",
+            "--subnet",
+            str(candidate),
+            *labels,
+            names.network,
+        ]
+        created = _docker(argv, check=False)
+        if created.returncode == 0:
+            return DockerNetworkAllocation(
+                subnet=str(candidate),
+                candidate_probe=probe,
+                route_prefixes_checked=len(routes),
+                docker_subnets_checked=len(docker_subnets),
+                route_collision_rejections=route_rejections,
+                docker_collision_rejections=docker_rejections,
+                create_overlap_retries=overlap_retries,
+            )
+        if DOCKER_POOL_OVERLAP.search(created.stderr):
+            overlap_retries += 1
+            continue
+        raise subprocess.CalledProcessError(
+            created.returncode, ["docker", *argv], created.stdout, created.stderr
+        )
+    raise RuntimeError("calibration network candidate pool exhausted")
 
 
 def _inspect_one(kind: str, name: str) -> dict[str, Any]:
@@ -2015,25 +2217,12 @@ class DockerBrokerSidecar:
         self.heartbeat_thread: threading.Thread | None = None
         self.control_pipe_identity: tuple[int, int] | None = None
         self.activated = False
+        self.network_allocation: DockerNetworkAllocation | None = None
 
     def start(self) -> None:
         if self.process is not None:
             raise RuntimeError("broker sidecar already started")
-        network_label_args = [
-            value
-            for key, value in self.names.role_labels("network").items()
-            for value in ("--label", f"{key}={value}")
-        ]
-        _docker(
-            [
-                "network",
-                "create",
-                "--driver",
-                "bridge",
-                *network_label_args,
-                self.names.network,
-            ]
-        )
+        self.network_allocation = _create_attempt_network(self.names)
         self.created_network = True
         broker_label_args = [
             value
@@ -2209,14 +2398,35 @@ class DockerBrokerSidecar:
             or network.get("Labels") != self.names.role_labels("network")
         ):
             raise RuntimeError("calibration network contract changed")
+        allocation = self.network_allocation
+        if allocation is None:
+            raise RuntimeError("calibration network allocation evidence missing")
+        ipam = network.get("IPAM")
+        if not isinstance(ipam, dict):
+            raise RuntimeError("calibration network IPAM contract changed")
+        ipam_configs = ipam.get("Config")
+        if not isinstance(ipam_configs, list) or len(ipam_configs) != 1:
+            raise RuntimeError("calibration network IPAM contract changed")
+        ipam_config = ipam_configs[0]
+        if not isinstance(ipam_config, dict):
+            raise RuntimeError("calibration network IPAM contract changed")
+        subnet = ipam_config.get("Subnet")
+        gateway = ipam_config.get("Gateway")
+        if subnet != allocation.subnet or not isinstance(gateway, str):
+            raise RuntimeError("calibration network IPAM contract changed")
+        try:
+            gateway_address = ipaddress.ip_address(gateway)
+        except ValueError as error:
+            raise RuntimeError("calibration network gateway rejected") from error
+        if gateway_address not in ipaddress.ip_network(allocation.subnet):
+            raise RuntimeError("calibration network gateway rejected")
         return {
             "parent_key_absent": True,
             "mounts": {"evidence_rw": True, "source_ro": True},
             "network": {
+                "allocation": dataclasses.asdict(allocation),
                 "driver": "bridge",
-                "gateway": (
-                    (network.get("IPAM", {}).get("Config") or [{}])[0].get("Gateway")
-                ),
+                "gateway": gateway,
                 "internal": network.get("Internal"),
                 "labels": self.names.role_labels("network"),
                 "broker_attached_only_to_attempt_network": True,

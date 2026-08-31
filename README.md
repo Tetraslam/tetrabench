@@ -44,7 +44,11 @@ connection succeeding forces reward `0`. Detached Modal proof remains unproven
 because the retained storage credentials are expired.
 The unlisted candidate also has a source-only local calibration runner with two
 fixed OpenCode model groups. Every attempt creates a fresh labeled Docker bridge
-network and one broker sidecar with a unique alias. The broker image is pinned,
+with an explicit deterministic `/28` from a dedicated 10/8 pool. Allocation
+excludes every non-default IPv4 route across all host policy tables and every
+existing Docker IPAM range; atomic Docker creation arbitrates concurrent runners.
+Evidence retains only the selected subnet, gateway, and bounded collision counts.
+The network carries one broker sidecar with a unique alias. The broker image is pinned,
 mounts the source snapshot read-only, and receives the parent gateway key through
 anonymous stdin after start. The key is absent from Docker env, argv, labels,
 mounts, config, and logs. A disposable container completes a one-shot probe. The

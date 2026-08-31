@@ -1161,6 +1161,278 @@ def test_network_and_alias_injection_is_rejected(value: str) -> None:
         calibration._safe_docker_name(value, "network name")
 
 
+def test_network_allocation_excludes_policy_routes_and_docker_ipam(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    names = calibration._docker_names("cal-network-selection", 2)
+    candidates = tuple(
+        calibration.ipaddress.IPv4Network(value)
+        for value in ("10.224.0.0/28", "10.224.0.16/28", "10.224.0.32/28")
+    )
+    monkeypatch.setattr(calibration, "_network_candidates", lambda *_args: candidates)
+    monkeypatch.setattr(
+        calibration,
+        "_host_policy_subnets",
+        lambda: calibration._parse_host_policy_subnets(
+            b'[{"dst":"10.224.0.0/28","dev":"tailscale0","table":52}]'
+        ),
+    )
+    monkeypatch.setattr(
+        calibration,
+        "_docker_network_subnets",
+        lambda: (calibration.ipaddress.IPv4Network("10.224.0.16/28"),),
+    )
+    calls: list[list[str]] = []
+
+    def docker(argv: list[str], **_kwargs: Any) -> subprocess.CompletedProcess[bytes]:
+        calls.append(argv)
+        return subprocess.CompletedProcess(argv, 0, b"network-id\n", b"")
+
+    monkeypatch.setattr(calibration, "_docker", docker)
+    allocation = calibration._create_attempt_network(names)
+    assert allocation == calibration.DockerNetworkAllocation(
+        subnet="10.224.0.32/28",
+        candidate_probe=2,
+        route_prefixes_checked=1,
+        docker_subnets_checked=1,
+        route_collision_rejections=1,
+        docker_collision_rejections=1,
+        create_overlap_retries=0,
+    )
+    assert calls == [
+        [
+            "network",
+            "create",
+            "--driver",
+            "bridge",
+            "--subnet",
+            "10.224.0.32/28",
+            *[
+                value
+                for key, value in names.role_labels("network").items()
+                for value in ("--label", f"{key}={value}")
+            ],
+            names.network,
+        ]
+    ]
+
+
+def test_network_allocation_retries_only_atomic_overlap_race(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    names = calibration._docker_names("cal-network-race", 1)
+    candidates = tuple(
+        calibration.ipaddress.IPv4Network(value)
+        for value in ("10.224.1.0/28", "10.224.1.16/28")
+    )
+    assert calibration._network_candidates(
+        names.run_id, names.ordinal
+    ) == calibration._network_candidates(names.run_id, names.ordinal)
+    monkeypatch.setattr(calibration, "_network_candidates", lambda *_args: candidates)
+    monkeypatch.setattr(calibration, "_host_policy_subnets", lambda: ())
+    monkeypatch.setattr(calibration, "_docker_network_subnets", lambda: ())
+    calls = 0
+
+    def docker(argv: list[str], **_kwargs: Any) -> subprocess.CompletedProcess[bytes]:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return subprocess.CompletedProcess(
+                argv,
+                1,
+                b"",
+                (
+                    b"Error response from daemon: Pool overlaps with other one "
+                    b"on this address space"
+                ),
+            )
+        return subprocess.CompletedProcess(argv, 0, b"network-id\n", b"")
+
+    monkeypatch.setattr(calibration, "_docker", docker)
+    allocation = calibration._create_attempt_network(names)
+    assert allocation.subnet == "10.224.1.16/28"
+    assert allocation.candidate_probe == 1
+    assert allocation.create_overlap_retries == 1
+    assert calls == 2
+
+
+def test_concurrent_network_allocators_deterministically_probe_after_race(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    names = [calibration._docker_names("cal-concurrent-network", 1) for _ in range(2)]
+    candidates = tuple(
+        calibration.ipaddress.IPv4Network(value)
+        for value in ("10.224.2.0/28", "10.224.2.16/28")
+    )
+    monkeypatch.setattr(calibration, "_network_candidates", lambda *_args: candidates)
+    monkeypatch.setattr(calibration, "_host_policy_subnets", lambda: ())
+    monkeypatch.setattr(calibration, "_docker_network_subnets", lambda: ())
+    barrier = threading.Barrier(2)
+    lock = threading.Lock()
+    allocated: set[str] = set()
+
+    def docker(argv: list[str], **_kwargs: Any) -> subprocess.CompletedProcess[bytes]:
+        subnet = argv[argv.index("--subnet") + 1]
+        if subnet == str(candidates[0]):
+            barrier.wait(timeout=2)
+        with lock:
+            if subnet in allocated:
+                return subprocess.CompletedProcess(
+                    argv,
+                    1,
+                    b"",
+                    b"Pool overlaps with other one on this address space",
+                )
+            allocated.add(subnet)
+        return subprocess.CompletedProcess(argv, 0, b"network-id\n", b"")
+
+    monkeypatch.setattr(calibration, "_docker", docker)
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        allocations = list(executor.map(calibration._create_attempt_network, names))
+    assert {allocation.subnet for allocation in allocations} == {
+        "10.224.2.0/28",
+        "10.224.2.16/28",
+    }
+    assert sorted(allocation.create_overlap_retries for allocation in allocations) == [
+        0,
+        1,
+    ]
+
+
+def test_network_allocation_does_not_swallow_other_create_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    names = calibration._docker_names("cal-network-failure", 1)
+    monkeypatch.setattr(calibration, "_host_policy_subnets", lambda: ())
+    monkeypatch.setattr(calibration, "_docker_network_subnets", lambda: ())
+    monkeypatch.setattr(
+        calibration,
+        "_docker",
+        lambda argv, **_kwargs: subprocess.CompletedProcess(
+            argv, 1, b"", b"permission denied"
+        ),
+    )
+    with pytest.raises(subprocess.CalledProcessError) as caught:
+        calibration._create_attempt_network(names)
+    assert caught.value.stderr == b"permission denied"
+
+
+def test_network_allocation_rejects_candidate_exhaustion(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    names = calibration._docker_names("cal-network-exhaustion", 1)
+    candidates = (
+        calibration.ipaddress.IPv4Network("10.224.3.0/28"),
+        calibration.ipaddress.IPv4Network("10.224.3.16/28"),
+    )
+    monkeypatch.setattr(calibration, "_network_candidates", lambda *_args: candidates)
+    monkeypatch.setattr(
+        calibration,
+        "_host_policy_subnets",
+        lambda: (calibration.ipaddress.IPv4Network("10.224.3.0/27"),),
+    )
+    monkeypatch.setattr(calibration, "_docker_network_subnets", lambda: ())
+    monkeypatch.setattr(
+        calibration,
+        "_docker",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("overlapping candidate reached Docker")
+        ),
+    )
+    with pytest.raises(RuntimeError, match="candidate pool exhausted"):
+        calibration._create_attempt_network(names)
+
+
+@pytest.mark.parametrize(
+    "data",
+    [b"not-json", b"{}", b'[{"dst":42}]', b'[{"dst":"not-a-prefix"}]'],
+)
+def test_host_policy_route_json_fails_closed(data: bytes) -> None:
+    with pytest.raises(ValueError):
+        calibration._parse_host_policy_subnets(data)
+
+
+def test_host_policy_route_command_failure_is_rejected(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        calibration.subprocess,
+        "run",
+        lambda *_args, **_kwargs: subprocess.CompletedProcess([], 2, b"", b"failed"),
+    )
+    with pytest.raises(RuntimeError, match="route discovery failed"):
+        calibration._ip_routes()
+
+
+@pytest.mark.parametrize(
+    "stdout",
+    [b"not-json", b"{}", b'[{"IPAM":{"Config":"bad"}}]'],
+)
+def test_docker_network_command_json_fails_closed(
+    stdout: bytes, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    responses = iter(
+        [
+            subprocess.CompletedProcess([], 0, b"network-id\n", b""),
+            subprocess.CompletedProcess([], 0, stdout, b""),
+        ]
+    )
+    monkeypatch.setattr(
+        calibration, "_docker", lambda *_args, **_kwargs: next(responses)
+    )
+    with pytest.raises(ValueError):
+        calibration._docker_network_subnets()
+
+
+def test_docker_network_discovery_failure_is_rejected(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        calibration,
+        "_docker",
+        lambda *_args, **_kwargs: subprocess.CompletedProcess([], 1, b"", b"failed"),
+    )
+    with pytest.raises(RuntimeError, match="network discovery failed"):
+        calibration._docker_network_subnets()
+
+
+def test_docker_network_inspection_failure_is_rejected(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    responses = iter(
+        [
+            subprocess.CompletedProcess([], 0, b"network-id\n", b""),
+            subprocess.CompletedProcess([], 1, b"", b"failed"),
+        ]
+    )
+    monkeypatch.setattr(
+        calibration, "_docker", lambda *_args, **_kwargs: next(responses)
+    )
+    with pytest.raises(RuntimeError, match="network inspection failed"):
+        calibration._docker_network_subnets()
+
+
+def test_docker_network_inspection_identity_mismatch_is_rejected(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    responses = iter(
+        [
+            subprocess.CompletedProcess([], 0, b"expected-id\n", b""),
+            subprocess.CompletedProcess(
+                [],
+                0,
+                b'[{"Id":"other-id","IPAM":{"Config":[]}}]',
+                b"",
+            ),
+        ]
+    )
+    monkeypatch.setattr(
+        calibration, "_docker", lambda *_args, **_kwargs: next(responses)
+    )
+    with pytest.raises(ValueError, match="inspection is ambiguous"):
+        calibration._docker_network_subnets()
+
+
 def test_overlay_byte_drift_fails_closed(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1934,6 +2206,7 @@ def test_create_disconnect_still_reconciles_exact_owned_resources(
         return subprocess.CompletedProcess(argv, 0, b"", b"")
 
     monkeypatch.setattr(calibration, "_docker", docker)
+    monkeypatch.setattr(calibration, "_host_policy_subnets", lambda: ())
     monkeypatch.setattr(
         calibration,
         "_owned_resource_exists",
@@ -2550,6 +2823,9 @@ def test_sidecar_network_probe_simulated_client_inspect_and_cleanup(
         assert security["mounts"] == {"evidence_rw": True, "source_ro": True}
         assert security["network"]["driver"] == "bridge"
         assert security["network"]["gateway"]
+        assert security["network"]["allocation"]["subnet"].startswith("10.")
+        assert security["network"]["allocation"]["route_prefixes_checked"] >= 0
+        assert security["network"]["allocation"]["docker_subnets_checked"] >= 0
         assert security["network"]["internal"] is False
         assert security["network"]["labels"] == sidecar.names.role_labels("network")
         output = tmp_path / "output"
@@ -2638,6 +2914,29 @@ def test_sidecar_network_probe_simulated_client_inspect_and_cleanup(
         peers = {item["Name"] for item in network["Containers"].values()}
         assert sidecar.names.broker in peers
         assert main in peers
+        outbound = calibration._docker(
+            [
+                "run",
+                "--rm",
+                "--network",
+                sidecar.names.network,
+                "--read-only",
+                "--cap-drop",
+                "ALL",
+                calibration.BROKER_IMAGE,
+                "python",
+                "-c",
+                (
+                    "import http.client;"
+                    "connection=http.client.HTTPSConnection('1.1.1.1',timeout=15);"
+                    "connection.request('HEAD','/');"
+                    "print(connection.getresponse().status);connection.close()"
+                ),
+            ],
+            check=False,
+        )
+        assert outbound.returncode == 0, outbound.stderr.decode(errors="replace")
+        assert outbound.stdout.strip() in {b"200", b"301", b"302"}
     finally:
         cleanup = sidecar.cleanup()
     assert cleanup == {
