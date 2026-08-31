@@ -106,6 +106,29 @@ def strict_json(data: bytes) -> Any:
         raise ValueError("invalid JSON") from error
 
 
+def _strict_json_decimal(data: bytes) -> Any:
+    def reject_constant(value: str) -> None:
+        raise ValueError(f"non-finite JSON value: {value}")
+
+    def reject_duplicates(items: list[tuple[str, Any]]) -> dict[str, Any]:
+        result: dict[str, Any] = {}
+        for key, item in items:
+            if key in result:
+                raise ValueError("JSON contains duplicate keys")
+            result[key] = item
+        return result
+
+    try:
+        return json.loads(
+            data.decode("utf-8"),
+            object_pairs_hook=reject_duplicates,
+            parse_constant=reject_constant,
+            parse_float=Decimal,
+        )
+    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise ValueError("invalid JSON") from error
+
+
 UPSTREAM_URL = "https://litellm-proxy.taildb21e0.ts.net"
 MAIN_DNS = ("1.1.1.1", "9.9.9.9")
 BROKER_DNS = ("100.100.100.100",)
@@ -597,7 +620,13 @@ class BrokerState:
         upstreams = tuple(self.upstreams)
         self.upstreams.clear()
         for upstream in upstreams:
-            upstream.close()
+            upstream.auto_open = 0
+            connected = upstream.sock
+            upstream.sock = None
+            if connected is not None:
+                with suppress(OSError):
+                    connected.shutdown(socket.SHUT_RDWR)
+                connected.close()
 
     def authorize(self, headers: Any) -> None:
         values = headers.get_all("Authorization", [])
@@ -692,6 +721,23 @@ class BrokerState:
                 time.monotonic()
             )
 
+    def upstream_io_timeout(self) -> float:
+        expired = False
+        with self.lock:
+            now = time.monotonic()
+            if self._expired_locked(now):
+                self._invalidate_locked()
+                expired = True
+                remaining = 0.0
+            else:
+                remaining = min(self.deadline - now, float(MAX_ATTEMPT_SECONDS))
+        if expired:
+            self.write_evidence()
+            raise TimeoutError("broker attempt deadline expired")
+        if remaining <= 0:
+            raise TimeoutError("broker attempt deadline expired")
+        return remaining
+
     @property
     def probe_consumed(self) -> bool:
         with self.lock:
@@ -768,7 +814,8 @@ class BrokerState:
                 raise RuntimeError("upstream is not connected")
             upstream.auto_open = 0
             self.upstreams.add(upstream)
-            if self._expired_locked(time.monotonic()):
+            now = time.monotonic()
+            if self._expired_locked(now):
                 self._invalidate_locked()
                 expired = True
                 accepted = False
@@ -783,6 +830,11 @@ class BrokerState:
                 )
             if accepted:
                 parent_key = self.parent_key
+                if upstream.sock is None:
+                    raise RuntimeError("upstream is not connected")
+                upstream.sock.settimeout(
+                    min(self.deadline - now, float(MAX_ATTEMPT_SECONDS))
+                )
                 admission.started = True
                 upstream.request(
                     "POST",
@@ -894,6 +946,153 @@ def _bounded_usage(headers: http.client.HTTPMessage) -> dict[str, int]:
             raise ValueError("model response token header exceeds limit")
         usage[key] = value
     return usage
+
+
+def _usage_token_count(value: Any) -> int:
+    if type(value) is not int or value < 0:
+        raise ValueError("model response token usage is malformed")
+    if value > 1_000_000_000:
+        raise ValueError("model response token usage exceeds limit")
+    return value
+
+
+def _stream_cost(value: Any) -> Decimal:
+    if isinstance(value, bool) or not isinstance(value, (Decimal, int, str)):
+        raise ValueError("model streaming cost is malformed")
+    try:
+        parsed = Decimal(value)
+    except InvalidOperation as error:
+        raise ValueError("model streaming cost is malformed") from error
+    if not parsed.is_finite() or parsed < 0:
+        raise ValueError("model streaming cost is not finite nonnegative")
+    return parsed
+
+
+def _validate_stream_content_type(headers: http.client.HTTPMessage) -> str:
+    values = headers.get_all("Content-Type", [])
+    if len(values) != 1:
+        raise ValueError("model streaming content type is ambiguous")
+    original = values[0]
+    parts = [part.strip() for part in original.split(";")]
+    if not parts or parts[0].lower() != "text/event-stream":
+        raise ValueError("model streaming content type is invalid")
+    parameters: dict[str, str] = {}
+    for part in parts[1:]:
+        if part.count("=") != 1:
+            raise ValueError("model streaming content type is invalid")
+        name, value = (item.strip().lower() for item in part.split("=", 1))
+        if name in parameters or name != "charset" or value not in {"utf-8", '"utf-8"'}:
+            raise ValueError("model streaming content type is invalid")
+        parameters[name] = value
+    return original
+
+
+def _response_framing(
+    headers: http.client.HTTPMessage, *, require_explicit: bool
+) -> int | None:
+    content_lengths = headers.get_all("Content-Length", [])
+    transfer_encodings = headers.get_all("Transfer-Encoding", [])
+    if (
+        len(content_lengths) > 1
+        or (content_lengths and not content_lengths[0].isdigit())
+        or (content_lengths and transfer_encodings)
+        or len(transfer_encodings) > 1
+        or (transfer_encodings and transfer_encodings[0].strip().lower() != "chunked")
+        or (require_explicit and not content_lengths and not transfer_encodings)
+    ):
+        raise ValueError("model response framing is ambiguous")
+    declared_length = int(content_lengths[0]) if content_lengths else None
+    if declared_length is not None and declared_length > MAX_RESPONSE_BYTES:
+        raise ValueError("model response exceeds limit")
+    return declared_length
+
+
+def _read_bounded_response(
+    response: http.client.HTTPResponse,
+    upstream: http.client.HTTPConnection,
+    state: BrokerState,
+    declared_length: int | None,
+) -> bytes:
+    retained = bytearray()
+    while True:
+        if len(retained) > MAX_RESPONSE_BYTES:
+            raise ValueError("model response exceeds limit")
+        timeout = state.upstream_io_timeout()
+        if upstream.sock is None:
+            raise ConnectionError("model upstream socket closed")
+        upstream.sock.settimeout(timeout)
+        chunk = response.read1(min(64 << 10, MAX_RESPONSE_BYTES + 1 - len(retained)))
+        if not chunk:
+            break
+        retained.extend(chunk)
+    if len(retained) > MAX_RESPONSE_BYTES:
+        raise ValueError("model response exceeds limit")
+    if declared_length is not None and len(retained) != declared_length:
+        raise ValueError("model response framing mismatch")
+    return bytes(retained)
+
+
+def _parse_responses_stream(body: bytes) -> tuple[Decimal, dict[str, int]]:
+    try:
+        text = body.decode("utf-8")
+    except UnicodeDecodeError as error:
+        raise ValueError("model streaming response is not UTF-8") from error
+    normalized = text.replace("\r\n", "\n")
+    if "\r" in normalized or not normalized.endswith("\n\n"):
+        raise ValueError("model streaming framing is malformed")
+    blocks = normalized[:-2].split("\n\n")
+    if not blocks or any(not block for block in blocks):
+        raise ValueError("model streaming framing is malformed")
+    terminal: tuple[Decimal, dict[str, int]] | None = None
+    for index, block in enumerate(blocks):
+        event_values: list[str] = []
+        data_values: list[str] = []
+        for line in block.split("\n"):
+            if line.startswith("event: "):
+                event_values.append(line[7:])
+            elif line.startswith("data: "):
+                data_values.append(line[6:])
+            else:
+                raise ValueError("model streaming framing is malformed")
+        if len(event_values) != 1 or len(data_values) != 1:
+            raise ValueError("model streaming framing is ambiguous")
+        event_type = event_values[0]
+        if not event_type or len(event_type) > 128:
+            raise ValueError("model streaming event type is malformed")
+        document = _strict_json_decimal(data_values[0].encode())
+        if not isinstance(document, dict) or document.get("type") != event_type:
+            raise ValueError("model streaming event is malformed")
+        if event_type in {"response.failed", "response.incomplete"}:
+            raise ValueError("model streaming response did not complete")
+        if event_type != "response.completed":
+            continue
+        if terminal is not None:
+            raise ValueError("model streaming terminal event is duplicated")
+        if index != len(blocks) - 1:
+            raise ValueError("model streaming response has trailing events")
+        response_document = document.get("response")
+        if (
+            not isinstance(response_document, dict)
+            or response_document.get("status") != "completed"
+        ):
+            raise ValueError("model streaming terminal event is unsuccessful")
+        usage = response_document.get("usage")
+        if not isinstance(usage, dict):
+            raise ValueError("model streaming terminal usage is missing")
+        bounded_usage = {
+            name: _usage_token_count(usage.get(name))
+            for name in ("input_tokens", "output_tokens", "total_tokens")
+        }
+        if bounded_usage["total_tokens"] != (
+            bounded_usage["input_tokens"] + bounded_usage["output_tokens"]
+        ):
+            raise ValueError("model streaming token usage is incoherent")
+        if "cost" not in usage:
+            raise ValueError("model streaming cost is missing")
+        terminal = (_stream_cost(usage["cost"]), bounded_usage)
+    if terminal is None:
+        raise ValueError("model streaming terminal event is missing")
+    return terminal
 
 
 def _single_header(headers: http.client.HTTPMessage, *names: str) -> str | None:
@@ -1688,6 +1887,8 @@ def _validate_request(
             raise ValueError("broker responses multiplicity/background rejected")
         _validate_responses_content(document)
     else:
+        if stream:
+            raise ValueError("broker streaming chat is unsupported")
         allowed_limit_fields = {"max_completion_tokens", "max_tokens"}
         injected_field = "max_completion_tokens"
         n = document.get("n", 1)
@@ -1737,6 +1938,7 @@ def _forward_headers(handler: BaseHTTPRequestHandler) -> dict[str, str]:
 
 def _upstream_connection(
     parsed: urllib.parse.SplitResult,
+    timeout: float,
 ) -> http.client.HTTPConnection:
     if parsed.hostname is None:
         raise ValueError("upstream host is missing")
@@ -1744,14 +1946,14 @@ def _upstream_connection(
         return http.client.HTTPSConnection(
             parsed.hostname,
             parsed.port,
-            timeout=BACKPRESSURE_TIMEOUT_SECONDS,
+            timeout=timeout,
             context=ssl.create_default_context(),
         )
     if parsed.scheme == "http":
         return http.client.HTTPConnection(
             parsed.hostname,
             parsed.port,
-            timeout=BACKPRESSURE_TIMEOUT_SECONDS,
+            timeout=timeout,
         )
     raise ValueError("upstream scheme rejected")
 
@@ -1870,7 +2072,7 @@ class CalibrationBrokerHandler(BaseHTTPRequestHandler):
                 settlement_finalized = True
             else:
                 parsed = urllib.parse.urlsplit(state.upstream_url)
-                upstream = _upstream_connection(parsed)
+                upstream = _upstream_connection(parsed, state.upstream_io_timeout())
                 upstream.connect()
                 upstream_opened = True
                 state.send_connected_request(
@@ -1882,26 +2084,34 @@ class CalibrationBrokerHandler(BaseHTTPRequestHandler):
                     forwarding,
                 )
                 potentially_paid = forwarding.started
+                if upstream.sock is not None:
+                    upstream.sock.settimeout(state.upstream_io_timeout())
                 response = upstream.getresponse()
                 status = response.status
-                cost = _parse_cost(response.headers)
-                usage = _bounded_usage(response.headers)
                 call_id = _single_header(response.headers, "X-Litellm-Call-Id")
                 request_id = _single_header(
                     response.headers, "X-Litellm-Request-Id", "X-Request-Id"
                 )
-                content_lengths = response.headers.get_all("Content-Length", [])
-                if len(content_lengths) > 1 or (
-                    content_lengths and not content_lengths[0].isdigit()
-                ):
-                    raise ValueError("model response framing is ambiguous")
-                if content_lengths and int(content_lengths[0]) > MAX_RESPONSE_BYTES:
-                    raise ValueError("model response exceeds limit")
-                response_body = response.read(MAX_RESPONSE_BYTES + 1)
-                if len(response_body) > MAX_RESPONSE_BYTES:
-                    raise ValueError("model response exceeds limit")
-                if content_lengths and len(response_body) != int(content_lengths[0]):
-                    raise ValueError("model response framing mismatch")
+                stream = content_type == "text/event-stream"
+                if stream:
+                    if status != HTTPStatus.OK:
+                        raise ValueError(
+                            "model streaming response status is unsuccessful"
+                        )
+                    content_type = _validate_stream_content_type(response.headers)
+                else:
+                    cost = _parse_cost(response.headers)
+                    usage = _bounded_usage(response.headers)
+                declared_length = _response_framing(
+                    response.headers, require_explicit=stream
+                )
+                response_body = _read_bounded_response(
+                    response, upstream, state, declared_length
+                )
+                if stream:
+                    cost, usage = _parse_responses_stream(response_body)
+                if cost is None:
+                    raise RuntimeError("model response cost is unavailable")
                 settlement = "known_fatal"
                 state.finish_request(reservation, cost)
                 settlement = "settled"
@@ -1985,7 +2195,7 @@ class CalibrationBroker:
         model: str,
         ledger: SpendLedger,
         max_input_tokens: int = MAX_BODY_BYTES,
-        timeout: int = MAX_ATTEMPT_SECONDS,
+        timeout: float = MAX_ATTEMPT_SECONDS,
         upstream_url: str = UPSTREAM_URL,
         probe_token: str | None = None,
         token: str | None = None,

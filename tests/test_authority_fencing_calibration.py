@@ -40,6 +40,8 @@ class FakeUpstreamServer(ThreadingHTTPServer):
     body: bytes
     response_headers: list[tuple[str, str]]
     response_gate: threading.Event | None
+    body_gate: threading.Event | None
+    first_body_delay: float
     include_content_length: bool
     close_response: bool
 
@@ -76,8 +78,20 @@ class FakeUpstreamHandler(BaseHTTPRequestHandler):
             self.send_header("Connection", "close")
             self.close_connection = True
         self.end_headers()
+        if server.body_gate is not None:
+            server.body_gate.wait(timeout=30)
+        if server.first_body_delay:
+            time.sleep(server.first_body_delay)
         try:
-            self.wfile.write(response)
+            if any(
+                name.lower() == "transfer-encoding" and value.lower() == "chunked"
+                for name, value in server.response_headers
+            ):
+                self.wfile.write(
+                    f"{len(response):x}\r\n".encode() + response + b"\r\n0\r\n\r\n"
+                )
+            else:
+                self.wfile.write(response)
         except (BrokenPipeError, ConnectionResetError):
             pass
 
@@ -114,6 +128,8 @@ def fake_upstream(
     body: bytes = b'{"ok":true}',
     status: int = 200,
     response_gate: threading.Event | None = None,
+    body_gate: threading.Event | None = None,
+    first_body_delay: float = 0.0,
     include_content_length: bool = True,
     close_response: bool = False,
 ):
@@ -121,11 +137,17 @@ def fake_upstream(
     server.requests = []
     server.status = status
     server.body = body
-    server.response_headers = headers or [
-        ("Content-Type", "application/json"),
-        ("X-Litellm-Response-Cost", "0.125"),
-    ]
+    server.response_headers = (
+        headers
+        if headers is not None
+        else [
+            ("Content-Type", "application/json"),
+            ("X-Litellm-Response-Cost", "0.125"),
+        ]
+    )
     server.response_gate = response_gate
+    server.body_gate = body_gate
+    server.first_body_delay = first_body_delay
     server.include_content_length = include_content_length
     server.close_response = close_response
     thread = threading.Thread(target=server.serve_forever)
@@ -139,11 +161,35 @@ def fake_upstream(
         assert not thread.is_alive()
 
 
+def responses_sse(
+    *,
+    cost: object = "0.125",
+    input_tokens: object = 2,
+    output_tokens: object = 3,
+    total_tokens: object = 5,
+    status: str = "completed",
+    event_type: str = "response.completed",
+) -> bytes:
+    document = {
+        "type": event_type,
+        "response": {
+            "status": status,
+            "usage": {
+                "cost": cost,
+                "input_tokens": input_tokens,
+                "output_tokens": output_tokens,
+                "total_tokens": total_tokens,
+            },
+        },
+    }
+    return f"event: {event_type}\ndata: {json.dumps(document)}\n\n".encode()
+
+
 @contextmanager
 def running_broker(
     upstream: FakeUpstreamServer,
     *,
-    timeout: int = 30,
+    timeout: float = 30,
     ledger: calibration.SpendLedger | None = None,
     max_input_tokens: int = calibration.MAX_BODY_BYTES,
     debug_deny_upstream: bool = False,
@@ -801,13 +847,7 @@ def test_first_valid_endpoint_locks_attempt_and_rejects_switching() -> None:
             assert [item["path"] for item in upstream.requests] == ["/v1/responses"]
 
 
-@pytest.mark.parametrize(
-    ("stream", "expected_content_type"),
-    [(False, "application/json"), (True, "text/event-stream")],
-)
-def test_child_content_type_is_derived_only_from_validated_stream_mode(
-    stream: bool, expected_content_type: str
-) -> None:
+def test_nonstream_content_type_is_derived_from_validated_request() -> None:
     headers = [
         ("Content-Type", "text/upstream-controlled"),
         ("Content-Encoding", "upstream-secret"),
@@ -820,13 +860,91 @@ def test_child_content_type_is_derived_only_from_validated_stream_mode(
                 document={
                     "model": "openai/gpt-5.6-sol",
                     "input": "redacted",
-                    "stream": stream,
+                    "stream": False,
                 },
             )
     assert status == 200
-    assert returned_headers["content-type"] == expected_content_type
+    assert returned_headers["content-type"] == "application/json"
     assert "content-encoding" not in returned_headers
     assert returned_headers["content-length"] == str(len(b'{"ok":true}'))
+
+
+def test_valid_responses_stream_settles_terminal_cost_and_forwards_exact_bytes() -> (
+    None
+):
+    body = responses_sse()
+    content_type = "text/event-stream; charset=utf-8"
+    with fake_upstream(headers=[("Content-Type", content_type)], body=body) as upstream:
+        ledger = calibration.SpendLedger()
+        with running_broker(upstream, ledger=ledger) as broker:
+            status, returned_headers, returned_body = request(
+                broker,
+                document={
+                    "model": "openai/gpt-5.6-sol",
+                    "input": "redacted",
+                    "stream": True,
+                },
+            )
+            assert status == 200
+            assert returned_headers["content-type"] == content_type
+            assert returned_body == body
+            assert ledger.cost == Decimal("0.125")
+            assert ledger.reserved == 0
+            assert ledger.fatal is None
+            deadline = time.monotonic() + 2
+            while not broker.state.records and time.monotonic() < deadline:
+                time.sleep(0.01)
+            assert broker.state.records[0].usage == {
+                "input_tokens": 2,
+                "output_tokens": 3,
+                "total_tokens": 5,
+            }
+
+
+def test_valid_chunked_responses_stream_settles_terminal_cost() -> None:
+    body = responses_sse()
+    with fake_upstream(
+        headers=[
+            ("Content-Type", "text/event-stream"),
+            ("Transfer-Encoding", "chunked"),
+        ],
+        body=body,
+        include_content_length=False,
+    ) as upstream:
+        ledger = calibration.SpendLedger()
+        with running_broker(upstream, ledger=ledger) as broker:
+            status, _headers, returned_body = request(
+                broker,
+                document={
+                    "model": "openai/gpt-5.6-sol",
+                    "input": "redacted",
+                    "stream": True,
+                },
+            )
+            assert status == 200
+            assert returned_body == body
+            assert ledger.cost == Decimal("0.125")
+            assert ledger.reserved == 0
+
+
+def test_streaming_chat_is_rejected_before_reservation_or_forwarding() -> None:
+    with fake_upstream() as upstream:
+        ledger = calibration.SpendLedger()
+        with running_broker(upstream, ledger=ledger) as broker:
+            status, _headers, _body = request(
+                broker,
+                path="/v1/chat/completions",
+                document={
+                    "model": "openai/gpt-5.6-sol",
+                    "messages": [{"role": "user", "content": "redacted"}],
+                    "stream": True,
+                },
+            )
+            assert status == 400
+            assert upstream.requests == []
+            assert broker.state.request_count == 0
+            assert ledger.cost == 0
+            assert ledger.reserved == 0
 
 
 def test_nonboolean_stream_mode_is_rejected_before_upstream() -> None:
@@ -1693,6 +1811,267 @@ def test_successful_upstream_rejects_ambiguous_cost() -> None:
             assert len(upstream.requests) == 1
 
 
+def test_slow_first_stream_chunk_uses_attempt_deadline_not_backpressure_window(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(calibration, "BACKPRESSURE_TIMEOUT_SECONDS", 0.05)
+    body = responses_sse()
+    with fake_upstream(
+        headers=[("Content-Type", "text/event-stream")],
+        body=body,
+        first_body_delay=0.15,
+    ) as upstream:
+        with running_broker(upstream, timeout=2) as broker:
+            started = time.monotonic()
+            status, _headers, returned_body = request(
+                broker,
+                document={
+                    "model": "openai/gpt-5.6-sol",
+                    "input": "redacted",
+                    "stream": True,
+                },
+            )
+            assert time.monotonic() - started > 0.05
+            assert status == 200
+            assert returned_body == body
+            assert broker.state.ledger.cost == Decimal("0.125")
+
+
+def _nonterminal_sse(event_type: str) -> bytes:
+    document = {"type": event_type, "response": {"status": "in_progress"}}
+    return f"event: {event_type}\ndata: {json.dumps(document)}\n\n".encode()
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        pytest.param(b"", id="empty"),
+        pytest.param(_nonterminal_sse("response.created"), id="missing-terminal"),
+        pytest.param(
+            responses_sse(event_type="response.failed", status="failed"),
+            id="failed",
+        ),
+        pytest.param(
+            responses_sse(event_type="response.incomplete", status="incomplete"),
+            id="incomplete",
+        ),
+        pytest.param(responses_sse(status="incomplete"), id="unsuccessful-terminal"),
+        pytest.param(responses_sse() + responses_sse(), id="duplicate-terminal"),
+        pytest.param(
+            responses_sse() + _nonterminal_sse("response.output_text.done"),
+            id="trailing-event",
+        ),
+        pytest.param(responses_sse()[:-1], id="unterminated-sse"),
+        pytest.param(
+            b'event: response.completed\ndata: {"type":"response.completed",}\n\n',
+            id="malformed-json",
+        ),
+        pytest.param(responses_sse(cost=True), id="boolean-cost"),
+        pytest.param(responses_sse(cost="NaN"), id="nonfinite-cost"),
+        pytest.param(responses_sse(input_tokens=True), id="boolean-token"),
+        pytest.param(responses_sse(output_tokens=-1), id="negative-token"),
+        pytest.param(responses_sse(total_tokens=6), id="incoherent-total"),
+    ],
+)
+def test_invalid_responses_stream_retains_unknown_and_blocks_retry(body: bytes) -> None:
+    with fake_upstream(
+        headers=[("Content-Type", "text/event-stream")], body=body
+    ) as upstream:
+        ledger = calibration.SpendLedger()
+        with running_broker(upstream, ledger=ledger) as broker:
+            status, returned_headers, returned_body = request(
+                broker,
+                document={
+                    "model": "openai/gpt-5.6-sol",
+                    "input": "redacted",
+                    "stream": True,
+                },
+            )
+            assert status == 502
+            assert returned_headers["connection"] == "close"
+            assert returned_body == b'{"error":"upstream rejected"}'
+            assert ledger.fatal == "authoritative settlement unavailable"
+            assert ledger.cost == 0
+            assert ledger.reserved > 0
+            assert request(broker)[0] == 400
+            assert len(upstream.requests) == 1
+            assert broker.state.records[0].settlement == "retained_unknown"
+
+
+def test_stream_missing_cost_retains_unknown() -> None:
+    document = {
+        "type": "response.completed",
+        "response": {
+            "status": "completed",
+            "usage": {"input_tokens": 2, "output_tokens": 3, "total_tokens": 5},
+        },
+    }
+    body = f"event: response.completed\ndata: {json.dumps(document)}\n\n".encode()
+    with fake_upstream(
+        headers=[("Content-Type", "text/event-stream")], body=body
+    ) as upstream:
+        ledger = calibration.SpendLedger()
+        with running_broker(upstream, ledger=ledger) as broker:
+            assert (
+                request(
+                    broker,
+                    document={
+                        "model": "openai/gpt-5.6-sol",
+                        "input": "redacted",
+                        "stream": True,
+                    },
+                )[0]
+                == 502
+            )
+            assert ledger.fatal == "authoritative settlement unavailable"
+            assert ledger.cost == 0
+            assert ledger.reserved > 0
+
+
+@pytest.mark.parametrize(
+    "headers",
+    [
+        pytest.param([], id="missing-content-type"),
+        pytest.param([("Content-Type", "application/json")], id="wrong-content-type"),
+        pytest.param(
+            [("Content-Type", "text/event-stream; boundary=x")],
+            id="unsupported-parameter",
+        ),
+        pytest.param(
+            [
+                ("Content-Type", "text/event-stream"),
+                ("Content-Type", "text/event-stream"),
+            ],
+            id="duplicate-content-type",
+        ),
+    ],
+)
+def test_invalid_stream_content_type_retains_unknown(
+    headers: list[tuple[str, str]],
+) -> None:
+    with fake_upstream(headers=headers, body=responses_sse()) as upstream:
+        ledger = calibration.SpendLedger()
+        with running_broker(upstream, ledger=ledger) as broker:
+            assert (
+                request(
+                    broker,
+                    document={
+                        "model": "openai/gpt-5.6-sol",
+                        "input": "redacted",
+                        "stream": True,
+                    },
+                )[0]
+                == 502
+            )
+            assert ledger.fatal == "authoritative settlement unavailable"
+            assert ledger.cost == 0
+            assert ledger.reserved > 0
+
+
+def test_ambiguous_or_truncated_stream_framing_retains_unknown() -> None:
+    body = responses_sse()
+    cases = [
+        (
+            [
+                ("Content-Type", "text/event-stream"),
+                ("Transfer-Encoding", "chunked"),
+            ],
+            True,
+            False,
+        ),
+        (
+            [
+                ("Content-Type", "text/event-stream"),
+                ("Content-Length", str(len(body) + 1)),
+            ],
+            False,
+            True,
+        ),
+        (
+            [("Content-Type", "text/event-stream")],
+            False,
+            True,
+        ),
+    ]
+    for headers, include_content_length, close_response in cases:
+        with fake_upstream(
+            body=body,
+            headers=headers,
+            include_content_length=include_content_length,
+            close_response=close_response,
+        ) as upstream:
+            ledger = calibration.SpendLedger()
+            with running_broker(upstream, ledger=ledger) as broker:
+                assert (
+                    request(
+                        broker,
+                        document={
+                            "model": "openai/gpt-5.6-sol",
+                            "input": "redacted",
+                            "stream": True,
+                        },
+                    )[0]
+                    == 502
+                )
+                assert ledger.fatal == "authoritative settlement unavailable"
+                assert ledger.cost == 0
+                assert ledger.reserved > 0
+
+
+def test_unsuccessful_stream_http_status_retains_unknown() -> None:
+    with fake_upstream(
+        headers=[("Content-Type", "text/event-stream")],
+        body=responses_sse(),
+        status=HTTPStatus.INTERNAL_SERVER_ERROR,
+    ) as upstream:
+        ledger = calibration.SpendLedger()
+        with running_broker(upstream, ledger=ledger) as broker:
+            assert (
+                request(
+                    broker,
+                    document={
+                        "model": "openai/gpt-5.6-sol",
+                        "input": "redacted",
+                        "stream": True,
+                    },
+                )[0]
+                == 502
+            )
+            assert ledger.fatal == "authoritative settlement unavailable"
+            assert ledger.cost == 0
+            assert ledger.reserved > 0
+
+
+def test_stream_timeout_retains_unknown_and_never_exceeds_attempt_deadline() -> None:
+    gate = threading.Event()
+    with fake_upstream(
+        headers=[("Content-Type", "text/event-stream")],
+        body=responses_sse(),
+        body_gate=gate,
+    ) as upstream:
+        ledger = calibration.SpendLedger()
+        try:
+            with running_broker(upstream, ledger=ledger, timeout=0.2) as broker:
+                started = time.monotonic()
+                assert (
+                    request(
+                        broker,
+                        document={
+                            "model": "openai/gpt-5.6-sol",
+                            "input": "redacted",
+                            "stream": True,
+                        },
+                    )[0]
+                    == 502
+                )
+                assert time.monotonic() - started < 1
+                assert ledger.fatal == "authoritative settlement unavailable"
+                assert ledger.cost == 0
+                assert ledger.reserved > 0
+        finally:
+            gate.set()
+
+
 def test_cost_cap_and_exact_reservations_are_atomic() -> None:
     ledger = calibration.SpendLedger()
     first = ledger.reserve(Decimal("20"))
@@ -1820,6 +2199,32 @@ def test_streaming_response_cap_fails_closed(monkeypatch: pytest.MonkeyPatch) ->
             assert ledger.fatal == "broker upstream response invalid"
             assert ledger.reserved == 0
             assert ledger.cost == Decimal("0.125")
+
+
+def test_streaming_response_cap_retains_unknown(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    body = responses_sse()
+    monkeypatch.setattr(calibration, "MAX_RESPONSE_BYTES", len(body) - 1)
+    with fake_upstream(
+        headers=[("Content-Type", "text/event-stream")], body=body
+    ) as upstream:
+        ledger = calibration.SpendLedger()
+        with running_broker(upstream, ledger=ledger) as broker:
+            assert (
+                request(
+                    broker,
+                    document={
+                        "model": "openai/gpt-5.6-sol",
+                        "input": "redacted",
+                        "stream": True,
+                    },
+                )[0]
+                == 502
+            )
+            assert ledger.fatal == "authoritative settlement unavailable"
+            assert ledger.cost == 0
+            assert ledger.reserved > 0
 
 
 def test_invalid_success_metadata_never_reaches_child() -> None:
@@ -1970,7 +2375,13 @@ def test_authorize_at_exact_lease_expiry_revokes_all_authority(
     state.last_heartbeat = 100 - calibration.HEARTBEAT_LEASE_SECONDS
 
     class Upstream:
-        closed = False
+        def __init__(self) -> None:
+            self.auto_open = 1
+            self.closed = False
+            self.sock: Upstream | None = self
+
+        def shutdown(self, _how: int) -> None:
+            self.closed = True
 
         def close(self) -> None:
             self.closed = True
@@ -2008,9 +2419,10 @@ def test_expiry_after_capture_before_upstream_request_sends_nothing(
 
     def connection_factory(
         parsed: urllib.parse.SplitResult,
+        timeout: float,
     ) -> http.client.HTTPConnection:
         assert parsed.hostname is not None
-        connection = GatedConnection(parsed.hostname, parsed.port, timeout=5)
+        connection = GatedConnection(parsed.hostname, parsed.port, timeout=timeout)
         created.append(connection)
         return connection
 
@@ -2088,16 +2500,29 @@ def test_expiry_closes_registered_socket_and_disables_reconnect() -> None:
         assert len(upstream.requests) == 1
 
 
-def test_expiry_during_established_inflight_request_settles_reserved_work() -> None:
-    response_gate = threading.Event()
+def test_heartbeat_expiry_closes_slow_stream_and_retains_unknown() -> None:
+    body_gate = threading.Event()
     ledger = calibration.SpendLedger()
-    with fake_upstream(response_gate=response_gate) as upstream:
+    with fake_upstream(
+        headers=[("Content-Type", "text/event-stream")],
+        body=responses_sse(),
+        body_gate=body_gate,
+    ) as upstream:
         with running_broker(upstream, ledger=ledger) as broker:
             outcome: list[tuple[int, dict[str, str], bytes] | BaseException] = []
 
             def invoke() -> None:
                 try:
-                    outcome.append(request(broker))
+                    outcome.append(
+                        request(
+                            broker,
+                            document={
+                                "model": "openai/gpt-5.6-sol",
+                                "input": "redacted",
+                                "stream": True,
+                            },
+                        )
+                    )
                 except BaseException as error:
                     outcome.append(error)
 
@@ -2114,18 +2539,18 @@ def test_expiry_during_established_inflight_request_settles_reserved_work() -> N
             )
             with pytest.raises(PermissionError, match="heartbeat rejected"):
                 broker.state.heartbeat((1, 2))
-            response_gate.set()
+            body_gate.set()
             client.join(timeout=5)
             assert not client.is_alive()
             assert len(outcome) == 1
             assert len(upstream.requests) == 1
-            assert ledger.cost == Decimal("0.125")
-            assert ledger.reserved == 0
-            assert ledger.fatal is None
+            assert ledger.cost == 0
+            assert ledger.reserved == reserved
+            assert ledger.fatal == "authoritative settlement unavailable"
             deadline = time.monotonic() + 5
             while not broker.state.records and time.monotonic() < deadline:
                 time.sleep(0.01)
-            assert broker.state.records[0].settlement == "settled"
+            assert broker.state.records[0].settlement == "retained_unknown"
             assert broker.state.upstreams == set()
 
 

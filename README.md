@@ -78,12 +78,16 @@ excluded.
 Each attempt locks to its first valid OpenCode endpoint only after successful
 budget reservation. The broker caps output at 8,192 tokens and atomically
 reserves each request's worst-case cost under a shared `$25` limit before
-forwarding. Every upstream status requires one finite nonnegative authoritative
-cost. Missing or malformed settlement makes the ledger fatal, retains the full
-reservation as unknown exposure, and prevents later forwarding. Child responses
-use only `text/event-stream` for a validated streaming request or
-`application/json` otherwise; upstream content type, encoding, and other headers
-are not reflected. Fake-upstream tests cover this boundary without a model call.
+forwarding. Non-streaming responses settle from one finite nonnegative exact cost
+header. Streaming chat rejects before forwarding. Streaming Responses buffers a
+bounded strict SSE response through the remaining attempt deadline, then settles
+only from one successful terminal `response.completed` event containing
+`response.usage.cost` and coherent bounded token counts. It forwards the original
+SSE bytes and validated content type only after settlement; the 30-second client
+backpressure timeout applies only to that buffered write. Missing or malformed
+settlement makes the ledger fatal, retains the full reservation as unknown
+exposure, and prevents later forwarding. Fake-upstream tests cover this boundary
+without a model call.
 Chat requests are normalized to exactly one completion and both supported
 endpoints reject multiplicity, background generation, non-text modalities,
 remote media, and file references. Message/input content admits only text, tool
