@@ -1068,3 +1068,11 @@ All 964 non-Docker tests and ten required Docker tests passed. The new Docker te
 Provenance: GitHub Actions push run [33389717586](https://github.com/Tetraslam/tetrabench/actions/runs/33389717586) for implementation commit `b205142c47dca50564accd87e7fdf0f2f1223b88`.
 
 The Python 3.12 job passed lock checking, locked installation, lint, formatting, type checking, Bandit, Docker availability, all ten required Docker tests, all 964 non-Docker tests, package build, isolated-wheel smoke, and the complete dependency audit. The independent full-history Gitleaks job passed. This corrects the preceding entry's hosted-CI-pending state. E-091 is complete, while live calibration remains `unproven` and was not run.
+
+## 2026-08-31T05:26:54-07:00: Locked authority-fencing denied-upstream diagnostic
+
+Provenance: user-provided locked diagnostic at exact HEAD `09806a748fd3153b8cce70e098c2a1c8d0948824` using `--debug --attempts-per-profile 1 --debug-deny-upstream`.
+
+The diagnostic intentionally returned runner exit 1 and task reward 0 because model transport was denied, while the security gate passed. Setup and native execution completed. Six OpenCode retry requests used exact `/v1/responses` for target `openai/gpt-5.6-sol`; all returned 503 with `upstream_opened=false` and `parent_authorization_sent=false`. The `$0.96086` reservation was `released_unforwarded`, no unknown exposure was retained, and authoritative, known, and total exposure were all zero.
+
+Cleanup completed with zero survivors. Native evidence contained 45 files and 75 entries, and results were structurally valid. This is a successful harness and authority-fencing diagnostic, not a model calibration result and not admissible benchmark evidence. The exact clean four-attempt calibration is unblocked by the harness but remains `unproven`; detached execution and its Tigris credential blockers are unchanged.
