@@ -1034,3 +1034,15 @@ The real fake-sidecar test allocated a 10/8 attempt `/28`, kept broker and simul
 Provenance: two final fail-closed regressions and repeated focused and complete non-Docker validation.
 
 The preceding E-090 counts are superseded by 210 focused non-Docker calibration tests and 953 complete non-Docker tests. The added tests prove candidate exhaustion rejects before Docker creation and Docker network-inspection command failure rejects without allocation. Nine required Docker tests and all other local parity evidence remain unchanged and passing. No gateway or model request occurred.
+
+## 2026-08-30T22:59:00-07:00: E-090 first hosted-CI correction
+
+Provenance: GitHub Actions push run `33362057023`, job `99395173526`, and local Docker-version comparison. No gateway or model request occurred.
+
+The independent full-history secret scan passed, but all three calibration Docker tests failed at post-create IPAM inspection before any gateway or model access. The hosted Docker daemon omitted the auto-assigned gateway from network-level `IPAM.Config`, while the local daemon populated it. Docker exposes the same assigned gateway on the attached broker endpoint. The correction accepts one semantically equal canonical subnet and requires exactly one consistent nonempty gateway across network IPAM and the broker endpoint; malformed or conflicting values still fail closed. The selected subnet remains the parent allocation authority. Local and hosted revalidation are pending.
+
+## 2026-08-30T23:06:43-07:00: E-090 hosted-IPAM correction local validation
+
+Provenance: 210 focused non-Docker calibration tests, all nine required Docker tests, Ruff, format, and ty after the hosted-IPAM correction. No gateway or model request occurred.
+
+The corrected inspection path passes locally, including direct-IP HTTPS reachability and strict cleanup. No owned calibration container or network remains. Hosted CI retry remains pending.

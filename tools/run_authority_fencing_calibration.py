@@ -2392,6 +2392,9 @@ class DockerBrokerSidecar:
         attached = inspected.get("NetworkSettings", {}).get("Networks")
         if not isinstance(attached, dict) or set(attached) != {self.names.network}:
             raise RuntimeError("broker network attachment changed")
+        attachment = attached[self.names.network]
+        if not isinstance(attachment, dict):
+            raise RuntimeError("broker network attachment changed")
         if (
             network.get("Driver") != "bridge"
             or network.get("Internal") is not False
@@ -2411,9 +2414,24 @@ class DockerBrokerSidecar:
         if not isinstance(ipam_config, dict):
             raise RuntimeError("calibration network IPAM contract changed")
         subnet = ipam_config.get("Subnet")
-        gateway = ipam_config.get("Gateway")
-        if subnet != allocation.subnet or not isinstance(gateway, str):
+        if not isinstance(subnet, str):
             raise RuntimeError("calibration network IPAM contract changed")
+        try:
+            inspected_subnet = ipaddress.ip_network(subnet, strict=True)
+        except ValueError as error:
+            raise RuntimeError("calibration network IPAM contract changed") from error
+        if inspected_subnet != ipaddress.ip_network(allocation.subnet):
+            raise RuntimeError("calibration network IPAM contract changed")
+        gateway_values: set[str] = set()
+        for value in (ipam_config.get("Gateway"), attachment.get("Gateway")):
+            if value in (None, ""):
+                continue
+            if not isinstance(value, str):
+                raise RuntimeError("calibration network gateway rejected")
+            gateway_values.add(value)
+        if len(gateway_values) != 1:
+            raise RuntimeError("calibration network gateway rejected")
+        gateway = next(iter(gateway_values))
         try:
             gateway_address = ipaddress.ip_address(gateway)
         except ValueError as error:
