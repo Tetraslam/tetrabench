@@ -382,7 +382,10 @@ authenticated pricing and later forwarding prove actual egress. This transport
 requires no host reachability or firewall change. No real calibration has
 completed, so difficulty calibration remains unproven. The next clean proof
 explicitly carries the retained `$1.92172` prior unknown exposure against the
-shared `$25` cap without claiming it as actual spend or a completed attempt. A
+shared `$25` cap without claiming it as actual spend or a completed attempt. The
+resulting `$5.76957` allocation is below the `$5.90248` worst-case request, so
+exact-four execution is blocked until provider-side reconciliation reduces the
+unknown exposure. A
 separate direct OpenRouter contract probe cost `$0.00007`; it is not benchmark
 calibration. `--debug-deny-upstream` is
 a non-admissible one-attempt-per-profile diagnostic with no proof output. It

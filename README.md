@@ -150,7 +150,9 @@ exact-label sweep removes it. No host port is published. The shared `$25` cap ca
 be seeded with explicit prior unknown exposure. That amount is reported
 separately and never becomes a completed attempt or known cost. The next clean
 proof must pass `--prior-unknown-exposure-usd 1.92172` for the retained
-conservative exposure. The required clean four-attempt report remains unproven.
+conservative exposure. That leaves `$5.76957` per attempt, below the `$5.90248`
+worst-case request reservation, so the required clean four-attempt report cannot
+start until provider-side evidence reconciles at least part of the exposure.
 Debug mode defaults prior exposure to zero and also supports
 `--debug-deny-upstream`. It requires one attempt per profile and forbids proof
 output. After normal authenticated pricing, each broker accepts exactly six
