@@ -248,6 +248,7 @@ def openrouter_responses_sse(
 def openrouter_generation(
     *,
     response_id: str = "gen-test-1",
+    upstream_id: str | None = None,
     model: str = "openai/gpt-5.6-sol",
     streamed: bool = True,
     cost: str = "0.00007",
@@ -258,6 +259,7 @@ def openrouter_generation(
         {
             "data": {
                 "id": response_id,
+                "upstream_id": upstream_id or response_id,
                 "model": model,
                 "streamed": streamed,
                 "total_cost": cost,
@@ -1391,7 +1393,7 @@ def test_openrouter_responses_stream_settles_only_after_generation_404_retry(
 
 
 @pytest.mark.parametrize("stream", [False, True])
-def test_openrouter_generation_header_must_match_terminal_identifier(
+def test_openrouter_generation_header_and_terminal_bind_distinct_identities(
     stream: bool,
 ) -> None:
     body = (
@@ -1419,8 +1421,93 @@ def test_openrouter_generation_header_must_match_terminal_identifier(
             ("X-Generation-Id", "gen-header"),
         ],
         body=body,
+        queued_get_responses=[
+            (
+                HTTPStatus.OK,
+                [("Content-Type", "application/json")],
+                openrouter_generation(
+                    response_id="gen-header",
+                    upstream_id="gen-terminal",
+                    streamed=stream,
+                ),
+            )
+        ],
     ) as upstream:
-        with running_broker(upstream, backend=calibration.OPENROUTER_BACKEND) as broker:
+        ledger = calibration.SpendLedger()
+        with running_broker(
+            upstream, ledger=ledger, backend=calibration.OPENROUTER_BACKEND
+        ) as broker:
+            assert (
+                request(
+                    broker,
+                    document={
+                        "model": "openai/gpt-5.6-sol",
+                        "input": "redacted",
+                        "stream": stream,
+                    },
+                )[0]
+                == HTTPStatus.OK
+            )
+            deadline = time.monotonic() + 2
+            while not broker.state.records and time.monotonic() < deadline:
+                time.sleep(0.01)
+            record = broker.state.records[0]
+            assert record.request_id == "gen-header"
+            assert record.settlement == "settled"
+            assert record.cost == "0.00007"
+            assert record.retained_unknown_reservation_usd == "0"
+            assert ledger.cost == Decimal("0.00007")
+    assert [item["path"] for item in upstream.requests] == [
+        "/api/v1/responses",
+        "/api/v1/generation?id=gen-header",
+    ]
+
+
+@pytest.mark.parametrize("stream", [False, True])
+def test_openrouter_generation_rejects_mismatched_upstream_identifier(
+    stream: bool,
+) -> None:
+    body = (
+        openrouter_responses_sse(response_id="gen-terminal")
+        if stream
+        else json.dumps(
+            {
+                "id": "gen-terminal",
+                "model": "openai/gpt-5.6-sol",
+                "status": "completed",
+                "usage": {
+                    "input_tokens": 2,
+                    "output_tokens": 3,
+                    "total_tokens": 5,
+                },
+            }
+        ).encode()
+    )
+    with fake_upstream(
+        headers=[
+            (
+                "Content-Type",
+                "text/event-stream" if stream else "application/json",
+            ),
+            ("X-Generation-Id", "gen-header"),
+        ],
+        body=body,
+        queued_get_responses=[
+            (
+                HTTPStatus.OK,
+                [("Content-Type", "application/json")],
+                openrouter_generation(
+                    response_id="gen-header",
+                    upstream_id="wrong-terminal",
+                    streamed=stream,
+                ),
+            )
+        ],
+    ) as upstream:
+        ledger = calibration.SpendLedger()
+        with running_broker(
+            upstream, ledger=ledger, backend=calibration.OPENROUTER_BACKEND
+        ) as broker:
             assert (
                 request(
                     broker,
@@ -1442,7 +1529,12 @@ def test_openrouter_generation_header_must_match_terminal_identifier(
             assert record.retained_unknown_reservation_usd == (
                 record.worst_case_reservation_usd
             )
-    assert [item["path"] for item in upstream.requests] == ["/api/v1/responses"]
+            assert ledger.cost == 0
+            assert ledger.reserved > 0
+    assert [item["path"] for item in upstream.requests] == [
+        "/api/v1/responses",
+        "/api/v1/generation?id=gen-header",
+    ]
 
 
 def test_openrouter_generation_retry_timeout_shrinks(

@@ -1448,6 +1448,7 @@ def _validate_openrouter_generation(
     body: bytes,
     *,
     expected_id: str,
+    expected_upstream_id: str | None,
     expected_model: str,
     expected_streamed: bool,
     expected_cost: Decimal | None,
@@ -1459,6 +1460,10 @@ def _validate_openrouter_generation(
     generation = document["data"]
     if (
         generation.get("id") != expected_id
+        or (
+            expected_upstream_id is not None
+            and generation.get("upstream_id") != expected_upstream_id
+        )
         or generation.get("model") != expected_model
         or generation.get("streamed") is not expected_streamed
     ):
@@ -1484,6 +1489,7 @@ def _poll_openrouter_generation(
     state: BrokerState,
     *,
     settlement: SettlementResult,
+    generation_id: str | None,
     streamed: bool,
 ) -> Decimal:
     generation_path = state.backend.generation_path
@@ -1491,10 +1497,11 @@ def _poll_openrouter_generation(
         raise ValueError("backend generation adapter is missing")
     parsed = _parse_upstream_url(state.upstream_url)
     deadline = min(state.deadline, time.monotonic() + SETTLEMENT_WINDOW_SECONDS)
+    lookup_id = generation_id or settlement.response_id
     path = (
         _join_upstream_path(parsed.path, generation_path)
         + "?"
-        + urllib.parse.urlencode({"id": settlement.response_id})
+        + urllib.parse.urlencode({"id": lookup_id})
     )
     while True:
         if time.monotonic() >= deadline:
@@ -1531,7 +1538,10 @@ def _poll_openrouter_generation(
             elif response.status == HTTPStatus.OK:
                 return _validate_openrouter_generation(
                     body,
-                    expected_id=settlement.response_id,
+                    expected_id=lookup_id,
+                    expected_upstream_id=(
+                        settlement.response_id if generation_id is not None else None
+                    ),
                     expected_model=settlement.model,
                     expected_streamed=streamed,
                     expected_cost=settlement.cost,
@@ -2892,19 +2902,13 @@ class CalibrationBrokerHandler(BaseHTTPRequestHandler):
                         openrouter_settlement = _parse_openrouter_responses_stream(
                             response_body, expected_models=state.response_models
                         )
-                        if (
-                            request_id is not None
-                            and request_id != openrouter_settlement.response_id
-                        ):
-                            raise ValueError(
-                                "OpenRouter generation identifier mismatch"
-                            )
-                        request_id = openrouter_settlement.response_id
                         cost = _poll_openrouter_generation(
                             state,
                             settlement=openrouter_settlement,
+                            generation_id=request_id,
                             streamed=True,
                         )
+                        request_id = request_id or openrouter_settlement.response_id
                         usage = openrouter_settlement.usage
                     else:
                         cost, usage = _parse_responses_stream(response_body)
@@ -2914,17 +2918,13 @@ class CalibrationBrokerHandler(BaseHTTPRequestHandler):
                         endpoint=endpoint,
                         expected_models=state.response_models,
                     )
-                    if (
-                        request_id is not None
-                        and request_id != openrouter_settlement.response_id
-                    ):
-                        raise ValueError("OpenRouter generation identifier mismatch")
-                    request_id = openrouter_settlement.response_id
                     cost = _poll_openrouter_generation(
                         state,
                         settlement=openrouter_settlement,
+                        generation_id=request_id,
                         streamed=False,
                     )
+                    request_id = request_id or openrouter_settlement.response_id
                     usage = openrouter_settlement.usage
                 if cost is None:
                     raise RuntimeError("model response cost is unavailable")
