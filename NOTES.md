@@ -1098,3 +1098,21 @@ Non-streaming settlement remains exact cost-header based. Streaming chat rejects
 All 990 non-Docker and ten required real-Docker tests passed. The fake suite includes a first SSE body delayed beyond a monkeypatched old backpressure window but within the attempt lease, valid Content-Length and chunked streams, absolute attempt-timeout retention, heartbeat closure of a slow upstream, all fail-closed stream cases, preserved nonstream cost headers, and unchanged request-cap/endpoint/retry behavior. `uv lock --check`, Ruff check and format, ty, Bandit, actionlint, wheel/sdist build, isolated locked-wheel smoke, all-groups pip-audit, and `git diff --check` passed. Hosted CI and full-history Gitleaks remain pending.
 
 The prior paid `$0.96086` retained reservation remains unknown exposure, not actual-spend evidence. It must be reconciled, and core PR 3944 must be deployed, before calibration can run again.
+
+## 2026-08-31T19:11:29-07:00: OpenRouter calibration backend contract
+
+Provenance: user-provided live OpenRouter contract from a tiny authenticated probe on 2026-08-31 and user-provided backend-seam decision. The implementation must not repeat the provider probe; fake providers own validation.
+
+OpenRouter's exact `openai/gpt-5.6-sol` and `anthropic/claude-sonnet-5` models were observed through `https://openrouter.ai/api/v1`. A streamed Responses probe returned HTTP 200 `text/event-stream`, a response ID, terminal `response.completed`, then `[DONE]`. Terminal usage included cost and token fields. An immediate authenticated `/generation?id=...` read matched ID, model cost `$0.00007`, token counts, and `streamed=true`. This `$0.00007` is direct contract-probe cost, not benchmark calibration.
+
+OpenRouter is now the default personal calibration backend. Its authenticated `/models` rows and threshold overrides determine conservative normalized pricing, and successful nonstream or Responses-stream settlement requires exact terminal usage plus a matching historical generation record. LiteLLM remains an explicit optional work backend with its existing settlement behavior and deprecated `TETRABENCH_CALIBRATION_GATEWAY_KEY` fallback. Direct compatible endpoints require explicit pricing and settlement adapters; protocol compatibility alone does not transfer spend authority.
+
+The earlier core PR 3944 dependency statements at 12:46, 13:18, D-099, and E-093 are superseded. Core PR 3944 is not a dependency for OpenRouter calibration. The old `$0.96086` reservation remains conservative prior unknown exposure, not actual spend. The next clean proof must pass it explicitly against the shared `$25` cap; it never becomes a completed attempt or authoritative current cost.
+
+## 2026-08-31T19:37:24-07:00: E-094 local backend-seam validation
+
+Provenance: fake HTTP providers only; 1,017 non-Docker tests; ten required real-Docker tests; complete local lint, type, security, package, dependency, workflow, diff, and history-scan parity. No provider/model call or calibration occurred.
+
+Immutable backend and profile contracts now isolate URL/path mapping, selected credentials, broker DNS, pricing, settlement, and child/broker/upstream/Harbor model identities from SpendLedger, BrokerState lease authority, Docker topology, and request validation. OpenRouter is the CLI default and settles successful nonstream or Responses streams only after terminal usage and an exact bounded historical generation cross-check. LiteLLM remains explicit with its prior behavior. Fake tests cover base-path preservation, conservative override/cache-tier pricing, unsupported paid pricing, generation 404 retry, every matching field, mismatch retention, SSE `[DONE]`, credential isolation, resolver inspection, and prior exposure cap accounting.
+
+All 1,017 non-Docker and ten Docker tests passed. `uv lock --check`, locked all-group sync, Ruff check/format, ty, Bandit, actionlint, wheel/sdist build, isolated locked-wheel installation and metadata/content smoke, all-groups pip-audit, `git diff --check`, and redacted full-history Gitleaks passed. Hosted CI remains pending. The next clean proof remains `unproven` and must pass `--prior-unknown-exposure-usd 0.96086`.

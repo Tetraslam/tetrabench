@@ -286,13 +286,18 @@ provenance, and no surviving child or current-run Docker residue.
 
 The source-only calibration runner fixes the ordered profiles `target`
 (`openai/openai/gpt-5.6-sol`) and `alternate`
-(`openai/anthropic/claude-sonnet-5`) at two unretried attempts each. Calibration
-runs the topology probe first, reads authenticated `/model/info` pricing second,
-and starts attempts last. The pricing read must return finite positive input,
-output, cache-read, and cache-write rates plus positive model limits for exactly
-those groups. Input and cache rates above `$10` per million tokens or output
-rates above `$50` per million make calibration fail. Evidence retains a redacted
-canonical pricing snapshot and digest.
+(`openai/anthropic/claude-sonnet-5`) at two unretried attempts each. Immutable
+profile records separately bind Harbor, child, broker, and upstream model
+identities. OpenRouter is the default personal backend; LiteLLM is an explicit
+optional work backend. Calibration runs the topology probe first, reads the
+selected backend's authenticated pricing second, and starts attempts last.
+OpenRouter `/models` pricing takes conservative maxima across threshold overrides
+and every cache-write tier. LiteLLM retains `/model/info`. Both require finite
+positive input, output, cache-read, and cache-write rates plus positive model
+limits for exactly the selected models. Input and cache rates above `$10` per
+million tokens or output rates above `$50` per million make calibration fail.
+Nonzero request charges or unsupported paid modalities also fail. Evidence
+retains a redacted normalized pricing snapshot, backend, source, and digest.
 
 Each attempt receives one ephemeral OpenAI credential. Chat requests contain or
 receive `n = 1`; every multiplicity alias and Responses background mode is
@@ -305,8 +310,14 @@ output-limit fields and caps them at 8,192 tokens. It treats the forwarded UTF-8
 body's byte length as the input-token upper bound because the supported
 tokenizers fall back to at most one token per byte. Before forwarding, the
 shared ledger atomically reserves that bound at the hard pricing ceilings plus
-a fixed safety margin. The authoritative response-cost header settles the
-reservation, and a missing, invalid, or excessive settlement fails the run.
+a fixed safety margin. LiteLLM preserves its response-cost settlement behavior.
+OpenRouter successful nonstream and Responses-stream calls require terminal usage
+cost plus a response ID, followed by a bounded authenticated historical
+`/generation?id=...` cross-check for exact ID, model, stream shape, cost, and
+normalized token counts before bytes reach the child. Generation 404 retries only
+inside that settlement window and the attempt deadline. Streaming chat remains
+unsupported. Any ambiguity retains the full reservation. Direct compatible
+endpoints require explicit pricing and settlement adapters.
 
 Each attempt uses one fresh labeled external Docker bridge network and one
 credential-broker sidecar with a unique alias at port `62017`. No host port is
@@ -348,7 +359,11 @@ peers and unrelated host containers are not containment evidence. Docker's
 reported IPAM gateway and `Internal` value are recorded as topology only;
 authenticated pricing and later forwarding prove actual egress. This transport
 requires no host reachability or firewall change. No real calibration has
-completed, so difficulty calibration remains unproven. `--debug-deny-upstream` is
+completed, so difficulty calibration remains unproven. The next clean proof
+explicitly carries the retained `$0.96086` prior unknown exposure against the
+shared `$25` cap without claiming it as actual spend or a completed attempt. A
+separate direct OpenRouter contract probe cost `$0.00007`; it is not benchmark
+calibration. `--debug-deny-upstream` is
 a non-admissible one-attempt-per-profile diagnostic with no proof output. It
 performs normal authenticated pricing, then accepts and reserves one valid broker
 request, locks its endpoint, releases the reservation, and returns a fixed local

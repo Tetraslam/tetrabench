@@ -32,6 +32,7 @@ from tools import run_authority_fencing_calibration as calibration  # noqa: E402
 TEST_PARENT_KEY = "sk-test-deployed-key-1234"
 TEST_PROBE_TOKEN = "probe-token-0123456789-abcdefghijklmnopqr"
 TEST_ATTEMPT_TOKEN = "attempt-token-0123456789-abcdefghijklmnop"
+TEST_OPENROUTER_KEY = "sk-or-v1-test-deployed-key-1234"
 
 
 class FakeUpstreamServer(ThreadingHTTPServer):
@@ -44,6 +45,7 @@ class FakeUpstreamServer(ThreadingHTTPServer):
     first_body_delay: float
     include_content_length: bool
     close_response: bool
+    queued_get_responses: list[tuple[int, list[tuple[str, str]], bytes]]
 
 
 class FakeUpstreamHandler(BaseHTTPRequestHandler):
@@ -105,9 +107,16 @@ class FakeUpstreamHandler(BaseHTTPRequestHandler):
                 "path": self.path,
             }
         )
-        response = server.body
-        self.send_response(server.status)
-        for name, value in server.response_headers:
+        if server.queued_get_responses:
+            status, headers, response = server.queued_get_responses.pop(0)
+        else:
+            status, headers, response = (
+                server.status,
+                server.response_headers,
+                server.body,
+            )
+        self.send_response(status)
+        for name, value in headers:
             self.send_header(name, value)
         if server.include_content_length:
             self.send_header("Content-Length", str(len(response)))
@@ -132,6 +141,7 @@ def fake_upstream(
     first_body_delay: float = 0.0,
     include_content_length: bool = True,
     close_response: bool = False,
+    queued_get_responses: list[tuple[int, list[tuple[str, str]], bytes]] | None = None,
 ):
     server = FakeUpstreamServer(("127.0.0.1", 0), FakeUpstreamHandler)
     server.requests = []
@@ -150,6 +160,7 @@ def fake_upstream(
     server.first_body_delay = first_body_delay
     server.include_content_length = include_content_length
     server.close_response = close_response
+    server.queued_get_responses = list(queued_get_responses or [])
     thread = threading.Thread(target=server.serve_forever)
     thread.start()
     try:
@@ -185,6 +196,52 @@ def responses_sse(
     return f"event: {event_type}\ndata: {json.dumps(document)}\n\n".encode()
 
 
+def openrouter_responses_sse(
+    *, response_id: str = "gen-test-1", model: str = "openai/gpt-5.6-sol"
+) -> bytes:
+    document = {
+        "type": "response.completed",
+        "response": {
+            "id": response_id,
+            "model": model,
+            "status": "completed",
+            "usage": {
+                "cost": "0.00007",
+                "input_tokens": 2,
+                "output_tokens": 3,
+                "total_tokens": 5,
+            },
+        },
+    }
+    return (
+        f"event: response.completed\ndata: {json.dumps(document)}\n\ndata: [DONE]\n\n"
+    ).encode()
+
+
+def openrouter_generation(
+    *,
+    response_id: str = "gen-test-1",
+    model: str = "openai/gpt-5.6-sol",
+    streamed: bool = True,
+    cost: str = "0.00007",
+    input_tokens: int = 2,
+    output_tokens: int = 3,
+) -> bytes:
+    return json.dumps(
+        {
+            "data": {
+                "id": response_id,
+                "model": model,
+                "streamed": streamed,
+                "total_cost": cost,
+                "usage": cost,
+                "tokens_prompt": input_tokens,
+                "tokens_completion": output_tokens,
+            }
+        }
+    ).encode()
+
+
 @contextmanager
 def running_broker(
     upstream: FakeUpstreamServer,
@@ -193,6 +250,7 @@ def running_broker(
     ledger: calibration.SpendLedger | None = None,
     max_input_tokens: int = calibration.MAX_BODY_BYTES,
     debug_deny_upstream: bool = False,
+    backend: calibration.BackendContract = calibration.LITELLM_BACKEND,
 ):
     broker = calibration.CalibrationBroker(
         host="127.0.0.1",
@@ -200,9 +258,14 @@ def running_broker(
         parent_key=TEST_PARENT_KEY,
         model="openai/gpt-5.6-sol",
         ledger=ledger or calibration.SpendLedger(),
+        backend=backend,
         max_input_tokens=max_input_tokens,
         timeout=timeout,
-        upstream_url=f"http://127.0.0.1:{upstream.server_address[1]}",
+        upstream_url=(
+            f"http://127.0.0.1:{upstream.server_address[1]}/api/v1"
+            if backend.name == "openrouter"
+            else f"http://127.0.0.1:{upstream.server_address[1]}"
+        ),
         debug_deny_upstream=debug_deny_upstream,
     )
     broker.start()
@@ -314,6 +377,49 @@ def pricing_document() -> dict[str, Any]:
     }
 
 
+def openrouter_pricing_document() -> dict[str, Any]:
+    base: dict[str, Any] = {
+        "prompt": "0.000002",
+        "completion": "0.00001",
+        "input_cache_read": "0.0000002",
+        "input_cache_write": "0.0000025",
+        "input_cache_write_1h": "0.000004",
+        "request": "0",
+        "image": "0",
+        "audio": "0",
+    }
+    target: dict[str, Any] = dict(base)
+    target["overrides"] = [
+        {
+            "threshold": 100000,
+            "pricing": {
+                "prompt": "0.000004",
+                "completion": "0.000015",
+                "input_cache_read": "0.0000004",
+                "input_cache_write": "0.000005",
+                "request": "0",
+            },
+        }
+    ]
+    return {
+        "data": [
+            {
+                "id": "openai/gpt-5.6-sol",
+                "context_length": 400000,
+                "top_provider": {"max_completion_tokens": 128000},
+                "pricing": target,
+            },
+            {
+                "id": "anthropic/claude-sonnet-5",
+                "context_length": 1000000,
+                "top_provider": {"max_completion_tokens": 128000},
+                "pricing": base,
+            },
+            {"id": "unrelated", "pricing": {"prompt": "99"}},
+        ]
+    }
+
+
 @pytest.mark.parametrize(
     "parent_key",
     [
@@ -387,6 +493,60 @@ def test_profiles_are_exact_ordered_and_candidate_only(tmp_path: Path) -> None:
     assert 'reward_policy = "binary"' in catalog
 
 
+def test_backend_and_profile_contracts_are_immutable_and_separate() -> None:
+    args = calibration.parse_arguments(["--debug"])
+    assert args.backend == "openrouter"
+    assert calibration.OPENROUTER_BACKEND.endpoint_paths == (
+        ("/v1/responses", "/responses"),
+        ("/v1/chat/completions", "/chat/completions"),
+    )
+    assert calibration.LITELLM_BACKEND.endpoint_paths[0][1] == "/v1/responses"
+    target = calibration.PROFILE_CONTRACTS[0]
+    assert target.child_model == target.broker_model == target.upstream_model
+    assert target.harbor_model == "openai/openai/gpt-5.6-sol"
+    assert calibration.ProfileContract.__dataclass_params__.frozen is True
+
+
+def test_backend_credential_selection_is_isolated_and_fallback_unambiguous() -> None:
+    environment = {
+        calibration.OPENROUTER_KEY_ENV: TEST_OPENROUTER_KEY,
+        calibration.LITELLM_KEY_ENV: TEST_PARENT_KEY,
+        calibration.LEGACY_LITELLM_KEY_ENV: "sk-legacy-deployed-key",
+    }
+    assert (
+        calibration._take_backend_credential(
+            calibration.OPENROUTER_BACKEND, environment
+        )
+        == TEST_OPENROUTER_KEY
+    )
+    assert calibration.LITELLM_KEY_ENV in environment
+    assert calibration.LEGACY_LITELLM_KEY_ENV in environment
+    with pytest.raises(RuntimeError, match="ambiguous"):
+        calibration._take_backend_credential(calibration.LITELLM_BACKEND, environment)
+    fallback = {calibration.LEGACY_LITELLM_KEY_ENV: TEST_PARENT_KEY}
+    assert (
+        calibration._take_backend_credential(calibration.LITELLM_BACKEND, fallback)
+        == TEST_PARENT_KEY
+    )
+    assert fallback == {}
+
+
+def test_bearer_validation_is_general_and_backend_prefixes_are_specific() -> None:
+    assert calibration._validate_bearer("provider.key+/=printable")
+    assert (
+        calibration._validate_parent_key(
+            TEST_OPENROUTER_KEY, calibration.OPENROUTER_BACKEND
+        )
+        == TEST_OPENROUTER_KEY
+    )
+    with pytest.raises(ValueError, match="credential payload rejected"):
+        calibration._validate_parent_key(
+            TEST_PARENT_KEY, calibration.OPENROUTER_BACKEND
+        )
+    with pytest.raises(ValueError, match="credential payload rejected"):
+        calibration._validate_bearer("provider key")
+
+
 def test_authenticated_model_info_selects_exact_groups_and_redacts_snapshot() -> None:
     document = pricing_document()
     with fake_upstream(
@@ -406,6 +566,69 @@ def test_authenticated_model_info_selects_exact_groups_and_redacts_snapshot() ->
     serialized = json.dumps(dataclasses.asdict(snapshot))
     assert "secret" not in serialized
     assert len(snapshot.sha256) == 64
+
+
+def test_openrouter_models_pricing_preserves_base_path_and_takes_override_maxima() -> (
+    None
+):
+    with fake_upstream(
+        headers=[("Content-Type", "application/json")],
+        body=json.dumps(openrouter_pricing_document()).encode(),
+    ) as upstream:
+        snapshot = calibration.query_model_pricing(
+            parent_key=TEST_OPENROUTER_KEY,
+            backend=calibration.OPENROUTER_BACKEND,
+            upstream_url=f"http://127.0.0.1:{upstream.server_address[1]}/api/v1",
+        )
+    assert upstream.requests == [
+        {
+            "authorization": f"Bearer {TEST_OPENROUTER_KEY}",
+            "path": "/api/v1/models",
+        }
+    ]
+    assert snapshot.backend == "openrouter"
+    assert snapshot.source == "/models"
+    assert snapshot.models[0] == {
+        "backend": "openrouter",
+        "cache_creation_input_token_cost": "0.000005",
+        "cache_read_input_token_cost": "4E-7",
+        "input_cost_per_token": "0.000004",
+        "max_input_tokens": 400000,
+        "max_output_tokens": 128000,
+        "model_group": "openai/gpt-5.6-sol",
+        "output_cost_per_token": "0.000015",
+        "pricing_source": "/models",
+    }
+    assert snapshot.models[1]["cache_creation_input_token_cost"] == "0.000004"
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://openrouter.ai/api/v1?admin=true",
+        "https://user:secret@openrouter.ai/api/v1",
+        "https://openrouter.ai/api/../v1",
+        "ftp://openrouter.ai/api/v1",
+    ],
+)
+def test_backend_upstream_url_rejects_authority_and_path_ambiguity(url: str) -> None:
+    with pytest.raises(ValueError, match="upstream URL rejected"):
+        calibration._parse_upstream_url(url)
+
+
+def test_safe_upstream_join_preserves_base_for_all_openrouter_paths() -> None:
+    base = calibration._parse_upstream_url("https://openrouter.ai/api/v1").path
+    assert calibration._join_upstream_path(base, "/responses") == "/api/v1/responses"
+    assert calibration._join_upstream_path(base, "/models") == "/api/v1/models"
+    assert calibration._join_upstream_path(base, "/generation") == "/api/v1/generation"
+
+
+@pytest.mark.parametrize("field", ["request", "image", "audio", "web_search"])
+def test_openrouter_models_rejects_unsupported_nonzero_paid_pricing(field: str) -> None:
+    document = openrouter_pricing_document()
+    document["data"][0]["pricing"][field] = "0.000001"
+    with pytest.raises(ValueError, match="unsupported paid pricing"):
+        calibration._validate_openrouter_pricing_document(document)
 
 
 def test_debug_deny_upstream_prices_then_records_request_without_completion() -> None:
@@ -925,6 +1148,160 @@ def test_valid_chunked_responses_stream_settles_terminal_cost() -> None:
             assert returned_body == body
             assert ledger.cost == Decimal("0.125")
             assert ledger.reserved == 0
+
+
+def test_openrouter_responses_stream_settles_only_after_generation_404_retry() -> None:
+    body = openrouter_responses_sse()
+    generation = openrouter_generation()
+    queued: list[tuple[int, list[tuple[str, str]], bytes]] = [
+        (int(HTTPStatus.NOT_FOUND), [("Content-Type", "application/json")], b"{}"),
+        (int(HTTPStatus.OK), [("Content-Type", "application/json")], generation),
+    ]
+    with fake_upstream(
+        headers=[("Content-Type", "text/event-stream")],
+        body=body,
+        queued_get_responses=queued,
+    ) as upstream:
+        ledger = calibration.SpendLedger()
+        with running_broker(
+            upstream, ledger=ledger, backend=calibration.OPENROUTER_BACKEND
+        ) as broker:
+            status, returned_headers, returned_body = request(
+                broker,
+                document={
+                    "model": "openai/gpt-5.6-sol",
+                    "input": "redacted",
+                    "stream": True,
+                },
+            )
+            assert status == 200
+            assert returned_headers["content-type"] == "text/event-stream"
+            assert returned_body == body
+            assert ledger.cost == Decimal("0.00007")
+            assert ledger.reserved == 0
+            record = broker.state.records[0]
+            assert record.request_id == "gen-test-1"
+            assert record.usage == {
+                "input_tokens": 2,
+                "output_tokens": 3,
+                "total_tokens": 5,
+            }
+    assert [item["path"] for item in upstream.requests] == [
+        "/api/v1/responses",
+        "/api/v1/generation?id=gen-test-1",
+        "/api/v1/generation?id=gen-test-1",
+    ]
+    assert all(
+        item["authorization"] == f"Bearer {TEST_PARENT_KEY}"
+        for item in upstream.requests
+    )
+
+
+def test_openrouter_nonstream_settles_from_body_and_generation() -> None:
+    body = json.dumps(
+        {
+            "id": "gen-test-1",
+            "model": "openai/gpt-5.6-sol",
+            "status": "completed",
+            "usage": {
+                "cost": 0.00007,
+                "input_tokens": 2,
+                "output_tokens": 3,
+                "total_tokens": 5,
+            },
+        }
+    ).encode()
+    with fake_upstream(
+        body=body,
+        queued_get_responses=[
+            (
+                HTTPStatus.OK,
+                [("Content-Type", "application/json")],
+                openrouter_generation(streamed=False),
+            )
+        ],
+    ) as upstream:
+        ledger = calibration.SpendLedger()
+        with running_broker(
+            upstream, ledger=ledger, backend=calibration.OPENROUTER_BACKEND
+        ) as broker:
+            status, _headers, returned_body = request(
+                broker,
+                document={
+                    "model": "openai/gpt-5.6-sol",
+                    "input": "redacted",
+                    "stream": False,
+                },
+            )
+            assert status == 200
+            assert returned_body == body
+            assert ledger.cost == Decimal("0.00007")
+    assert [item["path"] for item in upstream.requests] == [
+        "/api/v1/responses",
+        "/api/v1/generation?id=gen-test-1",
+    ]
+
+
+@pytest.mark.parametrize(
+    "generation",
+    [
+        openrouter_generation(response_id="wrong"),
+        openrouter_generation(model="other/model"),
+        openrouter_generation(streamed=False),
+        openrouter_generation(cost="0.00008"),
+        openrouter_generation(input_tokens=4),
+    ],
+)
+def test_openrouter_generation_mismatch_retains_reservation_and_blocks_retry(
+    generation: bytes,
+) -> None:
+    with fake_upstream(
+        headers=[("Content-Type", "text/event-stream")],
+        body=openrouter_responses_sse(),
+        queued_get_responses=[
+            (HTTPStatus.OK, [("Content-Type", "application/json")], generation)
+        ],
+    ) as upstream:
+        ledger = calibration.SpendLedger()
+        with running_broker(
+            upstream, ledger=ledger, backend=calibration.OPENROUTER_BACKEND
+        ) as broker:
+            assert (
+                request(
+                    broker,
+                    document={
+                        "model": "openai/gpt-5.6-sol",
+                        "input": "redacted",
+                        "stream": True,
+                    },
+                )[0]
+                == 502
+            )
+            assert ledger.cost == 0
+            assert ledger.reserved > 0
+            assert ledger.fatal == "authoritative settlement unavailable"
+            assert request(broker)[0] == 400
+            assert len(upstream.requests) == 2
+
+
+def test_openrouter_stream_requires_done_after_terminal() -> None:
+    body = openrouter_responses_sse().removesuffix(b"data: [DONE]\n\n")
+    with fake_upstream(
+        headers=[("Content-Type", "text/event-stream")], body=body
+    ) as upstream:
+        with running_broker(upstream, backend=calibration.OPENROUTER_BACKEND) as broker:
+            assert (
+                request(
+                    broker,
+                    document={
+                        "model": "openai/gpt-5.6-sol",
+                        "input": "redacted",
+                        "stream": True,
+                    },
+                )[0]
+                == 502
+            )
+            assert broker.state.ledger.reserved > 0
 
 
 def test_streaming_chat_is_rejected_before_reservation_or_forwarding() -> None:
@@ -1763,6 +2140,9 @@ def test_every_upstream_status_requires_finite_nonnegative_cost_and_retry_is_blo
             assert request(broker)[0] == 400
             assert broker.state.request_count == 1
             assert len(upstream.requests) == 1
+            deadline = time.monotonic() + 2
+            while not broker.state.records and time.monotonic() < deadline:
+                time.sleep(0.01)
             assert len(broker.state.records) == 1
             record = broker.state.records[0]
             assert record.cost is None
@@ -2082,6 +2462,25 @@ def test_cost_cap_and_exact_reservations_are_atomic() -> None:
     ledger.settle(second, Decimal("5"))
     assert ledger.cost == Decimal("25")
     assert ledger.reserved == 0
+
+
+def test_prior_unknown_exposure_consumes_cap_without_becoming_cost_or_attempt() -> None:
+    ledger = calibration.SpendLedger(prior_unknown_exposure=Decimal("0.96086"))
+    assert ledger.prior_unknown_exposure == Decimal("0.96086")
+    assert ledger.cost == 0
+    with pytest.raises(RuntimeError, match="remaining budget"):
+        ledger.reserve(Decimal("24.03915"))
+    reservation = ledger.reserve(Decimal("24.03914"))
+    ledger.release_unforwarded(reservation)
+    assert ledger.cost == 0
+    assert ledger.reserved == 0
+
+
+def test_four_worst_case_reservations_plus_recorded_prior_fit_shared_cap() -> None:
+    prior = Decimal("0.96086")
+    worst = calibration._reservation_for_body(b"x" * calibration.MAX_BODY_BYTES)
+    assert prior + 4 * worst <= calibration.MAX_TOTAL_COST
+    assert prior + 5 * worst > calibration.MAX_TOTAL_COST
 
 
 def test_arbitrary_settlement_cannot_exceed_its_reservation_or_cap() -> None:
@@ -2726,6 +3125,9 @@ def test_attach_timeout_is_terminated_and_reaped(
         ["--debug-deny-upstream"],
         ["--debug-deny-upstream", "--output", "proof.json"],
         ["--debug", "--debug-deny-upstream", "--attempts-per-profile", "2"],
+        ["--debug", "--prior-unknown-exposure-usd", "-1"],
+        ["--debug", "--prior-unknown-exposure-usd", "NaN"],
+        ["--debug", "--prior-unknown-exposure-usd", "25.01"],
     ],
 )
 def test_parser_rejects_noncanonical_attempt_or_listener_contract(
@@ -3119,6 +3521,7 @@ def _docker_sidecar(
     *,
     parent_key: str = TEST_PARENT_KEY,
     snapshot_root: Path = ROOT,
+    backend: calibration.BackendContract = calibration.LITELLM_BACKEND,
 ) -> calibration.DockerBrokerSidecar:
     pricing = calibration._validate_pricing_document(pricing_document())
     names = calibration._docker_names("cal-test-sidecar", 1)
@@ -3135,6 +3538,7 @@ def _docker_sidecar(
         pricing=pricing,
         max_input_tokens=200000,
         budget_cap=Decimal("1"),
+        backend=backend,
         fake_response_cost=Decimal("0.125"),
     )
 
@@ -3278,6 +3682,31 @@ def test_broker_inspect_records_exact_resolver_policy_without_secret(
         "role": "broker",
     }
     assert sidecar.parent_key not in json.dumps(evidence)
+
+
+def test_openrouter_broker_inspect_requires_public_resolvers(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    sidecar = _docker_sidecar(tmp_path, backend=calibration.OPENROUTER_BACKEND)
+    inspected, network = _broker_inspect_documents(
+        sidecar, list(calibration.OPENROUTER_BACKEND.broker_dns)
+    )
+    monkeypatch.setattr(
+        calibration,
+        "_inspect_one",
+        lambda kind, _name: inspected if kind == "container" else network,
+    )
+    monkeypatch.setattr(
+        calibration,
+        "_docker",
+        lambda argv, **_kwargs: subprocess.CompletedProcess(argv, 0, b"", b""),
+    )
+    evidence = sidecar.inspect_secret_boundary()
+    assert evidence["resolver_policy"] == {
+        "addresses": ["1.1.1.1", "9.9.9.9"],
+        "purpose": "public-openrouter-upstream",
+        "role": "broker",
+    }
 
 
 @pytest.mark.parametrize(
@@ -3776,7 +4205,7 @@ def test_startup_sweep_precedes_pricing_and_failure_starts_no_attempt(
         "query_model_pricing",
         lambda **_kwargs: (_ for _ in ()).throw(ValueError("pricing rejected")),
     )
-    result = calibration.main(["--debug"])
+    result = calibration.main(["--backend", "litellm", "--debug"])
     output = json.loads(capsys.readouterr().out)
     assert result == 1
     assert output["attempt_count"] == 0
@@ -3848,6 +4277,9 @@ def test_failed_attempt_and_report_retain_bounded_identity_and_spend_exposure() 
     assert attempt["broker"]["request_count"] == 1
     assert "content" not in json.dumps(attempt).lower()
     assert report["spend_exposure"] == {
+        "prior_unknown_exposure_usd": "0",
+        "current_known_cost_usd": "0.5",
+        "current_retained_exposure_usd": "1.25",
         "known_actual_cost_usd": "0.5",
         "retained_unknown_reservation_usd": "1.25",
         "total_usd": "1.75",
