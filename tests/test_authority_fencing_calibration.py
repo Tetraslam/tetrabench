@@ -1165,6 +1165,7 @@ def test_broker_forwards_exact_model_caps_output_and_strips_sensitive_headers() 
             assert record.call_id == "call-1"
             assert record.request_id == "request-1"
             assert record.settlement == "settled"
+            assert record.settlement_failure is None
             assert record.retained_unknown_reservation_usd == "0"
             deadline = time.monotonic() + 2
             while broker.state.ledger.cost == 0 and time.monotonic() < deadline:
@@ -1588,6 +1589,7 @@ def test_openrouter_generation_rejects_mismatched_upstream_identifier(
             record = broker.state.records[0]
             assert record.request_id == "gen-header"
             assert record.settlement == "retained_unknown"
+            assert record.settlement_failure == "generation_upstream_id_mismatch"
             assert record.cost is None
             assert record.retained_unknown_reservation_usd == (
                 record.worst_case_reservation_usd
@@ -2002,17 +2004,20 @@ def test_openrouter_nonstream_rejects_cross_endpoint_usage_fields(
 
 
 @pytest.mark.parametrize(
-    "generation",
+    ("generation", "settlement_failure"),
     [
-        openrouter_generation(response_id="wrong"),
-        openrouter_generation(model="other/model"),
-        openrouter_generation(streamed=False),
-        openrouter_generation(cost="0.00008"),
-        openrouter_generation(native_input_tokens=4),
+        (openrouter_generation(response_id="wrong"), "generation_id_mismatch"),
+        (openrouter_generation(model="other/model"), "generation_model_mismatch"),
+        (openrouter_generation(streamed=False), "generation_stream_mismatch"),
+        (openrouter_generation(cost="0.00008"), "generation_cost_mismatch"),
+        (
+            openrouter_generation(native_input_tokens=4),
+            "generation_native_tokens_mismatch",
+        ),
     ],
 )
 def test_openrouter_generation_mismatch_retains_reservation_and_blocks_retry(
-    generation: bytes,
+    generation: bytes, settlement_failure: str
 ) -> None:
     with fake_upstream(
         headers=[("Content-Type", "text/event-stream")],
@@ -2039,6 +2044,10 @@ def test_openrouter_generation_mismatch_retains_reservation_and_blocks_retry(
             assert ledger.cost == 0
             assert ledger.reserved > 0
             assert ledger.fatal == "authoritative settlement unavailable"
+            deadline = time.monotonic() + 2
+            while not broker.state.records and time.monotonic() < deadline:
+                time.sleep(0.01)
+            assert broker.state.records[0].settlement_failure == settlement_failure
             assert request(broker)[0] == 400
             assert len(upstream.requests) == 2
 
