@@ -2872,13 +2872,6 @@ class CalibrationBrokerHandler(BaseHTTPRequestHandler):
                         openrouter_settlement = _parse_openrouter_responses_stream(
                             response_body, expected_model=state.model
                         )
-                        cost = _poll_openrouter_generation(
-                            state,
-                            settlement=openrouter_settlement,
-                            expected_model=state.model,
-                            streamed=True,
-                        )
-                        usage = openrouter_settlement.usage
                         if (
                             request_id is not None
                             and request_id != openrouter_settlement.response_id
@@ -2887,12 +2880,25 @@ class CalibrationBrokerHandler(BaseHTTPRequestHandler):
                                 "OpenRouter generation identifier mismatch"
                             )
                         request_id = openrouter_settlement.response_id
+                        cost = _poll_openrouter_generation(
+                            state,
+                            settlement=openrouter_settlement,
+                            expected_model=state.model,
+                            streamed=True,
+                        )
+                        usage = openrouter_settlement.usage
                     else:
                         cost, usage = _parse_responses_stream(response_body)
                 elif state.backend.name == OPENROUTER_BACKEND.name:
                     openrouter_settlement = _parse_openrouter_nonstream(
                         response_body, endpoint=endpoint, expected_model=state.model
                     )
+                    if (
+                        request_id is not None
+                        and request_id != openrouter_settlement.response_id
+                    ):
+                        raise ValueError("OpenRouter generation identifier mismatch")
+                    request_id = openrouter_settlement.response_id
                     cost = _poll_openrouter_generation(
                         state,
                         settlement=openrouter_settlement,
@@ -2900,12 +2906,6 @@ class CalibrationBrokerHandler(BaseHTTPRequestHandler):
                         streamed=False,
                     )
                     usage = openrouter_settlement.usage
-                    if (
-                        request_id is not None
-                        and request_id != openrouter_settlement.response_id
-                    ):
-                        raise ValueError("OpenRouter generation identifier mismatch")
-                    request_id = openrouter_settlement.response_id
                 if cost is None:
                     raise RuntimeError("model response cost is unavailable")
                 settlement = "known_fatal"

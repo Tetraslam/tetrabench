@@ -1333,13 +1333,35 @@ def test_openrouter_responses_stream_settles_only_after_generation_404_retry(
     )
 
 
-def test_openrouter_generation_header_must_match_terminal_identifier() -> None:
+@pytest.mark.parametrize("stream", [False, True])
+def test_openrouter_generation_header_must_match_terminal_identifier(
+    stream: bool,
+) -> None:
+    body = (
+        openrouter_responses_sse(response_id="gen-terminal")
+        if stream
+        else json.dumps(
+            {
+                "id": "gen-terminal",
+                "model": "openai/gpt-5.6-sol",
+                "status": "completed",
+                "usage": {
+                    "input_tokens": 2,
+                    "output_tokens": 3,
+                    "total_tokens": 5,
+                },
+            }
+        ).encode()
+    )
     with fake_upstream(
         headers=[
-            ("Content-Type", "text/event-stream"),
+            (
+                "Content-Type",
+                "text/event-stream" if stream else "application/json",
+            ),
             ("X-Generation-Id", "gen-header"),
         ],
-        body=openrouter_responses_sse(response_id="gen-terminal"),
+        body=body,
     ) as upstream:
         with running_broker(upstream, backend=calibration.OPENROUTER_BACKEND) as broker:
             assert (
@@ -1348,7 +1370,7 @@ def test_openrouter_generation_header_must_match_terminal_identifier() -> None:
                     document={
                         "model": "openai/gpt-5.6-sol",
                         "input": "redacted",
-                        "stream": True,
+                        "stream": stream,
                     },
                 )[0]
                 == HTTPStatus.BAD_GATEWAY
@@ -1359,6 +1381,11 @@ def test_openrouter_generation_header_must_match_terminal_identifier() -> None:
             record = broker.state.records[0]
             assert record.request_id == "gen-header"
             assert record.settlement == "retained_unknown"
+            assert record.cost is None
+            assert record.retained_unknown_reservation_usd == (
+                record.worst_case_reservation_usd
+            )
+    assert [item["path"] for item in upstream.requests] == ["/api/v1/responses"]
 
 
 def test_openrouter_generation_retry_timeout_shrinks(
