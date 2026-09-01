@@ -1076,3 +1076,93 @@ Provenance: user-provided locked diagnostic at exact HEAD `09806a748fd3153b8cce7
 The diagnostic intentionally returned runner exit 1 and task reward 0 because model transport was denied, while the security gate passed. Setup and native execution completed. Six OpenCode retry requests used exact `/v1/responses` for target `openai/gpt-5.6-sol`; all returned 503 with `upstream_opened=false` and `parent_authorization_sent=false`. The `$0.96086` reservation was `released_unforwarded`, no unknown exposure was retained, and authoritative, known, and total exposure were all zero.
 
 Cleanup completed with zero survivors. Native evidence contained 45 files and 75 entries, and results were structurally valid. This is a successful harness and authority-fencing diagnostic, not a model calibration result and not admissible benchmark evidence. The exact clean four-attempt calibration is unblocked by the harness but remains `unproven`; detached execution and its Tigris credential blockers are unchanged.
+
+## 2026-08-31T12:46:17-07:00: Paid streaming incident and settlement contract
+
+Provenance: user-provided first paid target-attempt evidence at exact HEAD `4a79b5b` and the user-provided streaming correction contract. No gateway or model call is authorized for implementation or validation.
+
+The first real target attempt forwarded one `/v1/responses` request with `stream=true` to production. The upstream connection opened, parent authorization was sent, and HTTP 200 arrived, but no body arrived within `BACKPRESSURE_TIMEOUT_SECONDS=30`; initial streaming headers contained no final cost. The broker retained the complete `$0.96086` reservation as unknown exposure, recorded known actual cost `$0`, stopped the remaining three attempts, completed cleanup, and wrote no report. The retained amount is exposure, not evidence that `$0.96086` was spent, and it remains unreconciled.
+
+The broker had incorrectly reused its 30-second downstream-client backpressure bound for upstream connect/read. D-099 separates those lifecycles: upstream I/O may continue only through the remaining attempt deadline, while heartbeat/lease invalidation still closes registered sockets; buffered downstream writing alone keeps the 30-second bound. Non-streaming settlement remains exact-header based. Streaming Responses settlement requires one strict successful terminal `response.completed` SSE event carrying authoritative `response.usage.cost` and coherent bounded token usage; model text is neither inspected beyond structural framing nor retained. Streaming chat will be rejected before forwarding unless the exact terminal usage plus `[DONE]` contract is implemented. Every post-forward framing, content, timeout, truncation, ambiguity, terminal, cost, usage, or size failure retains the full reservation.
+
+Core PR 3944 enables the pinned LiteLLM v1.97 streaming usage/cost contract and must be deployed before another calibration. The retained paid call must also be reconciled first. Implementation and fake-upstream validation are pending.
+
+## 2026-08-31T13:18:40-07:00: E-093 local streaming-settlement validation
+
+Provenance: fake upstreams only; complete local Python 3.12 and real-Docker suites; package and dependency checks; local lint, type, security, workflow, and diff validation. No gateway/model call or calibration occurred.
+
+Upstream completion I/O now uses the remaining broker attempt deadline rather than the 30-second downstream backpressure window. Each read recalculates the remaining bound, and heartbeat/lease invalidation closes the registered transport socket without racing `HTTPResponse` cleanup. The downstream 30-second timeout begins only when writing the fully buffered settled body.
+
+Non-streaming settlement remains exact cost-header based. Streaming chat rejects before reservation or forwarding. Streaming `/v1/responses` requires HTTP 200, one unambiguous `text/event-stream` content type, unambiguous bounded Content-Length or chunked framing, and exactly one final successful `response.completed` event. That event alone supplies finite nonnegative `response.usage.cost` plus exact nonnegative bounded input/output/total token counts whose total is coherent. Only after complete validation does settlement occur, followed by the original SSE bytes and content type. Missing cost or terminal, malformed JSON/SSE/content type, duplicate terminal, failed or incomplete events, trailing events, boolean/negative/incoherent usage, nonfinite cost, truncation, ambiguity, timeout, and overflow retain the full unknown reservation and block retry.
+
+All 990 non-Docker and ten required real-Docker tests passed. The fake suite includes a first SSE body delayed beyond a monkeypatched old backpressure window but within the attempt lease, valid Content-Length and chunked streams, absolute attempt-timeout retention, heartbeat closure of a slow upstream, all fail-closed stream cases, preserved nonstream cost headers, and unchanged request-cap/endpoint/retry behavior. `uv lock --check`, Ruff check and format, ty, Bandit, actionlint, wheel/sdist build, isolated locked-wheel smoke, all-groups pip-audit, and `git diff --check` passed. Hosted CI and full-history Gitleaks remain pending.
+
+The prior paid `$0.96086` retained reservation remains unknown exposure, not actual-spend evidence. It must be reconciled, and core PR 3944 must be deployed, before calibration can run again.
+
+## 2026-08-31T19:11:29-07:00: OpenRouter calibration backend contract
+
+Provenance: user-provided live OpenRouter contract from a tiny authenticated probe on 2026-08-31 and user-provided backend-seam decision. The implementation must not repeat the provider probe; fake providers own validation.
+
+OpenRouter's exact `openai/gpt-5.6-sol` and `anthropic/claude-sonnet-5` models were observed through `https://openrouter.ai/api/v1`. A streamed Responses probe returned HTTP 200 `text/event-stream`, a response ID, terminal `response.completed`, then `[DONE]`. Terminal usage included cost and token fields. An immediate authenticated `/generation?id=...` read matched ID, model cost `$0.00007`, token counts, and `streamed=true`. This `$0.00007` is direct contract-probe cost, not benchmark calibration.
+
+OpenRouter is now the default personal calibration backend. Its authenticated `/models` rows and threshold overrides determine conservative normalized pricing, and successful nonstream or Responses-stream settlement requires exact terminal usage plus a matching historical generation record. LiteLLM remains an explicit optional work backend with its existing settlement behavior and deprecated `TETRABENCH_CALIBRATION_GATEWAY_KEY` fallback. Direct compatible endpoints require explicit pricing and settlement adapters; protocol compatibility alone does not transfer spend authority.
+
+The earlier core PR 3944 dependency statements at 12:46, 13:18, D-099, and E-093 are superseded. Core PR 3944 is not a dependency for OpenRouter calibration. The old `$0.96086` reservation remains conservative prior unknown exposure, not actual spend. The next clean proof must pass it explicitly against the shared `$25` cap; it never becomes a completed attempt or authoritative current cost.
+
+## 2026-08-31T19:37:24-07:00: E-094 local backend-seam validation
+
+Provenance: fake HTTP providers only; 1,017 non-Docker tests; ten required real-Docker tests; complete local lint, type, security, package, dependency, workflow, diff, and history-scan parity. No provider/model call or calibration occurred.
+
+Immutable backend and profile contracts now isolate URL/path mapping, selected credentials, broker DNS, pricing, settlement, and child/broker/upstream/Harbor model identities from SpendLedger, BrokerState lease authority, Docker topology, and request validation. OpenRouter is the CLI default and settles successful nonstream or Responses streams only after terminal usage and an exact bounded historical generation cross-check. LiteLLM remains explicit with its prior behavior. Fake tests cover base-path preservation, conservative override/cache-tier pricing, unsupported paid pricing, generation 404 retry, every matching field, mismatch retention, SSE `[DONE]`, credential isolation, resolver inspection, and prior exposure cap accounting.
+
+All 1,017 non-Docker and ten Docker tests passed. `uv lock --check`, locked all-group sync, Ruff check/format, ty, Bandit, actionlint, wheel/sdist build, isolated locked-wheel installation and metadata/content smoke, all-groups pip-audit, `git diff --check`, and redacted full-history Gitleaks passed. Hosted CI remains pending. The next clean proof remains `unproven` and must pass `--prior-unknown-exposure-usd 0.96086`.
+
+## 2026-08-31T19:41:24-07:00: E-094 hosted-trigger boundary
+
+Provenance: branch push at implementation commit `f6774e0`, GitHub Actions workflow inspection, hosted run listing, closed-PR inspection, and one attempted manual workflow dispatch. No PR was created or reopened.
+
+The branch push did not trigger CI. `.github/workflows/ci.yml` runs only on `master` pushes and pull requests; the branch's prior PR is closed. Manual dispatch returned HTTP 422 because the workflow has no `workflow_dispatch` trigger. The task explicitly reserves PR creation for the orchestrator, so current-HEAD hosted validation is unavailable without violating that boundary. The most recent hosted run is successful but belongs to predecessor SHA `1de5105`, not this implementation. E-094 remains locally passed and hosted-unproven until the orchestrator opens the review PR.
+
+## 2026-08-31T20:35:01-07:00: E-095 adjudicated OpenRouter corrections
+
+Provenance: user-provided review findings; fake HTTP providers; local Python 3.12 and real-Docker validation. No provider/model call or calibration occurred.
+
+OpenRouter Responses settlement now accepts documented data-only SSE frames and optional matching `event:` lines, ignores valid comments and blank separators, and still requires exactly one successful terminal followed only by one `[DONE]`. Terminal usage cost is optional; generation `total_cost` is authoritative, finite, and nonnegative, and any present terminal cost must equal it. Responses input/output tokens and nonstream chat prompt/completion tokens normalize separately before exact generation token comparison.
+
+Request admission now rejects plugins, web-search options, fallback model arrays, route/transforms/provider controls, and server-side tool types before request counting, reservation, or forwarding. Ordinary client-defined function tools, calls, and results remain unchanged. OpenRouter pricing consumes flat conditional rows, including `min_prompt_tokens`, `utc_start`, `utc_end`, and `utc_days`, and takes conservative maxima across all rows. Unknown override conditions and pricing keys fail closed; nonzero request and unsupported modality charges remain rejected.
+
+The runner deterministically divides `$25` minus prior unknown exposure into four clean allocations or two debug allocations before attempts. Their exact decimal sum equals the available budget, every allocation must cover one complete worst-case request for its profile, and each broker receives only its allocation. Unused allocation is not spend and cannot be consumed by another attempt. If activation may have started and broker ledger authority is missing, malformed, or unreadable, failure evidence retains the full allocation as conservative unknown exposure. Broker-known retention and faithfully proven preactivation zero remain distinct evidence states.
+
+All 1,050 non-Docker and ten required real-Docker tests passed. `uv lock --check`, locked all-group sync, Ruff check/format, ty, Bandit, actionlint, wheel/sdist build, isolated locked-wheel installation and metadata/content smoke, all-groups pip-audit, `git diff --check`, and redacted full-history Gitleaks passed. Hosted validation remains pending because this task forbids creating a PR.
+
+## 2026-08-31T21:13:27-07:00: E-096 final OpenRouter review corrections
+
+Provenance: user-provided final review findings; OpenRouter Models API and generated `UtcDay` SDK documentation retrieved on 2026-08-31; fake HTTP providers; local Python 3.12 and real-Docker validation. No provider/model call or calibration occurred.
+
+OpenRouter documents UTC pricing windows as integer HHMM clock numbers, including `1630` for 16:30 and `30` for 00:30, bounded from `0000` through `2359` with minutes `00` through `59`. Its documented weekday values are the exact lowercase full names `monday` through `sunday`. Tetrabench now accepts only those shapes, requires paired distinct window endpoints, permits documented day-only conditions, and rejects invalid minutes, ranges, types, casing, abbreviations, duplicates, numeric days, one-sided/equal windows, and unknown conditions. Sources: https://openrouter.ai/docs/guides/overview/models and https://openrouter.ai/docs/client-sdks/python/components/utcday.
+
+The nonstream chat regression no longer assumes the broker handler has appended its record when the client receives the flushed response. It uses the suite's bounded condition-polling pattern and asserts publication before reading the record.
+
+Fifty-two focused tests, all 1,094 non-Docker tests, and ten required real-Docker tests passed. `uv lock --check`, locked all-group sync, Ruff check/format, ty, Bandit, actionlint, wheel/sdist build, isolated locked-wheel installation and metadata/content smoke, all-groups pip-audit, `git diff --check`, and redacted 53-commit full-history Gitleaks passed. Hosted validation remains pending because this task forbids creating a PR.
+
+## 2026-08-31T21:43:06-07:00: E-097 activation and settlement review corrections
+
+Provenance: two Codex review findings on PR 2; race-focused broker-ledger fakes; fake OpenRouter connect, response-header, and body stalls; local Python 3.12 and real-Docker validation. No provider/model call or calibration occurred.
+
+Broker ledger schema v2 now records a SHA-256 current-attempt binding only after activation accepts the high-entropy attempt token. Once `broker_activation` starts, failure accounting trusts ledger spend only when the ledger proves both activated state and the current attempt binding. A stale schema-valid preactivation ledger after activation starts or the token write, and an activated ledger from another attempt, retain the complete allocation as conservative unknown exposure. A failure proven before activation remains zero.
+
+OpenRouter generation settlement now applies one fixed deadline independently to connect, credentialed request send, response-header wait, and every body read. Each operation and retry recomputes the smaller remaining settlement and attempt bounds. Fake stalls fail closed in under one second with a 150 ms test window and retain the forwarded reservation; a 404 retry receives a strictly smaller timeout.
+
+All 363 focused calibration tests, 1,102 non-Docker tests, and ten required real-Docker tests passed. Lock checking, Ruff check/format, ty, Bandit, actionlint, and diff checks passed. Package, dependency, installed-wheel, full-history secret-scan, and hosted evidence remain pending.
+
+## 2026-08-31T22:02:00-07:00: E-097 final local validation correction
+
+Provenance: final local Python 3.12 validation after adding explicit invalid preactivation-spend rejection. No provider/model call or calibration occurred.
+
+The preceding E-097 entry is superseded where its counts and pending checks differ. A failure proven before activation now reports zero even if a schema-valid inactive ledger improperly claims nonzero spend. All 364 focused calibration tests, 1,103 non-Docker tests, and ten required real-Docker tests passed. Lock checking, Ruff check/format, ty, Bandit, actionlint, wheel/sdist build, isolated locked-wheel installation and metadata/content smoke, all-groups pip-audit, `git diff --check`, redacted 54-commit full-history Gitleaks, and Docker residue inspection passed. Hosted validation remains pending.
+
+## 2026-08-31T22:23:46-07:00: E-097 hosted validation
+
+Provenance: GitHub Actions run [33472802576](https://github.com/Tetraslam/tetrabench/actions/runs/33472802576) for implementation commit `32ed9eacf2056629c26160476ae008ff9ec55efc`.
+
+The Python 3.12 job passed lock checking, locked installation, lint, formatting, type checking, Bandit, Docker availability, all ten required Docker tests, all 1,103 non-Docker tests, package build, isolated-wheel smoke, and the complete dependency audit. The independent full-history Gitleaks job passed. E-097 is complete. No provider/model call or calibration occurred.

@@ -49,20 +49,30 @@ excludes every non-default IPv4 route across all host policy tables and every
 existing Docker IPAM range; atomic Docker creation arbitrates concurrent runners.
 Evidence retains only the selected subnet, gateway, and bounded collision counts.
 The network carries one broker sidecar with a unique alias. The broker image is pinned,
-mounts the source snapshot read-only, and receives the parent gateway key through
+mounts the source snapshot read-only, and receives the selected backend key through
 anonymous stdin after start. The key is absent from Docker env, argv, labels,
 mounts, config, and logs. Generated Harbor `main` uses the exact public DNS list
-`1.1.1.1`, `9.9.9.9`; the broker uses exact Tailscale MagicDNS
+`1.1.1.1`, `9.9.9.9`. The default personal OpenRouter broker uses the same
+public resolvers. The optional LiteLLM work backend uses exact Tailscale MagicDNS
 `100.100.100.100` for its tailnet-only upstream. Immutable preactivation
-inspection requires those exact ordered lists. A disposable container completes
+inspection requires the selected backend's exact ordered list. A disposable container completes
 a one-shot probe through Docker's embedded alias resolution without an external
 DNS override. The
 attempt token remains inactive until the runner discovers the uniquely labeled
 Harbor `main`, validates its immutable Docker config, records one config digest,
 and activates the token through that same private pipe. A `main` healthcheck
 holds Harbor's native `compose up --wait` boundary until activation, before
-OpenCode installation or execution. Authenticated `/model/info` pricing and
-limits are retained only as an exact redacted canonical snapshot and digest.
+OpenCode installation or execution. OpenRouter is the default calibration backend
+at `https://openrouter.ai/api/v1`; LiteLLM remains available with `--backend
+litellm`. OpenRouter reads authenticated `/models` pricing, while LiteLLM reads
+`/model/info`. Both retain only an exact redacted normalized snapshot, source,
+backend, and digest.
+The CLI reads only the selected backend credential:
+`TETRABENCH_OPENROUTER_API_KEY` for OpenRouter or
+`TETRABENCH_LITELLM_API_KEY` for LiteLLM. LiteLLM alone accepts the deprecated
+`TETRABENCH_CALIBRATION_GATEWAY_KEY` fallback when the new variable is absent;
+setting both LiteLLM variables is ambiguous and fails closed. Credential values
+are never serialized.
 It then starts each attempt with bounded failure evidence before model work.
 Each attempt records ordered started/completed/failed booleans for sidecar start,
 topology probe, CLI spawn, main discovery/config validation, broker activation,
@@ -75,20 +85,41 @@ counts/digests. A future exception retains only its class and bounded native
 structure. Positive request-count checks cannot mask this evidence. Raw streams,
 paths, exception messages, prompts, model content, logs, and tool output are
 excluded.
-Each attempt locks to its first valid OpenCode endpoint only after successful
-budget reservation. The broker caps output at 8,192 tokens and atomically
-reserves each request's worst-case cost under a shared `$25` limit before
-forwarding. Every upstream status requires one finite nonnegative authoritative
-cost. Missing or malformed settlement makes the ledger fatal, retains the full
-reservation as unknown exposure, and prevents later forwarding. Child responses
-use only `text/event-stream` for a validated streaming request or
-`application/json` otherwise; upstream content type, encoding, and other headers
-are not reflected. Fake-upstream tests cover this boundary without a model call.
+Before any attempt, the runner divides `$25` minus prior unknown exposure into
+four deterministic clean-run allocations, or two in debug mode. The allocations
+sum exactly to the available budget, each must cover one complete worst-case
+request for its profile, and each broker receives only its own allocation.
+Unused allocation is not spend and cannot be consumed by another attempt. Each
+attempt locks to its first valid OpenCode endpoint only after successful budget
+reservation. The broker caps output at 8,192 tokens and reserves each request's
+worst-case cost within that allocation before forwarding. LiteLLM preserves exact
+cost-header settlement for nonstreaming responses and terminal usage settlement
+for Responses streams. OpenRouter accepts documented data-only Responses frames
+and optional matching `event:` lines, ignores valid comments and blank separators,
+and requires one successful terminal followed only by `[DONE]`. Terminal
+`usage.cost` is optional; when present it must equal the finite nonnegative
+authoritative generation `total_cost`. Responses normalizes
+`input_tokens`/`output_tokens`, while chat normalizes
+`prompt_tokens`/`completion_tokens`, and both must match the bounded historical
+`/generation?id=...` record before forwarding. Streaming chat rejects before
+reservation. Missing, delayed, ambiguous, or mismatched settlement makes the
+ledger fatal, retains the full reservation as unknown exposure, and prevents
+later forwarding. The 30-second generation settlement window independently caps
+connect, response-header, and body-read I/O, and its remaining bound shrinks
+across retries. If broker activation has started, a failed attempt trusts ledger
+spend only when the ledger proves activation by the current attempt token's
+digest. Stale preactivation, missing, malformed, or unreadable evidence retains
+the complete attempt allocation as conservative unknown exposure. Preactivation
+zero exposure requires phase proof that activation never started. The 30-second
+client backpressure timeout applies only to the buffered downstream write.
+Fake-upstream tests cover both backends without a model call.
 Chat requests are normalized to exactly one completion and both supported
 endpoints reject multiplicity, background generation, non-text modalities,
-remote media, and file references. Message/input content admits only text, tool
-calls, and tool results. Endpoint-specific output limits remain capped at 8,192,
-and every reservation covers that complete permitted output.
+remote media, file references, plugins, web-search options, model fallback
+arrays, routing/provider controls, transforms, and server-side tool types.
+Ordinary client-defined function tools, tool calls, and tool results remain
+supported. Endpoint-specific output limits remain capped at 8,192, and every
+reservation covers that complete permitted output.
 
 The clean task is copied into a temporary overlay whose only added or replaced
 path is `environment/docker-compose.yaml`. It builds the committed main
@@ -112,13 +143,21 @@ Authorization.
 Cleanup reconciles exact random names and labels regardless of create-call
 outcomes, reaps the attach client, and proves no active authority or owned
 resource remains. A dead parent may leave an inert network; the next startup's
-exact-label sweep removes it. No host port is published. The required clean
-four-attempt report remains unproven. Debug mode also supports
+exact-label sweep removes it. No host port is published. The shared `$25` cap can
+be seeded with explicit prior unknown exposure. That amount is reported
+separately and never becomes a completed attempt or known cost. The next clean
+proof must pass `--prior-unknown-exposure-usd 0.96086` for the retained
+conservative exposure. The required clean four-attempt report remains unproven.
+Debug mode defaults prior exposure to zero and also supports
 `--debug-deny-upstream`. It requires one attempt per profile and forbids proof
 output. After normal authenticated pricing, the broker accepts one valid request,
 records its endpoint and reservation shape, releases the reservation, and
 returns a fixed local 503 without opening a completion upstream connection. This
-zero-cost route diagnostic is always non-admissible.
+zero-cost route diagnostic is always non-admissible. Direct OpenAI- or
+Anthropic-compatible endpoints need explicit pricing and settlement adapters;
+protocol compatibility does not grant spend authority. A direct OpenRouter
+contract probe cost `$0.00007`; it is separate from benchmark calibration and
+does not reduce the retained `$0.96086` prior exposure.
 
 Catalog tasks now bind `reward_policy = "numeric" | "binary"` into resolved-plan
 identity. Existing catalogs default to numeric, and retained plans without the

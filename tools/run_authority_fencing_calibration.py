@@ -24,7 +24,7 @@ import threading
 import time
 import urllib.parse
 import warnings
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, MutableMapping
 from concurrent.futures import Future, ThreadPoolExecutor
 from contextlib import suppress
 from decimal import Decimal, InvalidOperation
@@ -106,10 +106,34 @@ def strict_json(data: bytes) -> Any:
         raise ValueError("invalid JSON") from error
 
 
-UPSTREAM_URL = "https://litellm-proxy.taildb21e0.ts.net"
+def _strict_json_decimal(data: bytes) -> Any:
+    def reject_constant(value: str) -> None:
+        raise ValueError(f"non-finite JSON value: {value}")
+
+    def reject_duplicates(items: list[tuple[str, Any]]) -> dict[str, Any]:
+        result: dict[str, Any] = {}
+        for key, item in items:
+            if key in result:
+                raise ValueError("JSON contains duplicate keys")
+            result[key] = item
+        return result
+
+    try:
+        return json.loads(
+            data.decode("utf-8"),
+            object_pairs_hook=reject_duplicates,
+            parse_constant=reject_constant,
+            parse_float=Decimal,
+        )
+    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise ValueError("invalid JSON") from error
+
+
 MAIN_DNS = ("1.1.1.1", "9.9.9.9")
-BROKER_DNS = ("100.100.100.100",)
-PARENT_KEY_ENV = "TETRABENCH_CALIBRATION_GATEWAY_KEY"
+OPENROUTER_KEY_ENV = "TETRABENCH_OPENROUTER_API_KEY"
+LITELLM_KEY_ENV = "TETRABENCH_LITELLM_API_KEY"
+LEGACY_LITELLM_KEY_ENV = "TETRABENCH_CALIBRATION_GATEWAY_KEY"
+PARENT_KEY_ENV = LEGACY_LITELLM_KEY_ENV
 TASK_ID = "systems-design/authority-fencing"
 MAX_ATTEMPT_SECONDS = 35 * 60
 MAX_TOTAL_COST = Decimal("25")
@@ -134,6 +158,9 @@ MAX_BODY_BYTES = 512 << 10
 MAX_HEADER_BYTES = 16 << 10
 MAX_RESPONSE_BYTES = 64 << 20
 MODEL_INFO_MAX_RESPONSE_BYTES = 4 << 20
+GENERATION_MAX_RESPONSE_BYTES = 1 << 20
+SETTLEMENT_WINDOW_SECONDS = 30.0
+SETTLEMENT_POLL_SECONDS = 0.1
 MIN_PARENT_KEY_LENGTH = 16
 MAX_PARENT_KEY_LENGTH = 512
 MIN_BROKER_TOKEN_LENGTH = 32
@@ -165,10 +192,87 @@ PROVIDER_ENV_MARKERS = (
     "AWS_",
     "TIGRIS_",
 )
-PROFILES = (
-    ("target", "openai/gpt-5.6-sol"),
-    ("alternate", "anthropic/claude-sonnet-5"),
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class BackendContract:
+    name: str
+    upstream_base_url: str
+    credential_env: str
+    deprecated_credential_env: str | None
+    credential_prefix: str
+    broker_dns: tuple[str, ...]
+    resolver_purpose: str
+    endpoint_paths: tuple[tuple[str, str], ...]
+    pricing_path: str
+    pricing_parser: str
+    settlement: str
+    generation_path: str | None
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class ProfileContract:
+    name: str
+    child_model: str
+    broker_model: str
+    upstream_model: str
+    harbor_model: str
+
+
+OPENROUTER_BACKEND = BackendContract(
+    name="openrouter",
+    upstream_base_url="https://openrouter.ai/api/v1",
+    credential_env=OPENROUTER_KEY_ENV,
+    deprecated_credential_env=None,
+    credential_prefix="sk-or-v1-",
+    broker_dns=MAIN_DNS,
+    resolver_purpose="public-openrouter-upstream",
+    endpoint_paths=(
+        ("/v1/responses", "/responses"),
+        ("/v1/chat/completions", "/chat/completions"),
+    ),
+    pricing_path="/models",
+    pricing_parser="openrouter-models",
+    settlement="terminal_usage+generation",
+    generation_path="/generation",
 )
+LITELLM_BACKEND = BackendContract(
+    name="litellm",
+    upstream_base_url="https://litellm-proxy.taildb21e0.ts.net",
+    credential_env=LITELLM_KEY_ENV,
+    deprecated_credential_env=LEGACY_LITELLM_KEY_ENV,
+    credential_prefix="sk-",
+    broker_dns=("100.100.100.100",),
+    resolver_purpose="tailnet-upstream",
+    endpoint_paths=(
+        ("/v1/responses", "/v1/responses"),
+        ("/v1/chat/completions", "/v1/chat/completions"),
+    ),
+    pricing_path="/model/info",
+    pricing_parser="litellm-model-info",
+    settlement="litellm-response-cost",
+    generation_path=None,
+)
+BACKENDS = {item.name: item for item in (OPENROUTER_BACKEND, LITELLM_BACKEND)}
+UPSTREAM_URL = LITELLM_BACKEND.upstream_base_url
+BROKER_DNS = LITELLM_BACKEND.broker_dns
+PROFILE_CONTRACTS = (
+    ProfileContract(
+        name="target",
+        child_model="openai/gpt-5.6-sol",
+        broker_model="openai/gpt-5.6-sol",
+        upstream_model="openai/gpt-5.6-sol",
+        harbor_model="openai/openai/gpt-5.6-sol",
+    ),
+    ProfileContract(
+        name="alternate",
+        child_model="anthropic/claude-sonnet-5",
+        broker_model="anthropic/claude-sonnet-5",
+        upstream_model="anthropic/claude-sonnet-5",
+        harbor_model="openai/anthropic/claude-sonnet-5",
+    ),
+)
+PROFILES = tuple((profile.name, profile.broker_model) for profile in PROFILE_CONTRACTS)
 ATTEMPT_PHASES = (
     "sidecar_start",
     "topology_probe",
@@ -197,15 +301,21 @@ SOURCE_RELATIVE_PATHS = (
 )
 
 
-def _validate_parent_key(value: Any) -> str:
+def _validate_bearer(value: Any) -> str:
     if (
         type(value) is not str
         or not MIN_PARENT_KEY_LENGTH <= len(value) <= MAX_PARENT_KEY_LENGTH
-        or not value.startswith("sk-")
         or any(not 0x21 <= ord(character) <= 0x7E for character in value)
     ):
         raise ValueError("broker credential payload rejected")
     return value
+
+
+def _validate_parent_key(value: Any, backend: BackendContract = LITELLM_BACKEND) -> str:
+    key = _validate_bearer(value)
+    if not key.startswith(backend.credential_prefix):
+        raise ValueError("broker credential payload rejected")
+    return key
 
 
 def _validate_broker_token(value: Any, *, error: str) -> str:
@@ -218,15 +328,41 @@ def _validate_broker_token(value: Any, *, error: str) -> str:
     return value
 
 
-def _validate_broker_credential_payload(value: Any) -> tuple[str, str]:
+def _validate_broker_credential_payload(
+    value: Any, backend: BackendContract = LITELLM_BACKEND
+) -> tuple[str, str]:
     if not isinstance(value, dict) or set(value) != {"parent_key", "probe_token"}:
         raise ValueError("broker credential payload schema rejected")
     return (
-        _validate_parent_key(value["parent_key"]),
+        _validate_parent_key(value["parent_key"], backend),
         _validate_broker_token(
             value["probe_token"], error="broker credential payload rejected"
         ),
     )
+
+
+def _take_backend_credential(
+    backend: BackendContract, environment: MutableMapping[str, str]
+) -> str:
+    primary = environment.pop(backend.credential_env, None)
+    fallback = (
+        environment.pop(backend.deprecated_credential_env, None)
+        if backend.deprecated_credential_env is not None
+        else None
+    )
+    if primary and fallback:
+        raise RuntimeError("selected backend credentials are ambiguous")
+    value = primary or fallback
+    if not value:
+        raise RuntimeError("selected calibration backend credential is required")
+    return _validate_parent_key(value, backend)
+
+
+def _profile_contract(name: str) -> ProfileContract:
+    matches = [profile for profile in PROFILE_CONTRACTS if profile.name == name]
+    if len(matches) != 1:
+        raise ValueError("calibration profile identity rejected")
+    return matches[0]
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
@@ -252,6 +388,15 @@ class RequestRecord:
 class PricingSnapshot:
     models: tuple[dict[str, Any], ...]
     sha256: str
+    backend: str = "litellm"
+    source: str = "/model/info"
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class SettlementResult:
+    response_id: str
+    cost: Decimal | None
+    usage: dict[str, int]
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
@@ -400,11 +545,22 @@ def _run_phase(attempt: dict[str, Any], phase: str, action: Callable[[], Any]) -
 class SpendLedger:
     """Atomically own actual spend plus exact in-flight worst-case reservations."""
 
-    def __init__(self, max_total: Decimal = MAX_TOTAL_COST) -> None:
+    def __init__(
+        self,
+        max_total: Decimal = MAX_TOTAL_COST,
+        prior_unknown_exposure: Decimal = Decimal(0),
+    ) -> None:
         if not max_total.is_finite() or max_total <= 0 or max_total > MAX_TOTAL_COST:
             raise ValueError("calibration ledger cap is invalid")
+        if (
+            not prior_unknown_exposure.is_finite()
+            or prior_unknown_exposure < 0
+            or prior_unknown_exposure > max_total
+        ):
+            raise ValueError("prior unknown exposure is invalid")
         self._lock = threading.Lock()
         self._max_total = max_total
+        self._prior_unknown_exposure = prior_unknown_exposure
         self._cost = Decimal(0)
         self._reserved = Decimal(0)
         self._reservations: dict[int, Decimal] = {}
@@ -417,7 +573,9 @@ class SpendLedger:
         with self._lock:
             if self._fatal is not None:
                 raise RuntimeError("calibration spend ledger is invalid")
-            projected = self._cost + self._reserved + amount
+            projected = (
+                self._prior_unknown_exposure + self._cost + self._reserved + amount
+            )
             if projected > self._max_total:
                 raise RuntimeError(
                     "calibration remaining budget cannot cover reservation"
@@ -441,7 +599,10 @@ class SpendLedger:
             if cost > amount:
                 self._fatal = "authoritative cost exceeded exact reservation"
                 raise RuntimeError(self._fatal)
-            if self._cost + self._reserved + cost > self._max_total:
+            if (
+                self._prior_unknown_exposure + self._cost + self._reserved + cost
+                > self._max_total
+            ):
                 self._fatal = "authoritative settlement would exceed calibration cap"
                 raise RuntimeError(self._fatal)
             self._cost += cost
@@ -479,6 +640,10 @@ class SpendLedger:
         with self._lock:
             return self._fatal
 
+    @property
+    def prior_unknown_exposure(self) -> Decimal:
+        return self._prior_unknown_exposure
+
 
 class BrokerState:
     def __init__(
@@ -491,7 +656,8 @@ class BrokerState:
         max_input_tokens: int,
         deadline: float,
         ledger: SpendLedger,
-        upstream_url: str = UPSTREAM_URL,
+        backend: BackendContract = LITELLM_BACKEND,
+        upstream_url: str | None = None,
         evidence_path: Path | None = None,
         fake_response_cost: Decimal | None = None,
         pricing_sha256: str | None = None,
@@ -506,7 +672,9 @@ class BrokerState:
         self.max_input_tokens = max_input_tokens
         self.deadline = deadline
         self.ledger = ledger
-        self.upstream_url = upstream_url.rstrip("/")
+        self.backend = backend
+        self.upstream_url = (upstream_url or backend.upstream_base_url).rstrip("/")
+        _parse_upstream_url(self.upstream_url)
         self.evidence_path = evidence_path
         self.evidence_lock = threading.Lock()
         self.fake_response_cost = fake_response_cost
@@ -519,6 +687,9 @@ class BrokerState:
         self.locked_endpoint: str | None = None
         self.active = token is not None
         self.activated = token is not None
+        self.activation_token_sha256 = (
+            hashlib.sha256(token.encode()).hexdigest() if token is not None else None
+        )
         self.last_heartbeat: float | None = (
             time.monotonic() if token is not None else None
         )
@@ -534,16 +705,19 @@ class BrokerState:
             with self.lock:
                 document = {
                     "active": self.active,
+                    "activation_token_sha256": self.activation_token_sha256,
                     "activated": self.activated,
+                    "backend": self.backend.name,
                     "fatal": self.ledger.fatal,
                     "known_actual_cost_usd": str(self.ledger.cost),
                     "locked_endpoint": self.locked_endpoint,
                     "pricing_sha256": self.pricing_sha256,
+                    "settlement_source": self.backend.settlement,
                     "probe_consumed": self._probe_consumed,
                     "request_count": self.request_count,
                     "requests": [dataclasses.asdict(item) for item in self.records],
                     "retained_unknown_reservation_usd": str(self.ledger.reserved),
-                    "schema_version": 1,
+                    "schema_version": 2,
                     "lease": {
                         "channel": "anonymous-stdin-pipe",
                         "heartbeat_interval_seconds": HEARTBEAT_INTERVAL_SECONDS,
@@ -597,7 +771,13 @@ class BrokerState:
         upstreams = tuple(self.upstreams)
         self.upstreams.clear()
         for upstream in upstreams:
-            upstream.close()
+            upstream.auto_open = 0
+            connected = upstream.sock
+            upstream.sock = None
+            if connected is not None:
+                with suppress(OSError):
+                    connected.shutdown(socket.SHUT_RDWR)
+                connected.close()
 
     def authorize(self, headers: Any) -> None:
         values = headers.get_all("Authorization", [])
@@ -658,6 +838,9 @@ class BrokerState:
                 self._token = token
                 self.active = True
                 self.activated = True
+                self.activation_token_sha256 = hashlib.sha256(
+                    token.encode()
+                ).hexdigest()
                 self.last_heartbeat = now
                 self.lease_channel_identity = channel_identity
         if expired:
@@ -691,6 +874,23 @@ class BrokerState:
             return (self.activated and not self.active) or self._expired_locked(
                 time.monotonic()
             )
+
+    def upstream_io_timeout(self) -> float:
+        expired = False
+        with self.lock:
+            now = time.monotonic()
+            if self._expired_locked(now):
+                self._invalidate_locked()
+                expired = True
+                remaining = 0.0
+            else:
+                remaining = min(self.deadline - now, float(MAX_ATTEMPT_SECONDS))
+        if expired:
+            self.write_evidence()
+            raise TimeoutError("broker attempt deadline expired")
+        if remaining <= 0:
+            raise TimeoutError("broker attempt deadline expired")
+        return remaining
 
     @property
     def probe_consumed(self) -> bool:
@@ -768,7 +968,8 @@ class BrokerState:
                 raise RuntimeError("upstream is not connected")
             upstream.auto_open = 0
             self.upstreams.add(upstream)
-            if self._expired_locked(time.monotonic()):
+            now = time.monotonic()
+            if self._expired_locked(now):
                 self._invalidate_locked()
                 expired = True
                 accepted = False
@@ -783,15 +984,70 @@ class BrokerState:
                 )
             if accepted:
                 parent_key = self.parent_key
+                if upstream.sock is None:
+                    raise RuntimeError("upstream is not connected")
+                upstream.sock.settimeout(
+                    min(self.deadline - now, float(MAX_ATTEMPT_SECONDS))
+                )
                 admission.started = True
                 upstream.request(
                     "POST",
-                    endpoint,
+                    _join_upstream_path(
+                        urllib.parse.urlsplit(self.upstream_url).path,
+                        _backend_endpoint_path(self.backend, endpoint),
+                    ),
                     body=body,
                     headers={
                         **forwarded_headers,
                         "Authorization": f"Bearer {parent_key}",
                         "Content-Length": str(len(body)),
+                    },
+                )
+            else:
+                self.upstreams.discard(upstream)
+                upstream.close()
+        if expired:
+            self.write_evidence()
+        if not accepted:
+            raise PermissionError("broker attempt expired")
+
+    def send_connected_settlement_request(
+        self,
+        upstream: http.client.HTTPConnection,
+        path: str,
+        *,
+        io_timeout: float,
+    ) -> None:
+        expired = False
+        with self.lock:
+            if upstream.sock is None:
+                raise RuntimeError("upstream is not connected")
+            upstream.auto_open = 0
+            self.upstreams.add(upstream)
+            now = time.monotonic()
+            if self._expired_locked(now):
+                self._invalidate_locked()
+                expired = True
+                accepted = False
+            else:
+                accepted = self.active and bool(self.parent_key)
+            if accepted:
+                parent_key = self.parent_key
+                if upstream.sock is None:
+                    raise RuntimeError("upstream is not connected")
+                upstream.sock.settimeout(
+                    min(
+                        self.deadline - now,
+                        float(MAX_ATTEMPT_SECONDS),
+                        io_timeout,
+                    )
+                )
+                upstream.request(
+                    "GET",
+                    path,
+                    headers={
+                        "Authorization": f"Bearer {parent_key}",
+                        "Accept": "application/json",
                     },
                 )
             else:
@@ -896,6 +1152,393 @@ def _bounded_usage(headers: http.client.HTTPMessage) -> dict[str, int]:
     return usage
 
 
+def _usage_token_count(value: Any) -> int:
+    if type(value) is not int or value < 0:
+        raise ValueError("model response token usage is malformed")
+    if value > 1_000_000_000:
+        raise ValueError("model response token usage exceeds limit")
+    return value
+
+
+def _stream_cost(value: Any) -> Decimal:
+    if isinstance(value, bool) or not isinstance(value, (Decimal, int, str)):
+        raise ValueError("model streaming cost is malformed")
+    try:
+        parsed = Decimal(value)
+    except InvalidOperation as error:
+        raise ValueError("model streaming cost is malformed") from error
+    if not parsed.is_finite() or parsed < 0:
+        raise ValueError("model streaming cost is not finite nonnegative")
+    return parsed
+
+
+def _validate_stream_content_type(headers: http.client.HTTPMessage) -> str:
+    values = headers.get_all("Content-Type", [])
+    if len(values) != 1:
+        raise ValueError("model streaming content type is ambiguous")
+    original = values[0]
+    parts = [part.strip() for part in original.split(";")]
+    if not parts or parts[0].lower() != "text/event-stream":
+        raise ValueError("model streaming content type is invalid")
+    parameters: dict[str, str] = {}
+    for part in parts[1:]:
+        if part.count("=") != 1:
+            raise ValueError("model streaming content type is invalid")
+        name, value = (item.strip().lower() for item in part.split("=", 1))
+        if name in parameters or name != "charset" or value not in {"utf-8", '"utf-8"'}:
+            raise ValueError("model streaming content type is invalid")
+        parameters[name] = value
+    return original
+
+
+def _response_framing(
+    headers: http.client.HTTPMessage, *, require_explicit: bool
+) -> int | None:
+    content_lengths = headers.get_all("Content-Length", [])
+    transfer_encodings = headers.get_all("Transfer-Encoding", [])
+    if (
+        len(content_lengths) > 1
+        or (content_lengths and not content_lengths[0].isdigit())
+        or (content_lengths and transfer_encodings)
+        or len(transfer_encodings) > 1
+        or (transfer_encodings and transfer_encodings[0].strip().lower() != "chunked")
+        or (require_explicit and not content_lengths and not transfer_encodings)
+    ):
+        raise ValueError("model response framing is ambiguous")
+    declared_length = int(content_lengths[0]) if content_lengths else None
+    if declared_length is not None and declared_length > MAX_RESPONSE_BYTES:
+        raise ValueError("model response exceeds limit")
+    return declared_length
+
+
+def _read_bounded_response(
+    response: http.client.HTTPResponse,
+    upstream: http.client.HTTPConnection,
+    state: BrokerState,
+    declared_length: int | None,
+    max_bytes: int = MAX_RESPONSE_BYTES,
+    io_deadline: float | None = None,
+) -> bytes:
+    retained = bytearray()
+    while True:
+        if len(retained) > max_bytes:
+            raise ValueError("model response exceeds limit")
+        timeout = _upstream_io_timeout(state, io_deadline=io_deadline)
+        if upstream.sock is None:
+            raise ConnectionError("model upstream socket closed")
+        upstream.sock.settimeout(timeout)
+        chunk = response.read1(min(64 << 10, max_bytes + 1 - len(retained)))
+        if not chunk:
+            break
+        retained.extend(chunk)
+    if len(retained) > max_bytes:
+        raise ValueError("model response exceeds limit")
+    if declared_length is not None and len(retained) != declared_length:
+        raise ValueError("model response framing mismatch")
+    return bytes(retained)
+
+
+def _upstream_io_timeout(
+    state: BrokerState, *, io_deadline: float | None = None
+) -> float:
+    timeout = state.upstream_io_timeout()
+    if io_deadline is None:
+        return timeout
+    remaining = io_deadline - time.monotonic()
+    if remaining <= 0:
+        raise TimeoutError("OpenRouter generation settlement timed out")
+    return min(timeout, remaining)
+
+
+def _parse_responses_stream(body: bytes) -> tuple[Decimal, dict[str, int]]:
+    try:
+        text = body.decode("utf-8")
+    except UnicodeDecodeError as error:
+        raise ValueError("model streaming response is not UTF-8") from error
+    normalized = text.replace("\r\n", "\n")
+    if "\r" in normalized or not normalized.endswith("\n\n"):
+        raise ValueError("model streaming framing is malformed")
+    blocks = normalized[:-2].split("\n\n")
+    if not blocks or any(not block for block in blocks):
+        raise ValueError("model streaming framing is malformed")
+    terminal: tuple[Decimal, dict[str, int]] | None = None
+    for index, block in enumerate(blocks):
+        event_values: list[str] = []
+        data_values: list[str] = []
+        for line in block.split("\n"):
+            if line.startswith("event: "):
+                event_values.append(line[7:])
+            elif line.startswith("data: "):
+                data_values.append(line[6:])
+            else:
+                raise ValueError("model streaming framing is malformed")
+        if len(event_values) != 1 or len(data_values) != 1:
+            raise ValueError("model streaming framing is ambiguous")
+        event_type = event_values[0]
+        if not event_type or len(event_type) > 128:
+            raise ValueError("model streaming event type is malformed")
+        document = _strict_json_decimal(data_values[0].encode())
+        if not isinstance(document, dict) or document.get("type") != event_type:
+            raise ValueError("model streaming event is malformed")
+        if event_type in {"response.failed", "response.incomplete"}:
+            raise ValueError("model streaming response did not complete")
+        if event_type != "response.completed":
+            continue
+        if terminal is not None:
+            raise ValueError("model streaming terminal event is duplicated")
+        if index != len(blocks) - 1:
+            raise ValueError("model streaming response has trailing events")
+        response_document = document.get("response")
+        if (
+            not isinstance(response_document, dict)
+            or response_document.get("status") != "completed"
+        ):
+            raise ValueError("model streaming terminal event is unsuccessful")
+        usage = response_document.get("usage")
+        if not isinstance(usage, dict):
+            raise ValueError("model streaming terminal usage is missing")
+        bounded_usage = {
+            name: _usage_token_count(usage.get(name))
+            for name in ("input_tokens", "output_tokens", "total_tokens")
+        }
+        if bounded_usage["total_tokens"] != (
+            bounded_usage["input_tokens"] + bounded_usage["output_tokens"]
+        ):
+            raise ValueError("model streaming token usage is incoherent")
+        if "cost" not in usage:
+            raise ValueError("model streaming cost is missing")
+        terminal = (_stream_cost(usage["cost"]), bounded_usage)
+    if terminal is None:
+        raise ValueError("model streaming terminal event is missing")
+    return terminal
+
+
+def _response_identifier(value: Any) -> str:
+    if (
+        type(value) is not str
+        or not 1 <= len(value) <= 256
+        or any(not 0x21 <= ord(character) <= 0x7E for character in value)
+    ):
+        raise ValueError("model response identifier is malformed")
+    return value
+
+
+def _normalized_usage(
+    value: Any, *, endpoint: str, cost_required: bool = True
+) -> tuple[Decimal | None, dict[str, int]]:
+    if not isinstance(value, dict):
+        raise ValueError("model terminal usage is missing")
+    if endpoint == "/v1/responses":
+        input_field, output_field = "input_tokens", "output_tokens"
+    elif endpoint == "/v1/chat/completions":
+        input_field, output_field = "prompt_tokens", "completion_tokens"
+    else:
+        raise ValueError("model terminal usage endpoint is unsupported")
+    usage = {
+        "input_tokens": _usage_token_count(value.get(input_field)),
+        "output_tokens": _usage_token_count(value.get(output_field)),
+        "total_tokens": _usage_token_count(value.get("total_tokens")),
+    }
+    if usage["total_tokens"] != usage["input_tokens"] + usage["output_tokens"]:
+        raise ValueError("model terminal token usage is incoherent")
+    if "cost" not in value and cost_required:
+        raise ValueError("model terminal cost is missing")
+    cost = _stream_cost(value["cost"]) if "cost" in value else None
+    return cost, usage
+
+
+def _parse_openrouter_nonstream(
+    body: bytes, *, endpoint: str, expected_model: str
+) -> SettlementResult:
+    document = _strict_json_decimal(body)
+    if not isinstance(document, dict):
+        raise ValueError("OpenRouter response schema rejected")
+    response_id = _response_identifier(document.get("id"))
+    if document.get("model") != expected_model:
+        raise ValueError("OpenRouter response model mismatch")
+    if endpoint == "/v1/responses" and document.get("status") != "completed":
+        raise ValueError("OpenRouter response did not complete")
+    if endpoint == "/v1/chat/completions" and not isinstance(
+        document.get("choices"), list
+    ):
+        raise ValueError("OpenRouter chat response is malformed")
+    cost, usage = _normalized_usage(
+        document.get("usage"), endpoint=endpoint, cost_required=False
+    )
+    return SettlementResult(response_id=response_id, cost=cost, usage=usage)
+
+
+def _parse_openrouter_responses_stream(
+    body: bytes, *, expected_model: str
+) -> SettlementResult:
+    try:
+        text = body.decode("utf-8")
+    except UnicodeDecodeError as error:
+        raise ValueError("OpenRouter stream is not UTF-8") from error
+    normalized = text.replace("\r\n", "\n")
+    if "\r" in normalized or not normalized.endswith("\n\n"):
+        raise ValueError("OpenRouter stream framing is malformed")
+    blocks = normalized[:-2].split("\n\n")
+    frames: list[tuple[str | None, str]] = []
+    for block in blocks:
+        if not block:
+            continue
+        event_values: list[str] = []
+        data_values: list[str] = []
+        for line in block.split("\n"):
+            if line.startswith(":"):
+                continue
+            if line.startswith("event: "):
+                event_values.append(line[7:])
+            elif line.startswith("data: "):
+                data_values.append(line[6:])
+            else:
+                raise ValueError("OpenRouter stream framing is malformed")
+        if not event_values and not data_values:
+            continue
+        if len(event_values) > 1 or len(data_values) != 1:
+            raise ValueError("OpenRouter stream framing is ambiguous")
+        frames.append((event_values[0] if event_values else None, data_values[0]))
+    if not frames or frames[-1] != (None, "[DONE]"):
+        raise ValueError("OpenRouter stream completion marker is missing")
+    terminal: SettlementResult | None = None
+    for index, (declared_event_type, data) in enumerate(frames[:-1]):
+        if data == "[DONE]":
+            raise ValueError("OpenRouter stream completion marker is ambiguous")
+        document = _strict_json_decimal(data.encode())
+        if not isinstance(document, dict) or type(document.get("type")) is not str:
+            raise ValueError("OpenRouter stream event is malformed")
+        event_type = document["type"]
+        if declared_event_type is not None and declared_event_type != event_type:
+            raise ValueError("OpenRouter stream event is malformed")
+        if event_type in {"response.failed", "response.incomplete"}:
+            raise ValueError("OpenRouter stream did not complete")
+        if event_type != "response.completed":
+            continue
+        if terminal is not None or index != len(frames) - 2:
+            raise ValueError("OpenRouter stream terminal is ambiguous")
+        response = document.get("response")
+        if not isinstance(response, dict) or response.get("status") != "completed":
+            raise ValueError("OpenRouter stream terminal is unsuccessful")
+        if response.get("model") != expected_model:
+            raise ValueError("OpenRouter response model mismatch")
+        cost, usage = _normalized_usage(
+            response.get("usage"), endpoint="/v1/responses", cost_required=False
+        )
+        terminal = SettlementResult(
+            response_id=_response_identifier(response.get("id")),
+            cost=cost,
+            usage=usage,
+        )
+    if terminal is None:
+        raise ValueError("OpenRouter stream terminal is missing")
+    return terminal
+
+
+def _validate_openrouter_generation(
+    body: bytes,
+    *,
+    expected_id: str,
+    expected_model: str,
+    expected_streamed: bool,
+    expected_cost: Decimal | None,
+    expected_usage: Mapping[str, int],
+) -> Decimal:
+    document = _strict_json_decimal(body)
+    if not isinstance(document, dict) or not isinstance(document.get("data"), dict):
+        raise ValueError("OpenRouter generation schema rejected")
+    generation = document["data"]
+    if (
+        generation.get("id") != expected_id
+        or generation.get("model") != expected_model
+        or generation.get("streamed") is not expected_streamed
+    ):
+        raise ValueError("OpenRouter generation identity mismatch")
+    total_cost = _stream_cost(generation.get("total_cost"))
+    usage_cost = _stream_cost(generation.get("usage"))
+    if usage_cost != total_cost or (
+        expected_cost is not None and total_cost != expected_cost
+    ):
+        raise ValueError("OpenRouter generation cost mismatch")
+    prompt = _usage_token_count(generation.get("tokens_prompt"))
+    completion = _usage_token_count(generation.get("tokens_completion"))
+    if {
+        "input_tokens": prompt,
+        "output_tokens": completion,
+        "total_tokens": prompt + completion,
+    } != dict(expected_usage):
+        raise ValueError("OpenRouter generation token usage mismatch")
+    return total_cost
+
+
+def _poll_openrouter_generation(
+    state: BrokerState,
+    *,
+    settlement: SettlementResult,
+    expected_model: str,
+    streamed: bool,
+) -> Decimal:
+    generation_path = state.backend.generation_path
+    if generation_path is None:
+        raise ValueError("backend generation adapter is missing")
+    parsed = _parse_upstream_url(state.upstream_url)
+    deadline = min(state.deadline, time.monotonic() + SETTLEMENT_WINDOW_SECONDS)
+    path = (
+        _join_upstream_path(parsed.path, generation_path)
+        + "?"
+        + urllib.parse.urlencode({"id": settlement.response_id})
+    )
+    while True:
+        if time.monotonic() >= deadline:
+            raise TimeoutError("OpenRouter generation settlement timed out")
+        upstream = _upstream_connection(
+            parsed, _upstream_io_timeout(state, io_deadline=deadline)
+        )
+        response: http.client.HTTPResponse | None = None
+        try:
+            upstream.connect()
+            state.send_connected_settlement_request(
+                upstream,
+                path,
+                io_timeout=_upstream_io_timeout(state, io_deadline=deadline),
+            )
+            if upstream.sock is None:
+                raise ConnectionError("model upstream socket closed")
+            upstream.sock.settimeout(_upstream_io_timeout(state, io_deadline=deadline))
+            response = upstream.getresponse()
+            declared = _response_framing(response.headers, require_explicit=False)
+            if declared is not None and declared > GENERATION_MAX_RESPONSE_BYTES:
+                raise ValueError("OpenRouter generation response exceeds limit")
+            body = _read_bounded_response(
+                response,
+                upstream,
+                state,
+                declared,
+                max_bytes=GENERATION_MAX_RESPONSE_BYTES,
+                io_deadline=deadline,
+            )
+            if response.status == HTTPStatus.NOT_FOUND:
+                if time.monotonic() + SETTLEMENT_POLL_SECONDS >= deadline:
+                    raise TimeoutError("OpenRouter generation settlement timed out")
+            elif response.status == HTTPStatus.OK:
+                return _validate_openrouter_generation(
+                    body,
+                    expected_id=settlement.response_id,
+                    expected_model=expected_model,
+                    expected_streamed=streamed,
+                    expected_cost=settlement.cost,
+                    expected_usage=settlement.usage,
+                )
+            else:
+                raise ValueError("OpenRouter generation request failed")
+        finally:
+            if response is not None:
+                response.close()
+            state.unregister_upstream(upstream)
+            upstream.close()
+        time.sleep(SETTLEMENT_POLL_SECONDS)
+
+
 def _single_header(headers: http.client.HTTPMessage, *names: str) -> str | None:
     found: list[str] = []
     for name in names:
@@ -926,6 +1569,56 @@ def _positive_limit(value: Any, field: str) -> int:
     if type(value) is not int or value <= 0:
         raise ValueError(f"model limit {field} must be a positive integer")
     return value
+
+
+def _nonnegative_decimal(value: Any, field: str) -> Decimal:
+    if isinstance(value, bool) or not isinstance(value, (Decimal, int, float, str)):
+        raise ValueError(f"model pricing {field} is not numeric")
+    try:
+        parsed = Decimal(str(value))
+    except InvalidOperation as error:
+        raise ValueError(f"model pricing {field} is malformed") from error
+    if not parsed.is_finite() or parsed < 0:
+        raise ValueError(f"model pricing {field} must be finite nonnegative")
+    return parsed
+
+
+def _join_upstream_path(base_path: str, child_path: str) -> str:
+    if (
+        not child_path.startswith("/")
+        or "?" in child_path
+        or "#" in child_path
+        or ".." in child_path.split("/")
+    ):
+        raise ValueError("upstream child path rejected")
+    normalized_base = "/" + base_path.strip("/") if base_path.strip("/") else ""
+    return normalized_base + child_path
+
+
+def _parse_upstream_url(value: str) -> urllib.parse.SplitResult:
+    parsed = urllib.parse.urlsplit(value)
+    if (
+        parsed.hostname is None
+        or parsed.scheme not in {"http", "https"}
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.query
+        or parsed.fragment
+        or ".." in parsed.path.split("/")
+    ):
+        raise ValueError("backend upstream URL rejected")
+    return parsed
+
+
+def _backend_endpoint_path(backend: BackendContract, child_endpoint: str) -> str:
+    matches = [
+        upstream
+        for child, upstream in backend.endpoint_paths
+        if child == child_endpoint
+    ]
+    if len(matches) != 1:
+        raise ValueError("backend endpoint mapping rejected")
+    return matches[0]
 
 
 def _validate_pricing_document(document: Any) -> PricingSnapshot:
@@ -978,15 +1671,211 @@ def _validate_pricing_document(document: Any) -> PricingSnapshot:
         raise ValueError("gateway model-info omitted a required model group")
     models = tuple(selected[model_group] for _profile, model_group in PROFILES)
     encoded = canonical(list(models)).encode()
-    return PricingSnapshot(models=models, sha256=hashlib.sha256(encoded).hexdigest())
+    return PricingSnapshot(
+        models=models,
+        sha256=hashlib.sha256(encoded).hexdigest(),
+        backend=LITELLM_BACKEND.name,
+        source=LITELLM_BACKEND.pricing_path,
+    )
+
+
+OPENROUTER_RATE_FIELDS = frozenset(
+    {"prompt", "completion", "input_cache_read", "input_cache_write"}
+)
+OPENROUTER_UNSUPPORTED_PRICE_FIELDS = frozenset(
+    {
+        "audio",
+        "image",
+        "input_audio",
+        "internal_reasoning",
+        "output_audio",
+        "request",
+        "web_search",
+    }
+)
+OPENROUTER_OVERRIDE_CONDITION_FIELDS = frozenset(
+    {
+        "context_length",
+        "max_tokens",
+        "min_prompt_tokens",
+        "min_tokens",
+        "threshold",
+        "utc_days",
+        "utc_end",
+        "utc_start",
+    }
+)
+OPENROUTER_UTC_DAYS = frozenset(
+    {
+        "monday",
+        "tuesday",
+        "wednesday",
+        "thursday",
+        "friday",
+        "saturday",
+        "sunday",
+    }
+)
+
+
+def _is_openrouter_rate_field(field: str) -> bool:
+    return field in OPENROUTER_RATE_FIELDS or field.startswith("input_cache_write_")
+
+
+def _validate_openrouter_override_condition(field: str, value: Any) -> None:
+    if field in {
+        "context_length",
+        "max_tokens",
+        "min_prompt_tokens",
+        "min_tokens",
+        "threshold",
+    }:
+        if type(value) is not int or value < 0:
+            raise ValueError("OpenRouter pricing override condition is malformed")
+        return
+    if field in {"utc_start", "utc_end"}:
+        if type(value) is int and 0 <= value <= 2359 and value % 100 < 60:
+            return
+        raise ValueError("OpenRouter pricing override condition is malformed")
+    if field == "utc_days":
+        if (
+            not isinstance(value, list)
+            or not value
+            or any(
+                type(day) is not str or day not in OPENROUTER_UTC_DAYS for day in value
+            )
+            or len(set(value)) != len(value)
+        ):
+            raise ValueError("OpenRouter pricing override condition is malformed")
+        return
+    raise ValueError("OpenRouter pricing override condition is unknown")
+
+
+def _openrouter_pricing_values(pricing: Any) -> dict[str, Decimal]:
+    if not isinstance(pricing, dict):
+        raise ValueError("OpenRouter model pricing is missing")
+    for field, value in pricing.items():
+        if field == "overrides" or _is_openrouter_rate_field(field):
+            continue
+        if field not in OPENROUTER_UNSUPPORTED_PRICE_FIELDS:
+            raise ValueError("OpenRouter unknown pricing field rejected")
+        if _nonnegative_decimal(value, field) != 0:
+            raise ValueError("OpenRouter unsupported paid pricing is nonzero")
+    required = ("prompt", "completion", "input_cache_read", "input_cache_write")
+    values = {field: _positive_decimal(pricing.get(field), field) for field in required}
+    write_tiers = [
+        _positive_decimal(value, field)
+        for field, value in pricing.items()
+        if field.startswith("input_cache_write")
+    ]
+    values["input_cache_write"] = max(write_tiers)
+    return values
+
+
+def _validate_openrouter_pricing_document(document: Any) -> PricingSnapshot:
+    if not isinstance(document, dict) or not isinstance(document.get("data"), list):
+        raise ValueError("OpenRouter models response schema rejected")
+    expected = {profile.upstream_model for profile in PROFILE_CONTRACTS}
+    selected: dict[str, dict[str, Any]] = {}
+    for row in document["data"]:
+        if not isinstance(row, dict) or row.get("id") not in expected:
+            continue
+        model = row["id"]
+        if model in selected:
+            raise ValueError("OpenRouter models returned an ambiguous model")
+        base_pricing = row.get("pricing")
+        rates = [_openrouter_pricing_values(base_pricing)]
+        if not isinstance(base_pricing, dict):
+            raise ValueError("OpenRouter model pricing is missing")
+        overrides = base_pricing.get("overrides", [])
+        if not isinstance(overrides, list):
+            raise ValueError("OpenRouter pricing overrides are malformed")
+        for override in overrides:
+            if not isinstance(override, dict):
+                raise ValueError("OpenRouter pricing override is malformed")
+            has_utc_start = "utc_start" in override
+            has_utc_end = "utc_end" in override
+            if has_utc_start != has_utc_end or (
+                has_utc_start and override["utc_start"] == override["utc_end"]
+            ):
+                raise ValueError("OpenRouter pricing override condition is malformed")
+            override_pricing: dict[str, Any] = {}
+            conditions = 0
+            for key, value in override.items():
+                if key in OPENROUTER_OVERRIDE_CONDITION_FIELDS:
+                    _validate_openrouter_override_condition(key, value)
+                    conditions += 1
+                elif _is_openrouter_rate_field(key) or key in (
+                    OPENROUTER_UNSUPPORTED_PRICE_FIELDS
+                ):
+                    override_pricing[key] = value
+                else:
+                    raise ValueError("OpenRouter pricing override condition is unknown")
+            if conditions == 0 or not override_pricing:
+                raise ValueError("OpenRouter pricing override is malformed")
+            merged_pricing = {
+                key: value for key, value in base_pricing.items() if key != "overrides"
+            }
+            merged_pricing.update(override_pricing)
+            rates.append(_openrouter_pricing_values(merged_pricing))
+        maxima = {
+            field: max(rate[field] for rate in rates)
+            for field in (
+                "prompt",
+                "completion",
+                "input_cache_read",
+                "input_cache_write",
+            )
+        }
+        if (
+            maxima["prompt"] > MAX_INPUT_OR_CACHE_COST_PER_TOKEN
+            or maxima["input_cache_read"] > MAX_INPUT_OR_CACHE_COST_PER_TOKEN
+            or maxima["input_cache_write"] > MAX_INPUT_OR_CACHE_COST_PER_TOKEN
+            or maxima["completion"] > MAX_OUTPUT_COST_PER_TOKEN
+        ):
+            raise ValueError(
+                "OpenRouter model pricing exceeds calibration hard ceiling"
+            )
+        max_input = _positive_limit(row.get("context_length"), "context_length")
+        top_provider = row.get("top_provider")
+        if not isinstance(top_provider, dict):
+            raise ValueError("OpenRouter top provider is missing")
+        max_output = _positive_limit(
+            top_provider.get("max_completion_tokens"), "max_completion_tokens"
+        )
+        if max_output < MAX_OUTPUT_TOKENS:
+            raise ValueError("OpenRouter model output limit is below calibration cap")
+        selected[model] = {
+            "backend": OPENROUTER_BACKEND.name,
+            "cache_creation_input_token_cost": str(maxima["input_cache_write"]),
+            "cache_read_input_token_cost": str(maxima["input_cache_read"]),
+            "input_cost_per_token": str(maxima["prompt"]),
+            "max_input_tokens": max_input,
+            "max_output_tokens": max_output,
+            "model_group": model,
+            "output_cost_per_token": str(maxima["completion"]),
+            "pricing_source": OPENROUTER_BACKEND.pricing_path,
+        }
+    if set(selected) != expected:
+        raise ValueError("OpenRouter models omitted a required model")
+    models = tuple(selected[profile.upstream_model] for profile in PROFILE_CONTRACTS)
+    encoded = canonical(list(models)).encode()
+    return PricingSnapshot(
+        models=models,
+        sha256=hashlib.sha256(encoded).hexdigest(),
+        backend=OPENROUTER_BACKEND.name,
+        source=OPENROUTER_BACKEND.pricing_path,
+    )
 
 
 def query_model_pricing(
-    *, parent_key: str, upstream_url: str = UPSTREAM_URL
+    *,
+    parent_key: str,
+    backend: BackendContract = LITELLM_BACKEND,
+    upstream_url: str | None = None,
 ) -> PricingSnapshot:
-    parsed = urllib.parse.urlsplit(upstream_url)
-    if parsed.hostname is None or parsed.scheme not in {"http", "https"}:
-        raise ValueError("gateway URL rejected")
+    upstream_url = upstream_url or backend.upstream_base_url
+    parsed = _parse_upstream_url(upstream_url)
     connection_type = (
         http.client.HTTPSConnection
         if parsed.scheme == "https"
@@ -995,11 +1884,14 @@ def query_model_pricing(
     kwargs: dict[str, Any] = {"timeout": BACKPRESSURE_TIMEOUT_SECONDS}
     if parsed.scheme == "https":
         kwargs["context"] = ssl.create_default_context()
-    connection = connection_type(parsed.hostname, parsed.port, **kwargs)
+    hostname = parsed.hostname
+    if hostname is None:
+        raise ValueError("backend upstream URL rejected")
+    connection = connection_type(hostname, parsed.port, **kwargs)
     try:
         connection.request(
             "GET",
-            f"{parsed.path.rstrip('/')}/model/info",
+            _join_upstream_path(parsed.path, backend.pricing_path),
             headers={
                 "Authorization": f"Bearer {parent_key}",
                 "Accept": "application/json",
@@ -1035,7 +1927,12 @@ def query_model_pricing(
             raise ValueError("gateway model-info response is truncated")
         if response.status != HTTPStatus.OK:
             raise ValueError("gateway model-info request failed")
-        return _validate_pricing_document(strict_json(body))
+        document = strict_json(body)
+        if backend.pricing_parser == "litellm-model-info":
+            return _validate_pricing_document(document)
+        if backend.pricing_parser == "openrouter-models":
+            return _validate_openrouter_pricing_document(document)
+        raise ValueError("backend pricing adapter is unsupported")
     finally:
         connection.close()
 
@@ -1564,6 +2461,9 @@ TEXT_CONTENT_TYPES = frozenset({"text", "input_text", "output_text"})
 TOOL_CONTENT_TYPES = frozenset(
     {"tool_call", "tool_result", "function_call", "function_call_output"}
 )
+UNRESERVED_PROVIDER_FIELDS = frozenset(
+    {"models", "plugins", "provider", "route", "transforms", "websearchoptions"}
+)
 
 
 def _reject_media_fields(value: Any, *, within_content: bool = False) -> None:
@@ -1634,6 +2534,20 @@ def _validate_responses_content(document: dict[str, Any]) -> None:
         _reject_media_fields(item, within_content=True)
 
 
+def _validate_client_function_tools(document: dict[str, Any]) -> None:
+    tools = document.get("tools")
+    if tools is None:
+        return
+    if not isinstance(tools, list) or not tools:
+        raise ValueError("broker tools rejected")
+    for tool in tools:
+        if not isinstance(tool, dict) or tool.get("type") != "function":
+            raise ValueError("broker server-side tool rejected")
+    tool_choice = document.get("tool_choice")
+    if isinstance(tool_choice, dict) and tool_choice.get("type") != "function":
+        raise ValueError("broker server-side tool choice rejected")
+
+
 def _reservation_for_body(body: bytes) -> Decimal:
     """Reserve from UTF-8 bytes: tokenizers byte-fallback to at most one token/byte."""
     return (
@@ -1641,6 +2555,34 @@ def _reservation_for_body(body: bytes) -> Decimal:
         + Decimal(MAX_OUTPUT_TOKENS) * MAX_OUTPUT_COST_PER_TOKEN
         + RESERVATION_SAFETY_MARGIN
     )
+
+
+def _deterministic_budget_split(
+    available_budget: Decimal, attempt_count: int
+) -> tuple[Decimal, ...]:
+    allocation = available_budget / Decimal(attempt_count)
+    allocations = [allocation] * (attempt_count - 1)
+    allocations.append(available_budget - sum(allocations, start=Decimal(0)))
+    return tuple(allocations)
+
+
+def _allocate_attempt_budgets(
+    available_budget: Decimal, *, attempts_per_profile: int
+) -> tuple[Decimal, ...]:
+    attempt_count = attempts_per_profile * len(PROFILE_CONTRACTS)
+    if (
+        not available_budget.is_finite()
+        or available_budget < 0
+        or attempts_per_profile not in {1, 2}
+    ):
+        raise ValueError("calibration attempt allocation input rejected")
+    allocations = _deterministic_budget_split(available_budget, attempt_count)
+    worst_request = _reservation_for_body(b"x" * MAX_BODY_BYTES)
+    if any(item < worst_request for item in allocations):
+        raise RuntimeError("attempt allocation cannot cover one worst-case request")
+    if sum(allocations, start=Decimal(0)) != available_budget:
+        raise RuntimeError("attempt allocations do not equal available budget")
+    return allocations
 
 
 def _validate_request(
@@ -1673,11 +2615,14 @@ def _validate_request(
     if not isinstance(document, dict) or document.get("model") != state.model:
         raise ValueError("broker model rejected")
     normalized_fields = {_normalized_field(field): field for field in document}
+    if UNRESERVED_PROVIDER_FIELDS & set(normalized_fields):
+        raise ValueError("broker unreserved provider control rejected")
     forbidden_multiplicity = MULTIPLICITY_FIELDS & set(normalized_fields)
     if forbidden_multiplicity:
         raise ValueError("broker multiplicity field rejected")
     if any(normalized in FORBIDDEN_MEDIA_FIELDS for normalized in normalized_fields):
         raise ValueError("broker non-text modality rejected")
+    _validate_client_function_tools(document)
     stream = document.get("stream", False)
     if type(stream) is not bool:
         raise ValueError("broker stream mode rejected")
@@ -1688,6 +2633,8 @@ def _validate_request(
             raise ValueError("broker responses multiplicity/background rejected")
         _validate_responses_content(document)
     else:
+        if stream:
+            raise ValueError("broker streaming chat is unsupported")
         allowed_limit_fields = {"max_completion_tokens", "max_tokens"}
         injected_field = "max_completion_tokens"
         n = document.get("n", 1)
@@ -1737,6 +2684,7 @@ def _forward_headers(handler: BaseHTTPRequestHandler) -> dict[str, str]:
 
 def _upstream_connection(
     parsed: urllib.parse.SplitResult,
+    timeout: float,
 ) -> http.client.HTTPConnection:
     if parsed.hostname is None:
         raise ValueError("upstream host is missing")
@@ -1744,14 +2692,14 @@ def _upstream_connection(
         return http.client.HTTPSConnection(
             parsed.hostname,
             parsed.port,
-            timeout=BACKPRESSURE_TIMEOUT_SECONDS,
+            timeout=timeout,
             context=ssl.create_default_context(),
         )
     if parsed.scheme == "http":
         return http.client.HTTPConnection(
             parsed.hostname,
             parsed.port,
-            timeout=BACKPRESSURE_TIMEOUT_SECONDS,
+            timeout=timeout,
         )
     raise ValueError("upstream scheme rejected")
 
@@ -1869,8 +2817,8 @@ class CalibrationBrokerHandler(BaseHTTPRequestHandler):
                 settlement = "settled"
                 settlement_finalized = True
             else:
-                parsed = urllib.parse.urlsplit(state.upstream_url)
-                upstream = _upstream_connection(parsed)
+                parsed = _parse_upstream_url(state.upstream_url)
+                upstream = _upstream_connection(parsed, state.upstream_io_timeout())
                 upstream.connect()
                 upstream_opened = True
                 state.send_connected_request(
@@ -1882,26 +2830,63 @@ class CalibrationBrokerHandler(BaseHTTPRequestHandler):
                     forwarding,
                 )
                 potentially_paid = forwarding.started
+                if upstream.sock is not None:
+                    upstream.sock.settimeout(state.upstream_io_timeout())
                 response = upstream.getresponse()
                 status = response.status
-                cost = _parse_cost(response.headers)
-                usage = _bounded_usage(response.headers)
-                call_id = _single_header(response.headers, "X-Litellm-Call-Id")
-                request_id = _single_header(
-                    response.headers, "X-Litellm-Request-Id", "X-Request-Id"
+                if state.backend.name == LITELLM_BACKEND.name:
+                    call_id = _single_header(response.headers, "X-Litellm-Call-Id")
+                    request_id = _single_header(
+                        response.headers, "X-Litellm-Request-Id", "X-Request-Id"
+                    )
+                stream = content_type == "text/event-stream"
+                if stream:
+                    if status != HTTPStatus.OK:
+                        raise ValueError(
+                            "model streaming response status is unsuccessful"
+                        )
+                    content_type = _validate_stream_content_type(response.headers)
+                else:
+                    if state.backend.name == LITELLM_BACKEND.name:
+                        cost = _parse_cost(response.headers)
+                        usage = _bounded_usage(response.headers)
+                    elif status != HTTPStatus.OK:
+                        raise ValueError("OpenRouter response status is unsuccessful")
+                declared_length = _response_framing(
+                    response.headers, require_explicit=stream
                 )
-                content_lengths = response.headers.get_all("Content-Length", [])
-                if len(content_lengths) > 1 or (
-                    content_lengths and not content_lengths[0].isdigit()
-                ):
-                    raise ValueError("model response framing is ambiguous")
-                if content_lengths and int(content_lengths[0]) > MAX_RESPONSE_BYTES:
-                    raise ValueError("model response exceeds limit")
-                response_body = response.read(MAX_RESPONSE_BYTES + 1)
-                if len(response_body) > MAX_RESPONSE_BYTES:
-                    raise ValueError("model response exceeds limit")
-                if content_lengths and len(response_body) != int(content_lengths[0]):
-                    raise ValueError("model response framing mismatch")
+                response_body = _read_bounded_response(
+                    response, upstream, state, declared_length
+                )
+                if stream:
+                    if state.backend.name == OPENROUTER_BACKEND.name:
+                        openrouter_settlement = _parse_openrouter_responses_stream(
+                            response_body, expected_model=state.model
+                        )
+                        cost = _poll_openrouter_generation(
+                            state,
+                            settlement=openrouter_settlement,
+                            expected_model=state.model,
+                            streamed=True,
+                        )
+                        usage = openrouter_settlement.usage
+                        request_id = openrouter_settlement.response_id
+                    else:
+                        cost, usage = _parse_responses_stream(response_body)
+                elif state.backend.name == OPENROUTER_BACKEND.name:
+                    openrouter_settlement = _parse_openrouter_nonstream(
+                        response_body, endpoint=endpoint, expected_model=state.model
+                    )
+                    cost = _poll_openrouter_generation(
+                        state,
+                        settlement=openrouter_settlement,
+                        expected_model=state.model,
+                        streamed=False,
+                    )
+                    usage = openrouter_settlement.usage
+                    request_id = openrouter_settlement.response_id
+                if cost is None:
+                    raise RuntimeError("model response cost is unavailable")
                 settlement = "known_fatal"
                 state.finish_request(reservation, cost)
                 settlement = "settled"
@@ -1984,9 +2969,10 @@ class CalibrationBroker:
         parent_key: str,
         model: str,
         ledger: SpendLedger,
+        backend: BackendContract = LITELLM_BACKEND,
         max_input_tokens: int = MAX_BODY_BYTES,
-        timeout: int = MAX_ATTEMPT_SECONDS,
-        upstream_url: str = UPSTREAM_URL,
+        timeout: float = MAX_ATTEMPT_SECONDS,
+        upstream_url: str | None = None,
         probe_token: str | None = None,
         token: str | None = None,
         evidence_path: Path | None = None,
@@ -2007,6 +2993,7 @@ class CalibrationBroker:
             max_input_tokens=max_input_tokens,
             deadline=time.monotonic() + timeout,
             ledger=ledger,
+            backend=backend,
             upstream_url=upstream_url,
             evidence_path=evidence_path,
             fake_response_cost=fake_response_cost,
@@ -2064,8 +3051,19 @@ class CalibrationBroker:
 
 
 def _validate_broker_pricing_binding(
-    models: Any, digest: str, model: str, max_input_tokens: int
+    models: Any,
+    digest: str,
+    model: str,
+    max_input_tokens: int,
+    backend: BackendContract = LITELLM_BACKEND,
+    pricing_backend: str | None = None,
+    pricing_source: str | None = None,
 ) -> None:
+    if pricing_backend not in {None, backend.name} or pricing_source not in {
+        None,
+        backend.pricing_path,
+    }:
+        raise ValueError("broker pricing backend binding mismatch")
     if not isinstance(models, list):
         raise ValueError("broker pricing snapshot schema rejected")
     pricing_digest = hashlib.sha256(canonical(models).encode()).hexdigest()
@@ -2080,6 +3078,7 @@ def _validate_broker_pricing_binding(
 
 def _broker_child_main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(prog="calibration-broker")
+    parser.add_argument("--backend", choices=tuple(BACKENDS), required=True)
     parser.add_argument("--model", required=True)
     parser.add_argument("--max-input-tokens", type=int, required=True)
     parser.add_argument("--timeout", type=int, required=True)
@@ -2087,12 +3086,21 @@ def _broker_child_main(argv: list[str]) -> int:
     parser.add_argument("--budget-cap", required=True)
     parser.add_argument("--pricing-json", required=True)
     parser.add_argument("--pricing-sha256", required=True)
+    parser.add_argument("--pricing-backend", required=True)
+    parser.add_argument("--pricing-source", required=True)
     parser.add_argument("--fake-response-cost")
     parser.add_argument("--debug-deny-upstream", action="store_true")
     args = parser.parse_args(argv)
+    backend = BACKENDS[args.backend]
     models = strict_json(args.pricing_json.encode())
     _validate_broker_pricing_binding(
-        models, args.pricing_sha256, args.model, args.max_input_tokens
+        models,
+        args.pricing_sha256,
+        args.model,
+        args.max_input_tokens,
+        backend,
+        args.pricing_backend,
+        args.pricing_source,
     )
     raw = bytearray(sys.stdin.buffer.readline(65537))
     if len(raw) > 65536:
@@ -2101,7 +3109,7 @@ def _broker_child_main(argv: list[str]) -> int:
         credentials = strict_json(bytes(raw))
     finally:
         raw[:] = b"\0" * len(raw)
-    parent_key, probe_token = _validate_broker_credential_payload(credentials)
+    parent_key, probe_token = _validate_broker_credential_payload(credentials, backend)
     stop = threading.Event()
     for signum in (signal.SIGINT, signal.SIGTERM):
         signal.signal(signum, lambda *_args: stop.set())
@@ -2113,6 +3121,7 @@ def _broker_child_main(argv: list[str]) -> int:
         probe_token=probe_token,
         model=args.model,
         ledger=SpendLedger(Decimal(args.budget_cap)),
+        backend=backend,
         max_input_tokens=args.max_input_tokens,
         timeout=args.timeout,
         upstream_url=args.upstream_url,
@@ -2198,7 +3207,8 @@ class DockerBrokerSidecar:
         pricing: PricingSnapshot,
         max_input_tokens: int,
         budget_cap: Decimal,
-        upstream_url: str = UPSTREAM_URL,
+        backend: BackendContract = LITELLM_BACKEND,
+        upstream_url: str | None = None,
         fake_response_cost: Decimal | None = None,
         debug_deny_upstream: bool = False,
     ) -> None:
@@ -2212,7 +3222,8 @@ class DockerBrokerSidecar:
         self.pricing = pricing
         self.max_input_tokens = max_input_tokens
         self.budget_cap = budget_cap
-        self.upstream_url = upstream_url
+        self.backend = backend
+        self.upstream_url = upstream_url or backend.upstream_base_url
         self.fake_response_cost = fake_response_cost
         self.debug_deny_upstream = debug_deny_upstream
         self.process: subprocess.Popen[bytes] | None = None
@@ -2243,7 +3254,11 @@ class DockerBrokerSidecar:
             self.names.network,
             "--network-alias",
             self.names.alias,
-            *[value for resolver in BROKER_DNS for value in ("--dns", resolver)],
+            *[
+                value
+                for resolver in self.backend.broker_dns
+                for value in ("--dns", resolver)
+            ],
             *broker_label_args,
             "--read-only",
             "--tmpfs",
@@ -2269,6 +3284,8 @@ class DockerBrokerSidecar:
             "python",
             "/source/tools/run_authority_fencing_calibration.py",
             "__broker",
+            "--backend",
+            self.backend.name,
             "--model",
             self.model,
             "--max-input-tokens",
@@ -2283,6 +3300,10 @@ class DockerBrokerSidecar:
             canonical(list(self.pricing.models)),
             "--pricing-sha256",
             self.pricing.sha256,
+            "--pricing-backend",
+            self.pricing.backend,
+            "--pricing-source",
+            self.pricing.source,
         ]
         if self.fake_response_cost is not None:
             argv.extend(["--fake-response-cost", str(self.fake_response_cost)])
@@ -2296,7 +3317,13 @@ class DockerBrokerSidecar:
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             env={
-                key: value for key, value in os.environ.items() if key != PARENT_KEY_ENV
+                key: value
+                for key, value in os.environ.items()
+                if key
+                not in {
+                    self.backend.credential_env,
+                    self.backend.deprecated_credential_env,
+                }
             },
         )
         if self.process.stdin is None:
@@ -2396,7 +3423,9 @@ class DockerBrokerSidecar:
         if b"docker.sock" in serialized:
             raise RuntimeError("broker received Docker socket")
         host = inspected.get("HostConfig")
-        if not isinstance(host, dict) or host.get("Dns") != list(BROKER_DNS):
+        if not isinstance(host, dict) or host.get("Dns") != list(
+            self.backend.broker_dns
+        ):
             raise RuntimeError("broker resolver policy rejected")
         attached = inspected.get("NetworkSettings", {}).get("Networks")
         if not isinstance(attached, dict) or set(attached) != {self.names.network}:
@@ -2451,8 +3480,8 @@ class DockerBrokerSidecar:
             "parent_key_absent": True,
             "mounts": {"evidence_rw": True, "source_ro": True},
             "resolver_policy": {
-                "addresses": list(BROKER_DNS),
-                "purpose": "tailnet-upstream",
+                "addresses": list(self.backend.broker_dns),
+                "purpose": self.backend.resolver_purpose,
                 "role": "broker",
             },
             "network": {
@@ -2529,7 +3558,7 @@ class DockerBrokerSidecar:
                 document = strict_json(path.read_bytes())
                 if (
                     not isinstance(document, dict)
-                    or document.get("schema_version") != 1
+                    or document.get("schema_version") != 2
                 ):
                     raise ValueError("broker evidence schema rejected")
                 if document.get("pricing_sha256") != self.pricing.sha256:
@@ -3176,11 +4205,13 @@ def _started_attempt(
     ordinal: int,
     profile: str,
     model_group: str,
+    allocation_usd: Decimal = MAX_TOTAL_COST,
     debug_deny_upstream: bool = False,
 ) -> dict[str, Any]:
     empty_sha256 = hashlib.sha256(b"").hexdigest()
     return {
         "admissible": False,
+        "allocation_usd": str(allocation_usd),
         "broker": {
             "locked_endpoint": None,
             "request_count": 0,
@@ -3214,6 +4245,7 @@ def _started_attempt(
         "phases": _new_phase_evidence(),
         "profile": profile,
         "spend": {
+            "exposure_authority": "preactivation_zero",
             "known_actual_cost_usd": "0",
             "retained_unknown_reservation_usd": "0",
             "total_exposure_usd": "0",
@@ -3248,6 +4280,7 @@ def _broker_attempt_evidence(
             },
         },
         {
+            "exposure_authority": "broker_ledger",
             "known_actual_cost_usd": str(known),
             "retained_unknown_reservation_usd": str(retained),
             "total_exposure_usd": str(known + retained),
@@ -3267,6 +4300,106 @@ def _mark_attempt_failed(
     attempt["admissible"] = False
     attempt["failure"] = _failure_evidence(error)
     attempt["outcome"] = "failed"
+
+
+def _ledger_spend_evidence(
+    document: Any,
+    *,
+    allocation: Decimal,
+    activation_started: bool,
+    activation_token_sha256: str,
+) -> dict[str, str]:
+    if not isinstance(document, dict):
+        raise ValueError("broker ledger is malformed")
+    request_count = document.get("request_count")
+    requests = document.get("requests")
+    if (
+        document.get("schema_version") != 2
+        or type(document.get("active")) is not bool
+        or type(document.get("activated")) is not bool
+        or (
+            document.get("activation_token_sha256") is not None
+            and (
+                type(document.get("activation_token_sha256")) is not str
+                or len(document["activation_token_sha256"]) != 64
+                or any(
+                    character not in "0123456789abcdef"
+                    for character in document["activation_token_sha256"]
+                )
+            )
+        )
+        or type(request_count) is not int
+        or not 0 <= request_count <= MAX_REQUESTS
+        or not isinstance(requests, list)
+        or len(requests) != request_count
+        or not all(isinstance(request, dict) for request in requests)
+        or (
+            document.get("fatal") is not None and type(document.get("fatal")) is not str
+        )
+        or type(document.get("known_actual_cost_usd")) is not str
+        or type(document.get("retained_unknown_reservation_usd")) is not str
+    ):
+        raise ValueError("broker ledger is malformed")
+    if activation_started:
+        if (
+            document["activated"] is not True
+            or document["activation_token_sha256"] != activation_token_sha256
+        ):
+            raise ValueError("broker ledger activation authority is stale")
+    elif (
+        document["active"] is not False
+        or document["activated"] is not False
+        or document["activation_token_sha256"] is not None
+        or request_count != 0
+        or requests
+    ):
+        raise ValueError("broker ledger preactivation authority is invalid")
+    try:
+        known = Decimal(document["known_actual_cost_usd"])
+        retained = Decimal(document["retained_unknown_reservation_usd"])
+    except (InvalidOperation, KeyError, TypeError) as error:
+        raise ValueError("broker ledger spend is malformed") from error
+    if (
+        not known.is_finite()
+        or known < 0
+        or not retained.is_finite()
+        or retained < 0
+        or known + retained > allocation
+    ):
+        raise ValueError("broker ledger spend exceeds attempt allocation")
+    if not activation_started and (known != 0 or retained != 0):
+        raise ValueError("broker ledger preactivation spend is nonzero")
+    return {
+        "exposure_authority": "broker_ledger",
+        "known_actual_cost_usd": str(known),
+        "retained_unknown_reservation_usd": str(retained),
+        "total_exposure_usd": str(known + retained),
+    }
+
+
+def _fallback_attempt_spend(
+    attempt: Mapping[str, Any], *, allocation: Decimal, activated: bool
+) -> dict[str, str]:
+    activation = next(
+        (
+            item
+            for item in attempt.get("phases", {}).get("timeline", [])
+            if item.get("phase") == "broker_activation"
+        ),
+        {},
+    )
+    may_have_forwarded = activated or activation.get("started") is True
+    retained = allocation if may_have_forwarded else Decimal(0)
+    return {
+        "exposure_authority": (
+            "conservative_allocation_fallback"
+            if may_have_forwarded
+            else "preactivation_zero"
+        ),
+        "known_actual_cost_usd": "0",
+        "retained_unknown_reservation_usd": str(retained),
+        "total_exposure_usd": str(retained),
+    }
 
 
 def _validate_native_attempt(
@@ -3346,12 +4479,16 @@ def _run_attempt(
     parent_key: str,
     pricing: PricingSnapshot,
     model_pricing: dict[str, Any],
-    remaining_budget: Decimal,
+    attempt_allocation: Decimal,
     attempt_record: dict[str, Any],
+    backend: BackendContract = LITELLM_BACKEND,
     debug_deny_upstream: bool = False,
 ) -> dict[str, Any]:
-    model = model_group
-    harbor_model = f"openai/{model_group}"
+    profile_contract = _profile_contract(profile)
+    if model_group != profile_contract.broker_model:
+        raise ValueError("calibration model identity mismatch")
+    model = profile_contract.broker_model
+    harbor_model = profile_contract.harbor_model
     attempt_root = private_root / f"attempt-{ordinal}"
     attempt_root.mkdir(mode=0o700)
     names = _docker_names(run_id, ordinal)
@@ -3384,7 +4521,8 @@ def _run_attempt(
         model=model,
         pricing=pricing,
         max_input_tokens=model_pricing["max_input_tokens"],
-        budget_cap=remaining_budget,
+        budget_cap=attempt_allocation,
+        backend=backend,
         debug_deny_upstream=debug_deny_upstream,
     )
     authority = DockerMainAuthority(
@@ -3560,47 +4698,65 @@ def _run_attempt(
         if ledger_document is None:
             with suppress(BaseException):
                 ledger_document = sidecar.read_ledger()
+        activation = next(
+            (
+                item
+                for item in attempt_record.get("phases", {}).get("timeline", [])
+                if item.get("phase") == "broker_activation"
+            ),
+            {},
+        )
+        activation_started = bool(
+            getattr(sidecar, "activated", False) or activation.get("started") is True
+        )
+        activation_token_sha256 = hashlib.sha256(attempt_token.encode()).hexdigest()
+        try:
+            spend = _ledger_spend_evidence(
+                ledger_document,
+                allocation=attempt_allocation,
+                activation_started=activation_started,
+                activation_token_sha256=activation_token_sha256,
+            )
+        except ValueError:
+            spend = _fallback_attempt_spend(
+                attempt_record,
+                allocation=attempt_allocation,
+                activated=bool(getattr(sidecar, "activated", False)),
+            )
+            ledger_document = None
         if ledger_document is not None:
-            attempt_record["broker"] = {
-                "locked_endpoint": ledger_document.get("locked_endpoint"),
-                "request_count": ledger_document.get("request_count", 0),
-                "requests": ledger_document.get("requests", []),
-            }
-            attempt_record["spend"] = {
-                "known_actual_cost_usd": ledger_document.get(
-                    "known_actual_cost_usd", "0"
-                ),
-                "retained_unknown_reservation_usd": ledger_document.get(
-                    "retained_unknown_reservation_usd", "0"
-                ),
-                "total_exposure_usd": str(
-                    Decimal(ledger_document.get("known_actual_cost_usd", "0"))
-                    + Decimal(
-                        ledger_document.get("retained_unknown_reservation_usd", "0")
-                    )
-                ),
-            }
+            request_count = ledger_document.get("request_count")
+            requests = ledger_document.get("requests")
+            locked_endpoint = ledger_document.get("locked_endpoint")
+            if type(request_count) is int and isinstance(requests, list):
+                attempt_record["broker"] = {
+                    "locked_endpoint": locked_endpoint,
+                    "request_count": request_count,
+                    "requests": requests,
+                }
+        attempt_record["spend"] = spend
         _mark_attempt_failed(attempt_record, error)
         raise
     if ledger_document is None or cleanup_evidence is None or native_validation is None:
         raise RuntimeError("broker lifecycle evidence is incomplete")
     requests = ledger_document["requests"]
     broker_evidence = {
+        "backend": ledger_document["backend"],
         "locked_endpoint": ledger_document["locked_endpoint"],
         "pricing_sha256": ledger_document["pricing_sha256"],
         "probe_consumed": ledger_document["probe_consumed"],
         "request_count": ledger_document["request_count"],
         "requests": requests,
+        "settlement_source": ledger_document["settlement_source"],
         "security": security_evidence,
         "shutdown": cleanup_evidence,
     }
-    known = Decimal(ledger_document["known_actual_cost_usd"])
-    retained = Decimal(ledger_document["retained_unknown_reservation_usd"])
-    spend = {
-        "known_actual_cost_usd": str(known),
-        "retained_unknown_reservation_usd": str(retained),
-        "total_exposure_usd": str(known + retained),
-    }
+    spend = _ledger_spend_evidence(
+        ledger_document,
+        allocation=attempt_allocation,
+        activation_started=True,
+        activation_token_sha256=hashlib.sha256(attempt_token.encode()).hexdigest(),
+    )
     attempt_record["broker"] = broker_evidence
     attempt_record["spend"] = spend
     attempt_record["outcome"] = "failed"
@@ -3608,6 +4764,7 @@ def _run_attempt(
     reward = int(document["reward"])
     _native, record, gates, metrics = native_validation
     completed = {
+        "allocation_usd": str(attempt_allocation),
         "broker": broker_evidence,
         "command_outcome": attempt_record["command_outcome"],
         "containment": result.containment,
@@ -3637,6 +4794,7 @@ def _run_attempt(
         "reward": reward,
         "model": model_group,
         "model_group": model_group,
+        "model_identities": dataclasses.asdict(profile_contract),
         "outcome": "succeeded",
         "phases": attempt_record["phases"],
         "trajectory": {
@@ -3679,27 +4837,47 @@ def _failure(
         ),
         start=Decimal(0),
     )
+    prior = args.prior_unknown_exposure_usd
+    backend = BACKENDS[args.backend]
+    planned_allocations = _deterministic_budget_split(
+        MAX_TOTAL_COST - prior,
+        args.attempts_per_profile * len(PROFILE_CONTRACTS),
+    )
     return {
         "admissible": False,
         "attempt_count": len(completed),
         "attempts": completed,
         "attempts_per_profile": args.attempts_per_profile,
+        "budget": {
+            "attempt_allocations_usd": [str(item) for item in planned_allocations],
+            "available_budget_usd": str(MAX_TOTAL_COST - prior),
+            "total_cap_usd": str(MAX_TOTAL_COST),
+        },
         "diagnostic": {
             "admissible": False,
             "deny_upstream": args.debug_deny_upstream,
         },
+        "backend": _backend_evidence(backend),
         "failure": _failure_evidence(error),
         "ok": False,
         "schema_version": 1,
         "spend_exposure": {
+            "prior_unknown_exposure_usd": str(prior),
+            "current_known_cost_usd": str(known),
+            "current_retained_exposure_usd": str(retained),
             "known_actual_cost_usd": str(known),
             "retained_unknown_reservation_usd": str(retained),
-            "total_usd": str(known + retained),
+            "total_usd": str(prior + known + retained),
         },
         "task_id": TASK_ID,
         "total_authoritative_cost_usd": str(known),
         "pricing": (
-            {"models": list(pricing.models), "sha256": pricing.sha256}
+            {
+                "backend": pricing.backend,
+                "models": list(pricing.models),
+                "sha256": pricing.sha256,
+                "source": pricing.source,
+            }
             if pricing is not None
             else None
         ),
@@ -3711,12 +4889,47 @@ def _emit(value: dict[str, Any]) -> None:
     sys.stdout.buffer.flush()
 
 
+def _backend_evidence(backend: BackendContract) -> dict[str, Any]:
+    return {
+        "broker_dns": list(backend.broker_dns),
+        "endpoint_mapping": [
+            {"child": child, "upstream": upstream}
+            for child, upstream in backend.endpoint_paths
+        ],
+        "name": backend.name,
+        "pricing_source": backend.pricing_path,
+        "profiles": [dataclasses.asdict(profile) for profile in PROFILE_CONTRACTS],
+        "settlement_source": backend.settlement,
+        "upstream_base_url": backend.upstream_base_url,
+    }
+
+
+def _nonnegative_usd(value: str) -> Decimal:
+    try:
+        parsed = Decimal(value)
+    except InvalidOperation as error:
+        raise argparse.ArgumentTypeError(
+            "must be a finite nonnegative decimal"
+        ) from error
+    if not parsed.is_finite() or parsed < 0 or parsed > MAX_TOTAL_COST:
+        raise argparse.ArgumentTypeError(
+            "must be a finite nonnegative decimal at most 25"
+        )
+    return parsed
+
+
 def parse_arguments(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser()
+    parser.add_argument("--backend", choices=tuple(BACKENDS), default="openrouter")
     parser.add_argument("--attempts-per-profile", type=int)
     parser.add_argument("--debug", action="store_true")
     parser.add_argument("--debug-deny-upstream", action="store_true")
     parser.add_argument("--output", type=Path)
+    parser.add_argument(
+        "--prior-unknown-exposure-usd",
+        type=_nonnegative_usd,
+        default=Decimal(0),
+    )
     args = parser.parse_args(argv)
     expected_attempts = 1 if args.debug else 2
     if args.attempts_per_profile is None:
@@ -3744,11 +4957,14 @@ def main(argv: list[str] | None = None) -> int:
     pricing: PricingSnapshot | None = None
     run_id: str | None = None
     try:
+        backend = BACKENDS[args.backend]
         if args.output is not None:
             authority = open_proof_output_authority(args.output)
-        parent_key = os.environ.pop(PARENT_KEY_ENV, None)
-        if not parent_key:
-            raise RuntimeError("calibration gateway key environment is required")
+        parent_key = _take_backend_credential(backend, os.environ)
+        available_budget = MAX_TOTAL_COST - args.prior_unknown_exposure_usd
+        attempt_allocations = _allocate_attempt_budgets(
+            available_budget, attempts_per_profile=args.attempts_per_profile
+        )
         with tempfile.TemporaryDirectory(prefix="authority-calibration-") as directory:
             private_root = Path(directory)
             snapshot: SourceSnapshot = (
@@ -3757,7 +4973,7 @@ def main(argv: list[str] | None = None) -> int:
                 else create_clean_source_snapshot(private_root)
             )
             sweep_stale_calibration_resources()
-            pricing = query_model_pricing(parent_key=parent_key)
+            pricing = query_model_pricing(parent_key=parent_key, backend=backend)
             pricing_by_model = {item["model_group"]: item for item in pricing.models}
             manifest = source_manifest(
                 tuple(snapshot.root / path for path in SOURCE_RELATIVE_PATHS),
@@ -3771,13 +4987,16 @@ def main(argv: list[str] | None = None) -> int:
             )
             total_cost = Decimal(0)
             ordinal = 0
-            for profile, model_group in PROFILES:
+            for profile_contract in PROFILE_CONTRACTS:
+                profile = profile_contract.name
+                model_group = profile_contract.broker_model
                 for _ in range(args.attempts_per_profile):
                     ordinal += 1
                     attempt_record = _started_attempt(
                         ordinal=ordinal,
                         profile=profile,
                         model_group=model_group,
+                        allocation_usd=attempt_allocations[ordinal - 1],
                         debug_deny_upstream=args.debug_deny_upstream,
                     )
                     attempts.append(attempt_record)
@@ -3793,8 +5012,9 @@ def main(argv: list[str] | None = None) -> int:
                             parent_key=parent_key,
                             pricing=pricing,
                             model_pricing=pricing_by_model[model_group],
-                            remaining_budget=MAX_TOTAL_COST - total_cost,
+                            attempt_allocation=attempt_allocations[ordinal - 1],
                             attempt_record=attempt_record,
+                            backend=backend,
                             debug_deny_upstream=args.debug_deny_upstream,
                         )
                         total_cost += Decimal(
@@ -3834,7 +5054,7 @@ def main(argv: list[str] | None = None) -> int:
                 and snapshot.source_state == "clean"
                 and exact_four
                 and source_unchanged
-                and total_cost <= MAX_TOTAL_COST
+                and args.prior_unknown_exposure_usd + total_cost <= MAX_TOTAL_COST
                 and recorded_cost == total_cost
                 and actual_within_reservations
             )
@@ -3863,12 +5083,22 @@ def main(argv: list[str] | None = None) -> int:
                 "attempts": attempts,
                 "attempts_per_profile": args.attempts_per_profile,
                 "budget": {
+                    "attempt_allocations_usd": [
+                        str(item) for item in attempt_allocations
+                    ],
+                    "available_budget_usd": str(available_budget),
                     "input_and_cache_ceiling_per_million_usd": "10",
                     "max_output_tokens": MAX_OUTPUT_TOKENS,
                     "output_ceiling_per_million_usd": "50",
                     "actual_within_reservations": actual_within_reservations,
                     "reservation_safety_margin_usd": str(RESERVATION_SAFETY_MARGIN),
                     "recorded_actual_cost_usd": str(recorded_cost),
+                    "prior_unknown_exposure_usd": str(args.prior_unknown_exposure_usd),
+                    "current_known_cost_usd": str(total_cost),
+                    "current_retained_exposure_usd": "0",
+                    "total_cap_exposure_usd": str(
+                        args.prior_unknown_exposure_usd + total_cost
+                    ),
                     "total_authoritative_cost_usd": str(total_cost),
                     "total_cap_usd": str(MAX_TOTAL_COST),
                 },
@@ -3879,22 +5109,20 @@ def main(argv: list[str] | None = None) -> int:
                     *evidence_argv(effective_argv),
                 ],
                 "debug": args.debug,
+                "backend": _backend_evidence(backend),
                 "diagnostic": {
                     "admissible": False,
                     "deny_upstream": args.debug_deny_upstream,
                 },
                 "ok": admissible,
                 "profiles": [
-                    {
-                        "harbor_model": f"openai/{model_group}",
-                        "model_group": model_group,
-                        "name": name,
-                    }
-                    for name, model_group in PROFILES
+                    dataclasses.asdict(profile) for profile in PROFILE_CONTRACTS
                 ],
                 "pricing": {
+                    "backend": pricing.backend,
                     "models": list(pricing.models),
                     "sha256": pricing.sha256,
+                    "source": pricing.source,
                 },
                 "parent_gateway_key": {
                     "agent_exposed": False,
@@ -3914,6 +5142,12 @@ def main(argv: list[str] | None = None) -> int:
                     "verifier_context_sha256": manifest_digest(
                         tree_manifest(snapshot.tests)
                     ),
+                },
+                "spend_exposure": {
+                    "prior_unknown_exposure_usd": str(args.prior_unknown_exposure_usd),
+                    "current_known_cost_usd": str(total_cost),
+                    "current_retained_exposure_usd": "0",
+                    "total_usd": str(args.prior_unknown_exposure_usd + total_cost),
                 },
                 "task_id": TASK_ID,
                 "transport": transport,
