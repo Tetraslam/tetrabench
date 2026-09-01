@@ -1204,3 +1204,9 @@ PR 4 passed 372 focused calibration tests, full hosted Python 3.12 parity, full-
 The experiments key's read-only `/api/v1/key` response reports aggregate current-day usage but identifies the key as non-management. OpenRouter documents `/api/v1/activity` as management-key-only and individual `/generation` lookup requires an ID; the failed call predates `X-Generation-Id` retention. The Agents vault contains only the standard experiments key. A fresh isolated browser redirects `https://openrouter.ai/activity` to sign-in. Aggregate daily usage cannot authoritatively isolate this generation without proving key exclusivity.
 
 Exact-four calibration is externally blocked until an authenticated OpenRouter Activity view/export or management credential identifies the failed generation and actual cost. After reconciliation, the next run must carry the resulting authoritative prior exposure rather than `$1.92172`. No cap, reservation, or request-shape bound should be weakened to bypass this gate.
+
+## 2026-09-01T02:18:00-07:00: E-100 exposure-threshold correction
+
+Provenance: Codex review finding on PR 5 and direct budget arithmetic. No provider call occurred.
+
+The preceding E-100 entry is incomplete where it permits a rerun after unspecified reconciliation. Four `$5.90248` worst-case reservations require `$23.60992`, so the `$25` cap permits prior exposure of at most `$1.39008`. Starting from `$1.92172`, provider evidence must reduce conservative exposure by at least `$0.53164`. A reconciled value above `$1.39008` remains correctly blocked before attempts.
