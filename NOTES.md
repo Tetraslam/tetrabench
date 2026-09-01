@@ -1210,3 +1210,19 @@ Exact-four calibration is externally blocked until an authenticated OpenRouter A
 Provenance: Codex review finding on PR 5 and direct budget arithmetic. No provider call occurred.
 
 The preceding E-100 entry is incomplete where it permits a rerun after unspecified reconciliation. Four `$5.90248` worst-case reservations require `$23.60992`, so the `$25` cap permits prior exposure of at most `$1.39008`. Starting from `$1.92172`, provider evidence must reduce conservative exposure by at least `$0.53164`. A reconciled value above `$1.39008` remains correctly blocked before attempts.
+
+## 2026-09-01T11:32:56-07:00: E-101 OpenRouter generation reconciliation
+
+Provenance: user-provided OpenRouter Activity record; authenticated read-only `/api/v1/generation` lookup with the experiments key; private canonical reconciliation record; focused fake-backed calibration tests. No provider completion occurred.
+
+The Activity record and authenticated generation API independently agree on the failed target request: creation at `2026-09-01T07:46:07.742Z`, provider OpenAI, model `openai/gpt-5.6-sol-20260709`, streamed and not cancelled, 7,415 prompt tokens, 191 completion tokens, finish reason `tool_calls`, and exact usage/total cost `$0.0166085`. The private generation ID and provider response identity are retained only in `authority-fencing-openrouter-reconciliation-20260901.json`, mode `0600`, 469 bytes, SHA-256 `9af89def2ff692aa41e68724b41f00d76116c2eb55e9d0f0e0c8fba3abc0231d`.
+
+The second `$0.96086` conservative reservation is superseded by `$0.0166085` known actual cost. The earlier LiteLLM `$0.96086` remains unknown. Total prior cap consumption is therefore `$0.9774685`, leaving `$24.0225315` available and `$6.005632875` for each of four attempts, above the `$5.90248` worst-case request.
+
+D-106 adds `--prior-known-cost-usd` beside `--prior-unknown-exposure-usd`. Their finite nonnegative sum must not exceed `$25`; both consume cap, but evidence keeps known actual cost and unknown exposure separate. Failure and success reports retain prior/current and total accounting without relabeling known provider cost as unknown. All 376 focused calibration tests pass. Full local, PR, review, and hosted validation remain pending; no paid retry is permitted before they pass.
+
+## 2026-09-01T11:48:46-07:00: E-101 local validation correction
+
+Provenance: 376 focused calibration tests; full 1,125-test Python 3.12 run; isolated descendant-reaping rerun; Ruff, format, ty, Bandit, wheel/sdist build, and diff checks. No provider call occurred.
+
+The preceding E-101 entry is superseded where it says local validation is pending. All focused calibration, lint, format, type, security, and package checks pass. The full suite passed 1,124 tests and hit the existing descendant-reaping timing failure under suite load; that exact test passed immediately in isolation. Hosted CI remains the clean full-parity authority. No paid retry is permitted before PR, review, and hosted validation pass.

@@ -3788,6 +3788,16 @@ def test_attach_timeout_is_terminated_and_reaped(
         ["--debug", "--prior-unknown-exposure-usd", "-1"],
         ["--debug", "--prior-unknown-exposure-usd", "NaN"],
         ["--debug", "--prior-unknown-exposure-usd", "25.01"],
+        ["--debug", "--prior-known-cost-usd", "-1"],
+        ["--debug", "--prior-known-cost-usd", "NaN"],
+        ["--debug", "--prior-known-cost-usd", "25.01"],
+        [
+            "--debug",
+            "--prior-known-cost-usd",
+            "0.01",
+            "--prior-unknown-exposure-usd",
+            "25",
+        ],
     ],
 )
 def test_parser_rejects_noncanonical_attempt_or_listener_contract(
@@ -5034,7 +5044,15 @@ def test_failed_attempt_and_report_retain_bounded_identity_and_spend_exposure() 
         "total_exposure_usd": "1.75",
     }
     calibration._mark_attempt_failed(attempt, ValueError("native validation failed"))
-    args = calibration.parse_arguments(["--debug"])
+    args = calibration.parse_arguments(
+        [
+            "--debug",
+            "--prior-known-cost-usd",
+            "0.0166085",
+            "--prior-unknown-exposure-usd",
+            "0.96086",
+        ]
+    )
     report = calibration._failure(
         args, RuntimeError("attempt failed"), attempts=[attempt]
     )
@@ -5050,10 +5068,11 @@ def test_failed_attempt_and_report_retain_bounded_identity_and_spend_exposure() 
     assert attempt["broker"]["request_count"] == 1
     assert "content" not in json.dumps(attempt).lower()
     assert report["spend_exposure"] == {
-        "prior_unknown_exposure_usd": "0",
+        "prior_known_cost_usd": "0.0166085",
+        "prior_unknown_exposure_usd": "0.96086",
         "current_known_cost_usd": "0.5",
         "current_retained_exposure_usd": "1.25",
-        "known_actual_cost_usd": "0.5",
-        "retained_unknown_reservation_usd": "1.25",
-        "total_usd": "1.75",
+        "known_actual_cost_usd": "0.5166085",
+        "retained_unknown_reservation_usd": "2.21086",
+        "total_usd": "2.7274685",
     }
