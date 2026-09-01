@@ -1667,6 +1667,17 @@ OPENROUTER_OVERRIDE_CONDITION_FIELDS = frozenset(
         "utc_start",
     }
 )
+OPENROUTER_UTC_DAYS = frozenset(
+    {
+        "monday",
+        "tuesday",
+        "wednesday",
+        "thursday",
+        "friday",
+        "saturday",
+        "sunday",
+    }
+)
 
 
 def _is_openrouter_rate_field(field: str) -> bool:
@@ -1685,16 +1696,16 @@ def _validate_openrouter_override_condition(field: str, value: Any) -> None:
             raise ValueError("OpenRouter pricing override condition is malformed")
         return
     if field in {"utc_start", "utc_end"}:
-        if type(value) is int and 0 <= value <= 24:
+        if type(value) is int and 0 <= value <= 2359 and value % 100 < 60:
             return
-        if type(value) is not str or not value or len(value) > 64:
-            raise ValueError("OpenRouter pricing override condition is malformed")
-        return
+        raise ValueError("OpenRouter pricing override condition is malformed")
     if field == "utc_days":
         if (
             not isinstance(value, list)
             or not value
-            or any(type(day) is not int or not 0 <= day <= 6 for day in value)
+            or any(
+                type(day) is not str or day not in OPENROUTER_UTC_DAYS for day in value
+            )
             or len(set(value)) != len(value)
         ):
             raise ValueError("OpenRouter pricing override condition is malformed")
@@ -1744,6 +1755,12 @@ def _validate_openrouter_pricing_document(document: Any) -> PricingSnapshot:
         for override in overrides:
             if not isinstance(override, dict):
                 raise ValueError("OpenRouter pricing override is malformed")
+            has_utc_start = "utc_start" in override
+            has_utc_end = "utc_end" in override
+            if has_utc_start != has_utc_end or (
+                has_utc_start and override["utc_start"] == override["utc_end"]
+            ):
+                raise ValueError("OpenRouter pricing override condition is malformed")
             override_pricing: dict[str, Any] = {}
             conditions = 0
             for key, value in override.items():

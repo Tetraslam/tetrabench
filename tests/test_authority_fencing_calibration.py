@@ -406,9 +406,9 @@ def openrouter_pricing_document() -> dict[str, Any]:
             "request": "0",
         },
         {
-            "utc_start": 0,
-            "utc_end": 24,
-            "utc_days": [0, 1, 2, 3, 4, 5, 6],
+            "utc_start": 1630,
+            "utc_end": 30,
+            "utc_days": ["monday", "tuesday", "wednesday", "thursday", "friday"],
             "input_cache_write": "0.0000045",
         },
     ]
@@ -653,6 +653,77 @@ def test_openrouter_models_rejects_unknown_override_condition() -> None:
     document = openrouter_pricing_document()
     document["data"][0]["pricing"]["overrides"][0]["region"] = "US"
     with pytest.raises(ValueError, match="condition is unknown"):
+        calibration._validate_openrouter_pricing_document(document)
+
+
+@pytest.mark.parametrize("field", ["utc_start", "utc_end"])
+@pytest.mark.parametrize("value", [0, 30, 59, 100, 1630, 2359])
+def test_openrouter_override_accepts_documented_hhmm_boundaries(
+    field: str, value: int
+) -> None:
+    calibration._validate_openrouter_override_condition(field, value)
+
+
+@pytest.mark.parametrize("field", ["utc_start", "utc_end"])
+@pytest.mark.parametrize(
+    "value",
+    [-1, 60, 99, 1260, 2360, 2400, True, 16.5, "1630", None],
+)
+def test_openrouter_override_rejects_malformed_hhmm(field: str, value: Any) -> None:
+    with pytest.raises(ValueError, match="condition is malformed"):
+        calibration._validate_openrouter_override_condition(field, value)
+
+
+def test_openrouter_override_accepts_documented_utc_weekday_spellings() -> None:
+    calibration._validate_openrouter_override_condition(
+        "utc_days",
+        [
+            "monday",
+            "tuesday",
+            "wednesday",
+            "thursday",
+            "friday",
+            "saturday",
+            "sunday",
+        ],
+    )
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        [],
+        ["Monday"],
+        ["mon"],
+        ["monday", "monday"],
+        ["monday", 1],
+        [0, 1, 2, 3, 4, 5, 6],
+        "monday",
+        None,
+    ],
+)
+def test_openrouter_override_rejects_malformed_utc_days(value: Any) -> None:
+    with pytest.raises(ValueError, match="condition is malformed"):
+        calibration._validate_openrouter_override_condition("utc_days", value)
+
+
+@pytest.mark.parametrize(
+    "update",
+    [
+        {"utc_start": 1630},
+        {"utc_end": 30},
+        {"utc_start": 30, "utc_end": 30},
+    ],
+)
+def test_openrouter_models_rejects_incomplete_or_empty_utc_windows(
+    update: dict[str, int],
+) -> None:
+    document = openrouter_pricing_document()
+    override = document["data"][0]["pricing"]["overrides"][1]
+    override.pop("utc_start")
+    override.pop("utc_end")
+    override.update(update)
+    with pytest.raises(ValueError, match="condition is malformed"):
         calibration._validate_openrouter_pricing_document(document)
 
 
@@ -1387,6 +1458,10 @@ def test_openrouter_nonstream_chat_normalizes_prompt_completion_usage() -> None:
                 )[0]
                 == 200
             )
+            deadline = time.monotonic() + 2
+            while not broker.state.records and time.monotonic() < deadline:
+                time.sleep(0.01)
+            assert broker.state.records
             assert broker.state.records[0].usage == {
                 "input_tokens": 2,
                 "output_tokens": 3,
