@@ -396,6 +396,7 @@ class PricingSnapshot:
 @dataclasses.dataclass(frozen=True, slots=True)
 class SettlementResult:
     response_id: str
+    model: str
     cost: Decimal | None
     usage: dict[str, int]
 
@@ -654,6 +655,7 @@ class BrokerState:
         token: str | None,
         probe_token: str | None,
         model: str,
+        canonical_model: str | None = None,
         max_input_tokens: int,
         deadline: float,
         ledger: SpendLedger,
@@ -670,6 +672,7 @@ class BrokerState:
         self._probe_token: str | None = probe_token
         self._probe_consumed = False
         self.model = model
+        self.response_models = frozenset({model, canonical_model or model})
         self.max_input_tokens = max_input_tokens
         self.deadline = deadline
         self.ledger = ledger
@@ -1349,13 +1352,14 @@ def _normalized_usage(
 
 
 def _parse_openrouter_nonstream(
-    body: bytes, *, endpoint: str, expected_model: str
+    body: bytes, *, endpoint: str, expected_models: frozenset[str]
 ) -> SettlementResult:
     document = _strict_json_decimal(body)
     if not isinstance(document, dict):
         raise ValueError("OpenRouter response schema rejected")
     response_id = _response_identifier(document.get("id"))
-    if document.get("model") != expected_model:
+    response_model = _response_identifier(document.get("model"))
+    if response_model not in expected_models:
         raise ValueError("OpenRouter response model mismatch")
     if endpoint == "/v1/responses" and document.get("status") != "completed":
         raise ValueError("OpenRouter response did not complete")
@@ -1366,11 +1370,13 @@ def _parse_openrouter_nonstream(
     cost, usage = _normalized_usage(
         document.get("usage"), endpoint=endpoint, cost_required=False
     )
-    return SettlementResult(response_id=response_id, cost=cost, usage=usage)
+    return SettlementResult(
+        response_id=response_id, model=response_model, cost=cost, usage=usage
+    )
 
 
 def _parse_openrouter_responses_stream(
-    body: bytes, *, expected_model: str
+    body: bytes, *, expected_models: frozenset[str]
 ) -> SettlementResult:
     try:
         text = body.decode("utf-8")
@@ -1421,13 +1427,15 @@ def _parse_openrouter_responses_stream(
         response = document.get("response")
         if not isinstance(response, dict) or response.get("status") != "completed":
             raise ValueError("OpenRouter stream terminal is unsuccessful")
-        if response.get("model") != expected_model:
+        response_model = _response_identifier(response.get("model"))
+        if response_model not in expected_models:
             raise ValueError("OpenRouter response model mismatch")
         cost, usage = _normalized_usage(
             response.get("usage"), endpoint="/v1/responses", cost_required=False
         )
         terminal = SettlementResult(
             response_id=_response_identifier(response.get("id")),
+            model=response_model,
             cost=cost,
             usage=usage,
         )
@@ -1476,7 +1484,6 @@ def _poll_openrouter_generation(
     state: BrokerState,
     *,
     settlement: SettlementResult,
-    expected_model: str,
     streamed: bool,
 ) -> Decimal:
     generation_path = state.backend.generation_path
@@ -1525,7 +1532,7 @@ def _poll_openrouter_generation(
                 return _validate_openrouter_generation(
                     body,
                     expected_id=settlement.response_id,
-                    expected_model=expected_model,
+                    expected_model=settlement.model,
                     expected_streamed=streamed,
                     expected_cost=settlement.cost,
                     expected_usage=settlement.usage,
@@ -1777,6 +1784,15 @@ def _openrouter_pricing_values(pricing: Any) -> dict[str, Decimal]:
     return values
 
 
+def _openrouter_canonical_model(value: Any, *, requested_model: str) -> str:
+    canonical_model = _response_identifier(value)
+    if canonical_model != requested_model and not canonical_model.startswith(
+        f"{requested_model}-"
+    ):
+        raise ValueError("OpenRouter canonical model identity mismatch")
+    return canonical_model
+
+
 def _validate_openrouter_pricing_document(document: Any) -> PricingSnapshot:
     if not isinstance(document, dict) or not isinstance(document.get("data"), list):
         raise ValueError("OpenRouter models response schema rejected")
@@ -1850,8 +1866,12 @@ def _validate_openrouter_pricing_document(document: Any) -> PricingSnapshot:
         )
         if max_output < MAX_OUTPUT_TOKENS:
             raise ValueError("OpenRouter model output limit is below calibration cap")
+        canonical_model = _openrouter_canonical_model(
+            row.get("canonical_slug"), requested_model=model
+        )
         selected[model] = {
             "backend": OPENROUTER_BACKEND.name,
+            "canonical_model": canonical_model,
             "cache_creation_input_token_cost": str(maxima["input_cache_write"]),
             "cache_read_input_token_cost": str(maxima["input_cache_read"]),
             "input_cost_per_token": str(maxima["prompt"]),
@@ -2870,7 +2890,7 @@ class CalibrationBrokerHandler(BaseHTTPRequestHandler):
                 if stream:
                     if state.backend.name == OPENROUTER_BACKEND.name:
                         openrouter_settlement = _parse_openrouter_responses_stream(
-                            response_body, expected_model=state.model
+                            response_body, expected_models=state.response_models
                         )
                         if (
                             request_id is not None
@@ -2883,7 +2903,6 @@ class CalibrationBrokerHandler(BaseHTTPRequestHandler):
                         cost = _poll_openrouter_generation(
                             state,
                             settlement=openrouter_settlement,
-                            expected_model=state.model,
                             streamed=True,
                         )
                         usage = openrouter_settlement.usage
@@ -2891,7 +2910,9 @@ class CalibrationBrokerHandler(BaseHTTPRequestHandler):
                         cost, usage = _parse_responses_stream(response_body)
                 elif state.backend.name == OPENROUTER_BACKEND.name:
                     openrouter_settlement = _parse_openrouter_nonstream(
-                        response_body, endpoint=endpoint, expected_model=state.model
+                        response_body,
+                        endpoint=endpoint,
+                        expected_models=state.response_models,
                     )
                     if (
                         request_id is not None
@@ -2902,7 +2923,6 @@ class CalibrationBrokerHandler(BaseHTTPRequestHandler):
                     cost = _poll_openrouter_generation(
                         state,
                         settlement=openrouter_settlement,
-                        expected_model=state.model,
                         streamed=False,
                     )
                     usage = openrouter_settlement.usage
@@ -2989,6 +3009,7 @@ class CalibrationBroker:
         port: int,
         parent_key: str,
         model: str,
+        canonical_model: str | None = None,
         ledger: SpendLedger,
         backend: BackendContract = LITELLM_BACKEND,
         max_input_tokens: int = MAX_BODY_BYTES,
@@ -3011,6 +3032,7 @@ class CalibrationBroker:
             token=None if inactive else self.token,
             probe_token=probe_token,
             model=model,
+            canonical_model=canonical_model,
             max_input_tokens=max_input_tokens,
             deadline=time.monotonic() + timeout,
             ledger=ledger,
@@ -3079,7 +3101,7 @@ def _validate_broker_pricing_binding(
     backend: BackendContract = LITELLM_BACKEND,
     pricing_backend: str | None = None,
     pricing_source: str | None = None,
-) -> None:
+) -> dict[str, Any]:
     if pricing_backend not in {None, backend.name} or pricing_source not in {
         None,
         backend.pricing_path,
@@ -3095,6 +3117,12 @@ def _validate_broker_pricing_binding(
     selected = [item for item in models if item.get("model_group") == model]
     if len(selected) != 1 or selected[0].get("max_input_tokens") != max_input_tokens:
         raise ValueError("broker pricing model binding mismatch")
+    model_pricing = selected[0]
+    if backend.name == OPENROUTER_BACKEND.name:
+        _openrouter_canonical_model(
+            model_pricing.get("canonical_model"), requested_model=model
+        )
+    return model_pricing
 
 
 def _broker_child_main(argv: list[str]) -> int:
@@ -3114,7 +3142,7 @@ def _broker_child_main(argv: list[str]) -> int:
     args = parser.parse_args(argv)
     backend = BACKENDS[args.backend]
     models = strict_json(args.pricing_json.encode())
-    _validate_broker_pricing_binding(
+    model_pricing = _validate_broker_pricing_binding(
         models,
         args.pricing_sha256,
         args.model,
@@ -3141,6 +3169,7 @@ def _broker_child_main(argv: list[str]) -> int:
         token=None,
         probe_token=probe_token,
         model=args.model,
+        canonical_model=model_pricing.get("canonical_model"),
         ledger=SpendLedger(Decimal(args.budget_cap)),
         backend=backend,
         max_input_tokens=args.max_input_tokens,

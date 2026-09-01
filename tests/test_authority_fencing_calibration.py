@@ -278,12 +278,15 @@ def running_broker(
     max_input_tokens: int = calibration.MAX_BODY_BYTES,
     debug_deny_upstream: bool = False,
     backend: calibration.BackendContract = calibration.LITELLM_BACKEND,
+    model: str = "openai/gpt-5.6-sol",
+    canonical_model: str | None = None,
 ):
     broker = calibration.CalibrationBroker(
         host="127.0.0.1",
         port=0,
         parent_key=TEST_PARENT_KEY,
-        model="openai/gpt-5.6-sol",
+        model=model,
+        canonical_model=canonical_model,
         ledger=ledger or calibration.SpendLedger(),
         backend=backend,
         max_input_tokens=max_input_tokens,
@@ -436,12 +439,14 @@ def openrouter_pricing_document() -> dict[str, Any]:
         "data": [
             {
                 "id": "openai/gpt-5.6-sol",
+                "canonical_slug": "openai/gpt-5.6-sol-20260709",
                 "context_length": 400000,
                 "top_provider": {"max_completion_tokens": 128000},
                 "pricing": target,
             },
             {
                 "id": "anthropic/claude-sonnet-5",
+                "canonical_slug": "anthropic/claude-sonnet-5-20260630",
                 "context_length": 1000000,
                 "top_provider": {"max_completion_tokens": 128000},
                 "pricing": base,
@@ -623,6 +628,7 @@ def test_openrouter_models_pricing_preserves_base_path_and_takes_override_maxima
         "backend": "openrouter",
         "cache_creation_input_token_cost": "0.000005",
         "cache_read_input_token_cost": "4E-7",
+        "canonical_model": "openai/gpt-5.6-sol-20260709",
         "input_cost_per_token": "0.000004",
         "max_input_tokens": 400000,
         "max_output_tokens": 128000,
@@ -631,6 +637,31 @@ def test_openrouter_models_pricing_preserves_base_path_and_takes_override_maxima
         "pricing_source": "/models",
     }
     assert snapshot.models[1]["cache_creation_input_token_cost"] == "0.000004"
+    assert snapshot.models[1]["canonical_model"] == (
+        "anthropic/claude-sonnet-5-20260630"
+    )
+
+
+@pytest.mark.parametrize("model_index", [0, 1])
+@pytest.mark.parametrize(
+    "canonical_slug",
+    [None, "", "contains whitespace", 1],
+)
+def test_openrouter_models_rejects_missing_or_malformed_canonical_slug(
+    model_index: int, canonical_slug: Any
+) -> None:
+    document = openrouter_pricing_document()
+    document["data"][model_index]["canonical_slug"] = canonical_slug
+    with pytest.raises(ValueError, match="identifier is malformed"):
+        calibration._validate_openrouter_pricing_document(document)
+
+
+@pytest.mark.parametrize("model_index", [0, 1])
+def test_openrouter_models_rejects_mismatched_canonical_slug(model_index: int) -> None:
+    document = openrouter_pricing_document()
+    document["data"][model_index]["canonical_slug"] = "other/provider-model-20260101"
+    with pytest.raises(ValueError, match="canonical model identity mismatch"):
+        calibration._validate_openrouter_pricing_document(document)
 
 
 @pytest.mark.parametrize(
@@ -937,6 +968,32 @@ def test_broker_pricing_binding_requires_exact_host_snapshot_and_model() -> None
     with pytest.raises(ValueError, match="model binding mismatch"):
         calibration._validate_broker_pricing_binding(
             models, snapshot.sha256, "openai/gpt-5.6-sol", 199999
+        )
+
+
+def test_openrouter_broker_binding_requires_signed_canonical_model() -> None:
+    snapshot = calibration._validate_openrouter_pricing_document(
+        openrouter_pricing_document()
+    )
+    models = [dict(item) for item in snapshot.models]
+    selected = calibration._validate_broker_pricing_binding(
+        models,
+        snapshot.sha256,
+        "openai/gpt-5.6-sol",
+        400000,
+        calibration.OPENROUTER_BACKEND,
+    )
+    assert selected["canonical_model"] == "openai/gpt-5.6-sol-20260709"
+
+    models[0].pop("canonical_model")
+    digest = hashlib.sha256(calibration.canonical(models).encode()).hexdigest()
+    with pytest.raises(ValueError, match="identifier is malformed"):
+        calibration._validate_broker_pricing_binding(
+            models,
+            digest,
+            "openai/gpt-5.6-sol",
+            400000,
+            calibration.OPENROUTER_BACKEND,
         )
 
 
@@ -1548,13 +1605,82 @@ def test_openrouter_stream_accepts_data_only_or_matching_event_with_comments(
             assert ledger.cost == Decimal("0.00007")
 
 
+@pytest.mark.parametrize(
+    ("model", "canonical_model"),
+    [
+        ("openai/gpt-5.6-sol", "openai/gpt-5.6-sol-20260709"),
+        (
+            "anthropic/claude-sonnet-5",
+            "anthropic/claude-sonnet-5-20260630",
+        ),
+    ],
+)
+def test_openrouter_stream_settles_provider_declared_canonical_model(
+    model: str, canonical_model: str
+) -> None:
+    body = openrouter_responses_sse(model=canonical_model)
+    with fake_upstream(
+        headers=[("Content-Type", "text/event-stream")],
+        body=body,
+        queued_get_responses=[
+            (
+                HTTPStatus.OK,
+                [("Content-Type", "application/json")],
+                openrouter_generation(model=canonical_model),
+            )
+        ],
+    ) as upstream:
+        ledger = calibration.SpendLedger()
+        with running_broker(
+            upstream,
+            ledger=ledger,
+            backend=calibration.OPENROUTER_BACKEND,
+            model=model,
+            canonical_model=canonical_model,
+        ) as broker:
+            status, _headers, returned = request(
+                broker,
+                document={"model": model, "input": "redacted", "stream": True},
+            )
+    assert status == HTTPStatus.OK
+    assert returned == body
+    assert ledger.cost == Decimal("0.00007")
+
+
+def test_openrouter_stream_rejects_model_outside_signed_alias_binding() -> None:
+    with fake_upstream(
+        headers=[("Content-Type", "text/event-stream")],
+        body=openrouter_responses_sse(model="other/provider-model-20260101"),
+    ) as upstream:
+        ledger = calibration.SpendLedger()
+        with running_broker(
+            upstream,
+            ledger=ledger,
+            backend=calibration.OPENROUTER_BACKEND,
+            canonical_model="openai/gpt-5.6-sol-20260709",
+        ) as broker:
+            status, _headers, _body = request(
+                broker,
+                document={
+                    "model": "openai/gpt-5.6-sol",
+                    "input": "redacted",
+                    "stream": True,
+                },
+            )
+    assert status == HTTPStatus.BAD_GATEWAY
+    assert ledger.fatal is not None
+    assert ledger.cost == 0
+    assert ledger.reserved > 0
+    assert [item["path"] for item in upstream.requests] == ["/api/v1/responses"]
+
+
 def test_openrouter_stream_rejects_mismatched_optional_event_type() -> None:
     body = openrouter_responses_sse().replace(
         b"event: response.completed", b"event: response.created"
     )
     with pytest.raises(ValueError, match="event is malformed"):
         calibration._parse_openrouter_responses_stream(
-            body, expected_model="openai/gpt-5.6-sol"
+            body, expected_models=frozenset({"openai/gpt-5.6-sol"})
         )
 
 
@@ -1588,7 +1714,7 @@ def test_openrouter_stream_rejects_missing_trailing_duplicate_or_malformed_frame
 ) -> None:
     with pytest.raises(ValueError):
         calibration._parse_openrouter_responses_stream(
-            body, expected_model="openai/gpt-5.6-sol"
+            body, expected_models=frozenset({"openai/gpt-5.6-sol"})
         )
 
 
@@ -1716,7 +1842,7 @@ def test_openrouter_nonstream_rejects_cross_endpoint_usage_fields(
         calibration._parse_openrouter_nonstream(
             json.dumps(document).encode(),
             endpoint=endpoint,
-            expected_model="openai/gpt-5.6-sol",
+            expected_models=frozenset({"openai/gpt-5.6-sol"}),
         )
 
 

@@ -1226,3 +1226,19 @@ D-106 adds `--prior-known-cost-usd` beside `--prior-unknown-exposure-usd`. Their
 Provenance: 376 focused calibration tests; full 1,125-test Python 3.12 run; isolated descendant-reaping rerun; Ruff, format, ty, Bandit, wheel/sdist build, and diff checks. No provider call occurred.
 
 The preceding E-101 entry is superseded where it says local validation is pending. All focused calibration, lint, format, type, security, and package checks pass. The full suite passed 1,124 tests and hit the existing descendant-reaping timing failure under suite load; that exact test passed immediately in isolation. Hosted CI remains the clean full-parity authority. No paid retry is permitted before PR, review, and hosted validation pass.
+
+## 2026-09-01T12:46:16-07:00: E-102 canonical OpenRouter model binding
+
+Provenance: merged revision `2a83068`; post-merge GitHub Actions run `33547357206`; exact-four retry 3 bounded private report; authenticated OpenRouter `/generation` lookup; live authenticated `/models` canonical slugs supplied in session context; private canonical reconciliation record; fake OpenRouter regressions; local Python 3.12 validation. No additional provider completion occurred during implementation or validation.
+
+Retry 3 admitted `$6.005632875` per attempt and made one target `/v1/responses` request. OpenRouter returned canonical model `openai/gpt-5.6-sol-20260709` for requested alias `openai/gpt-5.6-sol`; the old exact-alias terminal comparison rejected settlement, retained `$0.96086`, stopped the remaining attempts, completed cleanup, and wrote no proof. Authenticated `/generation` identifies that request as streamed, 7,415 prompt tokens, 85 completion tokens, `tool_calls`, and exact cost `$0.0165085`. The private generation identity remains only in `authority-fencing-openrouter-reconciliation-20260901-r3.json`, mode `0600`, 430 bytes, SHA-256 `a68bd17459a7463cfbab056f31c639414b4fdc392194947bbc36005d02e4cb92`. The bounded retry report is mode `0600`, 4,844 bytes, SHA-256 `0f236e56c1258b313b1f4227c6e0f596203ac2cc21865b6db57d95ef1c18852e`.
+
+D-107 requires each selected authenticated `/models` row to provide a bounded printable `canonical_slug` in the requested alias family. That exact value enters the signed pricing snapshot and broker binding. OpenRouter terminal settlement accepts only the requested alias or that exact canonical value, while `/generation` must repeat the terminal model exactly. Missing, malformed, and cross-model canonical mappings fail before attempts. Both selected aliases have regression coverage. Cumulative prior accounting is `$0.033117` known OpenRouter cost plus `$0.96086` unknown LiteLLM exposure, total `$0.993977`; four allocations are `$6.00150575`, above the `$5.90248` worst-case reservation.
+
+All 390 focused calibration, 1,129 non-Docker, and ten required Docker tests pass. Ruff check/format, ty, Bandit, `uv lock --check`, and wheel/sdist build pass. PR, review, and hosted validation remain pending; no paid retry is permitted before they pass.
+
+## 2026-09-01T13:23:07-07:00: E-102 hosted validation correction
+
+Provenance: PR 7 at implementation commit `4d51af3`; GitHub Actions run `33553667777`; GitHub PR checks, review, comments, and mergeability inspection. No provider call occurred.
+
+The preceding E-102 entry is superseded where it says hosted validation is pending. Python 3.12 release parity and the independent full-history secret scan passed. GitHub reports no configured, requested, or posted automatic review and a cleanly mergeable PR. Merge and post-merge CI remain pending; no paid retry is permitted before both pass.
