@@ -1242,3 +1242,19 @@ All 390 focused calibration, 1,129 non-Docker, and ten required Docker tests pas
 Provenance: PR 7 at implementation commit `4d51af3`; GitHub Actions run `33553667777`; GitHub PR checks, review, comments, and mergeability inspection. No provider call occurred.
 
 The preceding E-102 entry is superseded where it says hosted validation is pending. Python 3.12 release parity and the independent full-history secret scan passed. GitHub reports no configured, requested, or posted automatic review and a cleanly mergeable PR. Merge and post-merge CI remain pending; no paid retry is permitted before both pass.
+
+## 2026-09-01T14:00:58-07:00: E-103 OpenRouter generation identity domains
+
+Provenance: merged revision `87393d5`; PR 7 and post-merge GitHub Actions runs `33555142213` and `33556180641`; exact-four retry 4 bounded private report; authenticated OpenRouter `/generation`; current OpenRouter Responses, generation, and streaming API documentation; private raw and canonical reconciliation evidence; fake-provider regressions. No additional provider completion occurred during implementation or validation.
+
+Retry 4 used cumulative priors `$0.033117` known and `$0.96086` unknown, admitted `$6.00150575` per attempt, and made one target `/v1/responses` request. The request returned HTTP 200 with an `X-Generation-Id` and a distinct terminal Responses ID. The old D-105 equality check rejected before generation polling, retained `$0.96086`, stopped the remaining attempts, completed cleanup, and wrote no proof. Authenticated `/generation` proves the retained header equals generation `data.id`, not `data.request_id`; its separate `data.upstream_id` is a Responses identity. The record reports canonical model `openai/gpt-5.6-sol-20260709`, streamed and not cancelled, 7,415 prompt tokens, 227 completion tokens, `tool_calls`, and exact cost `$0.0163585`.
+
+D-108 binds the two domains independently. A present generation header selects `/generation` and must equal `data.id`; the terminal response ID must equal `data.upstream_id`. Existing exact model, stream, cost, and normalized-token checks remain. Missing-header fixtures retain terminal-ID lookup without claiming a cross-domain binding. Both stream and nonstream regressions prove distinct-ID success and upstream-ID mismatch retention. Private reconciliation `authority-fencing-openrouter-reconciliation-20260901-r4.json` is mode `0600`, 622 bytes, SHA-256 `681e337e007e36ac2f48a9f733a14c5f5600f930738bf3568edb500a6efef213`. The bounded retry report is mode `0600`, 4,937 bytes, SHA-256 `1c99f3b0091cfc57328a9321bb7c212fe59bda13d51bfac2d6f26bad7dacdf71`; the private authenticated generation response is mode `0600`, 1,586 bytes, SHA-256 `c649362699570f5a51178bd899b739058ea60ef47acd6e0d64cde3a1477d98af`.
+
+Retry 4's `$0.96086` reservation is superseded by `$0.0163585` known actual cost. Cumulative prior accounting is `$0.0494755` known OpenRouter cost plus `$0.96086` unknown LiteLLM exposure, total `$1.0103355`; four allocations are `$5.997416125`, above the `$5.90248` worst-case request. Focused identity regressions, Ruff format/check, and ty pass. Full local, PR, review, and hosted parity remain pending; no paid retry is permitted before they pass.
+
+## 2026-09-01T14:12:58-07:00: E-103 local validation correction
+
+Provenance: 392 focused calibration tests; 1,131 non-Docker tests; ten required real-Docker tests; Ruff, format, ty, Bandit, lock, package, and diff checks. No provider call occurred.
+
+The preceding E-103 entry is superseded where it says full local validation is pending. All local release and Docker gates pass. PR, review, and hosted parity remain pending; no paid retry is permitted before they pass.
