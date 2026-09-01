@@ -395,7 +395,7 @@ class PricingSnapshot:
 @dataclasses.dataclass(frozen=True, slots=True)
 class SettlementResult:
     response_id: str
-    cost: Decimal
+    cost: Decimal | None
     usage: dict[str, int]
 
 
@@ -1295,18 +1295,28 @@ def _response_identifier(value: Any) -> str:
     return value
 
 
-def _normalized_usage(value: Any) -> tuple[Decimal, dict[str, int]]:
+def _normalized_usage(
+    value: Any, *, endpoint: str, cost_required: bool = True
+) -> tuple[Decimal | None, dict[str, int]]:
     if not isinstance(value, dict):
         raise ValueError("model terminal usage is missing")
+    if endpoint == "/v1/responses":
+        input_field, output_field = "input_tokens", "output_tokens"
+    elif endpoint == "/v1/chat/completions":
+        input_field, output_field = "prompt_tokens", "completion_tokens"
+    else:
+        raise ValueError("model terminal usage endpoint is unsupported")
     usage = {
-        name: _usage_token_count(value.get(name))
-        for name in ("input_tokens", "output_tokens", "total_tokens")
+        "input_tokens": _usage_token_count(value.get(input_field)),
+        "output_tokens": _usage_token_count(value.get(output_field)),
+        "total_tokens": _usage_token_count(value.get("total_tokens")),
     }
     if usage["total_tokens"] != usage["input_tokens"] + usage["output_tokens"]:
         raise ValueError("model terminal token usage is incoherent")
-    if "cost" not in value:
+    if "cost" not in value and cost_required:
         raise ValueError("model terminal cost is missing")
-    return _stream_cost(value["cost"]), usage
+    cost = _stream_cost(value["cost"]) if "cost" in value else None
+    return cost, usage
 
 
 def _parse_openrouter_nonstream(
@@ -1324,7 +1334,9 @@ def _parse_openrouter_nonstream(
         document.get("choices"), list
     ):
         raise ValueError("OpenRouter chat response is malformed")
-    cost, usage = _normalized_usage(document.get("usage"))
+    cost, usage = _normalized_usage(
+        document.get("usage"), endpoint=endpoint, cost_required=False
+    )
     return SettlementResult(response_id=response_id, cost=cost, usage=usage)
 
 
@@ -1339,37 +1351,52 @@ def _parse_openrouter_responses_stream(
     if "\r" in normalized or not normalized.endswith("\n\n"):
         raise ValueError("OpenRouter stream framing is malformed")
     blocks = normalized[:-2].split("\n\n")
-    if len(blocks) < 2 or blocks[-1] != "data: [DONE]":
-        raise ValueError("OpenRouter stream completion marker is missing")
-    terminal: SettlementResult | None = None
-    for index, block in enumerate(blocks[:-1]):
+    frames: list[tuple[str | None, str]] = []
+    for block in blocks:
+        if not block:
+            continue
         event_values: list[str] = []
         data_values: list[str] = []
         for line in block.split("\n"):
+            if line.startswith(":"):
+                continue
             if line.startswith("event: "):
                 event_values.append(line[7:])
             elif line.startswith("data: "):
                 data_values.append(line[6:])
             else:
                 raise ValueError("OpenRouter stream framing is malformed")
-        if len(event_values) != 1 or len(data_values) != 1:
+        if not event_values and not data_values:
+            continue
+        if len(event_values) > 1 or len(data_values) != 1:
             raise ValueError("OpenRouter stream framing is ambiguous")
-        event_type = event_values[0]
-        document = _strict_json_decimal(data_values[0].encode())
-        if not isinstance(document, dict) or document.get("type") != event_type:
+        frames.append((event_values[0] if event_values else None, data_values[0]))
+    if not frames or frames[-1] != (None, "[DONE]"):
+        raise ValueError("OpenRouter stream completion marker is missing")
+    terminal: SettlementResult | None = None
+    for index, (declared_event_type, data) in enumerate(frames[:-1]):
+        if data == "[DONE]":
+            raise ValueError("OpenRouter stream completion marker is ambiguous")
+        document = _strict_json_decimal(data.encode())
+        if not isinstance(document, dict) or type(document.get("type")) is not str:
+            raise ValueError("OpenRouter stream event is malformed")
+        event_type = document["type"]
+        if declared_event_type is not None and declared_event_type != event_type:
             raise ValueError("OpenRouter stream event is malformed")
         if event_type in {"response.failed", "response.incomplete"}:
             raise ValueError("OpenRouter stream did not complete")
         if event_type != "response.completed":
             continue
-        if terminal is not None or index != len(blocks) - 2:
+        if terminal is not None or index != len(frames) - 2:
             raise ValueError("OpenRouter stream terminal is ambiguous")
         response = document.get("response")
         if not isinstance(response, dict) or response.get("status") != "completed":
             raise ValueError("OpenRouter stream terminal is unsuccessful")
         if response.get("model") != expected_model:
             raise ValueError("OpenRouter response model mismatch")
-        cost, usage = _normalized_usage(response.get("usage"))
+        cost, usage = _normalized_usage(
+            response.get("usage"), endpoint="/v1/responses", cost_required=False
+        )
         terminal = SettlementResult(
             response_id=_response_identifier(response.get("id")),
             cost=cost,
@@ -1386,9 +1413,9 @@ def _validate_openrouter_generation(
     expected_id: str,
     expected_model: str,
     expected_streamed: bool,
-    expected_cost: Decimal,
+    expected_cost: Decimal | None,
     expected_usage: Mapping[str, int],
-) -> None:
+) -> Decimal:
     document = _strict_json_decimal(body)
     if not isinstance(document, dict) or not isinstance(document.get("data"), dict):
         raise ValueError("OpenRouter generation schema rejected")
@@ -1401,7 +1428,9 @@ def _validate_openrouter_generation(
         raise ValueError("OpenRouter generation identity mismatch")
     total_cost = _stream_cost(generation.get("total_cost"))
     usage_cost = _stream_cost(generation.get("usage"))
-    if total_cost != expected_cost or usage_cost != expected_cost:
+    if usage_cost != total_cost or (
+        expected_cost is not None and total_cost != expected_cost
+    ):
         raise ValueError("OpenRouter generation cost mismatch")
     prompt = _usage_token_count(generation.get("tokens_prompt"))
     completion = _usage_token_count(generation.get("tokens_completion"))
@@ -1411,6 +1440,7 @@ def _validate_openrouter_generation(
         "total_tokens": prompt + completion,
     } != dict(expected_usage):
         raise ValueError("OpenRouter generation token usage mismatch")
+    return total_cost
 
 
 def _poll_openrouter_generation(
@@ -1419,7 +1449,7 @@ def _poll_openrouter_generation(
     settlement: SettlementResult,
     expected_model: str,
     streamed: bool,
-) -> None:
+) -> Decimal:
     generation_path = state.backend.generation_path
     if generation_path is None:
         raise ValueError("backend generation adapter is missing")
@@ -1453,7 +1483,7 @@ def _poll_openrouter_generation(
                 if time.monotonic() + SETTLEMENT_POLL_SECONDS >= deadline:
                     raise TimeoutError("OpenRouter generation settlement timed out")
             elif response.status == HTTPStatus.OK:
-                _validate_openrouter_generation(
+                return _validate_openrouter_generation(
                     body,
                     expected_id=settlement.response_id,
                     expected_model=expected_model,
@@ -1461,7 +1491,6 @@ def _poll_openrouter_generation(
                     expected_cost=settlement.cost,
                     expected_usage=settlement.usage,
                 )
-                return
             else:
                 raise ValueError("OpenRouter generation request failed")
         finally:
@@ -1612,18 +1641,75 @@ def _validate_pricing_document(document: Any) -> PricingSnapshot:
     )
 
 
+OPENROUTER_RATE_FIELDS = frozenset(
+    {"prompt", "completion", "input_cache_read", "input_cache_write"}
+)
+OPENROUTER_UNSUPPORTED_PRICE_FIELDS = frozenset(
+    {
+        "audio",
+        "image",
+        "input_audio",
+        "internal_reasoning",
+        "output_audio",
+        "request",
+        "web_search",
+    }
+)
+OPENROUTER_OVERRIDE_CONDITION_FIELDS = frozenset(
+    {
+        "context_length",
+        "max_tokens",
+        "min_prompt_tokens",
+        "min_tokens",
+        "threshold",
+        "utc_days",
+        "utc_end",
+        "utc_start",
+    }
+)
+
+
+def _is_openrouter_rate_field(field: str) -> bool:
+    return field in OPENROUTER_RATE_FIELDS or field.startswith("input_cache_write_")
+
+
+def _validate_openrouter_override_condition(field: str, value: Any) -> None:
+    if field in {
+        "context_length",
+        "max_tokens",
+        "min_prompt_tokens",
+        "min_tokens",
+        "threshold",
+    }:
+        if type(value) is not int or value < 0:
+            raise ValueError("OpenRouter pricing override condition is malformed")
+        return
+    if field in {"utc_start", "utc_end"}:
+        if type(value) is int and 0 <= value <= 24:
+            return
+        if type(value) is not str or not value or len(value) > 64:
+            raise ValueError("OpenRouter pricing override condition is malformed")
+        return
+    if field == "utc_days":
+        if (
+            not isinstance(value, list)
+            or not value
+            or any(type(day) is not int or not 0 <= day <= 6 for day in value)
+            or len(set(value)) != len(value)
+        ):
+            raise ValueError("OpenRouter pricing override condition is malformed")
+        return
+    raise ValueError("OpenRouter pricing override condition is unknown")
+
+
 def _openrouter_pricing_values(pricing: Any) -> dict[str, Decimal]:
     if not isinstance(pricing, dict):
         raise ValueError("OpenRouter model pricing is missing")
-    allowed = {
-        "prompt",
-        "completion",
-        "input_cache_read",
-        "overrides",
-    }
     for field, value in pricing.items():
-        if field in allowed or field.startswith("input_cache_write"):
+        if field == "overrides" or _is_openrouter_rate_field(field):
             continue
+        if field not in OPENROUTER_UNSUPPORTED_PRICE_FIELDS:
+            raise ValueError("OpenRouter unknown pricing field rejected")
         if _nonnegative_decimal(value, field) != 0:
             raise ValueError("OpenRouter unsupported paid pricing is nonzero")
     required = ("prompt", "completion", "input_cache_read", "input_cache_write")
@@ -1658,19 +1744,20 @@ def _validate_openrouter_pricing_document(document: Any) -> PricingSnapshot:
         for override in overrides:
             if not isinstance(override, dict):
                 raise ValueError("OpenRouter pricing override is malformed")
-            override_pricing = override.get("pricing", override)
-            if override_pricing is override:
-                override_pricing = {
-                    key: value
-                    for key, value in override.items()
-                    if key
-                    not in {
-                        "context_length",
-                        "max_tokens",
-                        "min_tokens",
-                        "threshold",
-                    }
-                }
+            override_pricing: dict[str, Any] = {}
+            conditions = 0
+            for key, value in override.items():
+                if key in OPENROUTER_OVERRIDE_CONDITION_FIELDS:
+                    _validate_openrouter_override_condition(key, value)
+                    conditions += 1
+                elif _is_openrouter_rate_field(key) or key in (
+                    OPENROUTER_UNSUPPORTED_PRICE_FIELDS
+                ):
+                    override_pricing[key] = value
+                else:
+                    raise ValueError("OpenRouter pricing override condition is unknown")
+            if conditions == 0 or not override_pricing:
+                raise ValueError("OpenRouter pricing override is malformed")
             merged_pricing = {
                 key: value for key, value in base_pricing.items() if key != "overrides"
             }
@@ -2319,6 +2406,9 @@ TEXT_CONTENT_TYPES = frozenset({"text", "input_text", "output_text"})
 TOOL_CONTENT_TYPES = frozenset(
     {"tool_call", "tool_result", "function_call", "function_call_output"}
 )
+UNRESERVED_PROVIDER_FIELDS = frozenset(
+    {"models", "plugins", "provider", "route", "transforms", "websearchoptions"}
+)
 
 
 def _reject_media_fields(value: Any, *, within_content: bool = False) -> None:
@@ -2389,6 +2479,20 @@ def _validate_responses_content(document: dict[str, Any]) -> None:
         _reject_media_fields(item, within_content=True)
 
 
+def _validate_client_function_tools(document: dict[str, Any]) -> None:
+    tools = document.get("tools")
+    if tools is None:
+        return
+    if not isinstance(tools, list) or not tools:
+        raise ValueError("broker tools rejected")
+    for tool in tools:
+        if not isinstance(tool, dict) or tool.get("type") != "function":
+            raise ValueError("broker server-side tool rejected")
+    tool_choice = document.get("tool_choice")
+    if isinstance(tool_choice, dict) and tool_choice.get("type") != "function":
+        raise ValueError("broker server-side tool choice rejected")
+
+
 def _reservation_for_body(body: bytes) -> Decimal:
     """Reserve from UTF-8 bytes: tokenizers byte-fallback to at most one token/byte."""
     return (
@@ -2396,6 +2500,34 @@ def _reservation_for_body(body: bytes) -> Decimal:
         + Decimal(MAX_OUTPUT_TOKENS) * MAX_OUTPUT_COST_PER_TOKEN
         + RESERVATION_SAFETY_MARGIN
     )
+
+
+def _deterministic_budget_split(
+    available_budget: Decimal, attempt_count: int
+) -> tuple[Decimal, ...]:
+    allocation = available_budget / Decimal(attempt_count)
+    allocations = [allocation] * (attempt_count - 1)
+    allocations.append(available_budget - sum(allocations, start=Decimal(0)))
+    return tuple(allocations)
+
+
+def _allocate_attempt_budgets(
+    available_budget: Decimal, *, attempts_per_profile: int
+) -> tuple[Decimal, ...]:
+    attempt_count = attempts_per_profile * len(PROFILE_CONTRACTS)
+    if (
+        not available_budget.is_finite()
+        or available_budget < 0
+        or attempts_per_profile not in {1, 2}
+    ):
+        raise ValueError("calibration attempt allocation input rejected")
+    allocations = _deterministic_budget_split(available_budget, attempt_count)
+    worst_request = _reservation_for_body(b"x" * MAX_BODY_BYTES)
+    if any(item < worst_request for item in allocations):
+        raise RuntimeError("attempt allocation cannot cover one worst-case request")
+    if sum(allocations, start=Decimal(0)) != available_budget:
+        raise RuntimeError("attempt allocations do not equal available budget")
+    return allocations
 
 
 def _validate_request(
@@ -2428,11 +2560,14 @@ def _validate_request(
     if not isinstance(document, dict) or document.get("model") != state.model:
         raise ValueError("broker model rejected")
     normalized_fields = {_normalized_field(field): field for field in document}
+    if UNRESERVED_PROVIDER_FIELDS & set(normalized_fields):
+        raise ValueError("broker unreserved provider control rejected")
     forbidden_multiplicity = MULTIPLICITY_FIELDS & set(normalized_fields)
     if forbidden_multiplicity:
         raise ValueError("broker multiplicity field rejected")
     if any(normalized in FORBIDDEN_MEDIA_FIELDS for normalized in normalized_fields):
         raise ValueError("broker non-text modality rejected")
+    _validate_client_function_tools(document)
     stream = document.get("stream", False)
     if type(stream) is not bool:
         raise ValueError("broker stream mode rejected")
@@ -2673,13 +2808,12 @@ class CalibrationBrokerHandler(BaseHTTPRequestHandler):
                         openrouter_settlement = _parse_openrouter_responses_stream(
                             response_body, expected_model=state.model
                         )
-                        _poll_openrouter_generation(
+                        cost = _poll_openrouter_generation(
                             state,
                             settlement=openrouter_settlement,
                             expected_model=state.model,
                             streamed=True,
                         )
-                        cost = openrouter_settlement.cost
                         usage = openrouter_settlement.usage
                         request_id = openrouter_settlement.response_id
                     else:
@@ -2688,13 +2822,12 @@ class CalibrationBrokerHandler(BaseHTTPRequestHandler):
                     openrouter_settlement = _parse_openrouter_nonstream(
                         response_body, endpoint=endpoint, expected_model=state.model
                     )
-                    _poll_openrouter_generation(
+                    cost = _poll_openrouter_generation(
                         state,
                         settlement=openrouter_settlement,
                         expected_model=state.model,
                         streamed=False,
                     )
-                    cost = openrouter_settlement.cost
                     usage = openrouter_settlement.usage
                     request_id = openrouter_settlement.response_id
                 if cost is None:
@@ -4017,11 +4150,13 @@ def _started_attempt(
     ordinal: int,
     profile: str,
     model_group: str,
+    allocation_usd: Decimal = MAX_TOTAL_COST,
     debug_deny_upstream: bool = False,
 ) -> dict[str, Any]:
     empty_sha256 = hashlib.sha256(b"").hexdigest()
     return {
         "admissible": False,
+        "allocation_usd": str(allocation_usd),
         "broker": {
             "locked_endpoint": None,
             "request_count": 0,
@@ -4055,6 +4190,7 @@ def _started_attempt(
         "phases": _new_phase_evidence(),
         "profile": profile,
         "spend": {
+            "exposure_authority": "preactivation_zero",
             "known_actual_cost_usd": "0",
             "retained_unknown_reservation_usd": "0",
             "total_exposure_usd": "0",
@@ -4089,6 +4225,7 @@ def _broker_attempt_evidence(
             },
         },
         {
+            "exposure_authority": "broker_ledger",
             "known_actual_cost_usd": str(known),
             "retained_unknown_reservation_usd": str(retained),
             "total_exposure_usd": str(known + retained),
@@ -4108,6 +4245,73 @@ def _mark_attempt_failed(
     attempt["admissible"] = False
     attempt["failure"] = _failure_evidence(error)
     attempt["outcome"] = "failed"
+
+
+def _ledger_spend_evidence(document: Any, *, allocation: Decimal) -> dict[str, str]:
+    if not isinstance(document, dict):
+        raise ValueError("broker ledger is malformed")
+    request_count = document.get("request_count")
+    requests = document.get("requests")
+    if (
+        document.get("schema_version") != 1
+        or type(document.get("active")) is not bool
+        or type(document.get("activated")) is not bool
+        or type(request_count) is not int
+        or not 0 <= request_count <= MAX_REQUESTS
+        or not isinstance(requests, list)
+        or len(requests) != request_count
+        or not all(isinstance(request, dict) for request in requests)
+        or (
+            document.get("fatal") is not None and type(document.get("fatal")) is not str
+        )
+        or type(document.get("known_actual_cost_usd")) is not str
+        or type(document.get("retained_unknown_reservation_usd")) is not str
+    ):
+        raise ValueError("broker ledger is malformed")
+    try:
+        known = Decimal(document["known_actual_cost_usd"])
+        retained = Decimal(document["retained_unknown_reservation_usd"])
+    except (InvalidOperation, KeyError, TypeError) as error:
+        raise ValueError("broker ledger spend is malformed") from error
+    if (
+        not known.is_finite()
+        or known < 0
+        or not retained.is_finite()
+        or retained < 0
+        or known + retained > allocation
+    ):
+        raise ValueError("broker ledger spend exceeds attempt allocation")
+    return {
+        "exposure_authority": "broker_ledger",
+        "known_actual_cost_usd": str(known),
+        "retained_unknown_reservation_usd": str(retained),
+        "total_exposure_usd": str(known + retained),
+    }
+
+
+def _fallback_attempt_spend(
+    attempt: Mapping[str, Any], *, allocation: Decimal, activated: bool
+) -> dict[str, str]:
+    activation = next(
+        (
+            item
+            for item in attempt.get("phases", {}).get("timeline", [])
+            if item.get("phase") == "broker_activation"
+        ),
+        {},
+    )
+    may_have_forwarded = activated or activation.get("started") is True
+    retained = allocation if may_have_forwarded else Decimal(0)
+    return {
+        "exposure_authority": (
+            "conservative_allocation_fallback"
+            if may_have_forwarded
+            else "preactivation_zero"
+        ),
+        "known_actual_cost_usd": "0",
+        "retained_unknown_reservation_usd": str(retained),
+        "total_exposure_usd": str(retained),
+    }
 
 
 def _validate_native_attempt(
@@ -4187,7 +4391,7 @@ def _run_attempt(
     parent_key: str,
     pricing: PricingSnapshot,
     model_pricing: dict[str, Any],
-    remaining_budget: Decimal,
+    attempt_allocation: Decimal,
     attempt_record: dict[str, Any],
     backend: BackendContract = LITELLM_BACKEND,
     debug_deny_upstream: bool = False,
@@ -4229,7 +4433,7 @@ def _run_attempt(
         model=model,
         pricing=pricing,
         max_input_tokens=model_pricing["max_input_tokens"],
-        budget_cap=remaining_budget,
+        budget_cap=attempt_allocation,
         backend=backend,
         debug_deny_upstream=debug_deny_upstream,
     )
@@ -4406,26 +4610,28 @@ def _run_attempt(
         if ledger_document is None:
             with suppress(BaseException):
                 ledger_document = sidecar.read_ledger()
+        try:
+            spend = _ledger_spend_evidence(
+                ledger_document, allocation=attempt_allocation
+            )
+        except ValueError:
+            spend = _fallback_attempt_spend(
+                attempt_record,
+                allocation=attempt_allocation,
+                activated=bool(getattr(sidecar, "activated", False)),
+            )
+            ledger_document = None
         if ledger_document is not None:
-            attempt_record["broker"] = {
-                "locked_endpoint": ledger_document.get("locked_endpoint"),
-                "request_count": ledger_document.get("request_count", 0),
-                "requests": ledger_document.get("requests", []),
-            }
-            attempt_record["spend"] = {
-                "known_actual_cost_usd": ledger_document.get(
-                    "known_actual_cost_usd", "0"
-                ),
-                "retained_unknown_reservation_usd": ledger_document.get(
-                    "retained_unknown_reservation_usd", "0"
-                ),
-                "total_exposure_usd": str(
-                    Decimal(ledger_document.get("known_actual_cost_usd", "0"))
-                    + Decimal(
-                        ledger_document.get("retained_unknown_reservation_usd", "0")
-                    )
-                ),
-            }
+            request_count = ledger_document.get("request_count")
+            requests = ledger_document.get("requests")
+            locked_endpoint = ledger_document.get("locked_endpoint")
+            if type(request_count) is int and isinstance(requests, list):
+                attempt_record["broker"] = {
+                    "locked_endpoint": locked_endpoint,
+                    "request_count": request_count,
+                    "requests": requests,
+                }
+        attempt_record["spend"] = spend
         _mark_attempt_failed(attempt_record, error)
         raise
     if ledger_document is None or cleanup_evidence is None or native_validation is None:
@@ -4442,13 +4648,7 @@ def _run_attempt(
         "security": security_evidence,
         "shutdown": cleanup_evidence,
     }
-    known = Decimal(ledger_document["known_actual_cost_usd"])
-    retained = Decimal(ledger_document["retained_unknown_reservation_usd"])
-    spend = {
-        "known_actual_cost_usd": str(known),
-        "retained_unknown_reservation_usd": str(retained),
-        "total_exposure_usd": str(known + retained),
-    }
+    spend = _ledger_spend_evidence(ledger_document, allocation=attempt_allocation)
     attempt_record["broker"] = broker_evidence
     attempt_record["spend"] = spend
     attempt_record["outcome"] = "failed"
@@ -4456,6 +4656,7 @@ def _run_attempt(
     reward = int(document["reward"])
     _native, record, gates, metrics = native_validation
     completed = {
+        "allocation_usd": str(attempt_allocation),
         "broker": broker_evidence,
         "command_outcome": attempt_record["command_outcome"],
         "containment": result.containment,
@@ -4530,11 +4731,20 @@ def _failure(
     )
     prior = args.prior_unknown_exposure_usd
     backend = BACKENDS[args.backend]
+    planned_allocations = _deterministic_budget_split(
+        MAX_TOTAL_COST - prior,
+        args.attempts_per_profile * len(PROFILE_CONTRACTS),
+    )
     return {
         "admissible": False,
         "attempt_count": len(completed),
         "attempts": completed,
         "attempts_per_profile": args.attempts_per_profile,
+        "budget": {
+            "attempt_allocations_usd": [str(item) for item in planned_allocations],
+            "available_budget_usd": str(MAX_TOTAL_COST - prior),
+            "total_cap_usd": str(MAX_TOTAL_COST),
+        },
         "diagnostic": {
             "admissible": False,
             "deny_upstream": args.debug_deny_upstream,
@@ -4643,14 +4853,10 @@ def main(argv: list[str] | None = None) -> int:
         if args.output is not None:
             authority = open_proof_output_authority(args.output)
         parent_key = _take_backend_credential(backend, os.environ)
-        planned_attempt_count = args.attempts_per_profile * len(PROFILE_CONTRACTS)
-        planned_worst_case = args.prior_unknown_exposure_usd + Decimal(
-            planned_attempt_count
-        ) * _reservation_for_body(b"x" * MAX_BODY_BYTES)
-        if planned_worst_case > MAX_TOTAL_COST:
-            raise RuntimeError(
-                "prior exposure leaves insufficient proof reservation cap"
-            )
+        available_budget = MAX_TOTAL_COST - args.prior_unknown_exposure_usd
+        attempt_allocations = _allocate_attempt_budgets(
+            available_budget, attempts_per_profile=args.attempts_per_profile
+        )
         with tempfile.TemporaryDirectory(prefix="authority-calibration-") as directory:
             private_root = Path(directory)
             snapshot: SourceSnapshot = (
@@ -4682,6 +4888,7 @@ def main(argv: list[str] | None = None) -> int:
                         ordinal=ordinal,
                         profile=profile,
                         model_group=model_group,
+                        allocation_usd=attempt_allocations[ordinal - 1],
                         debug_deny_upstream=args.debug_deny_upstream,
                     )
                     attempts.append(attempt_record)
@@ -4697,11 +4904,7 @@ def main(argv: list[str] | None = None) -> int:
                             parent_key=parent_key,
                             pricing=pricing,
                             model_pricing=pricing_by_model[model_group],
-                            remaining_budget=(
-                                MAX_TOTAL_COST
-                                - args.prior_unknown_exposure_usd
-                                - total_cost
-                            ),
+                            attempt_allocation=attempt_allocations[ordinal - 1],
                             attempt_record=attempt_record,
                             backend=backend,
                             debug_deny_upstream=args.debug_deny_upstream,
@@ -4772,6 +4975,10 @@ def main(argv: list[str] | None = None) -> int:
                 "attempts": attempts,
                 "attempts_per_profile": args.attempts_per_profile,
                 "budget": {
+                    "attempt_allocations_usd": [
+                        str(item) for item in attempt_allocations
+                    ],
+                    "available_budget_usd": str(available_budget),
                     "input_and_cache_ceiling_per_million_usd": "10",
                     "max_output_tokens": MAX_OUTPUT_TOKENS,
                     "output_ceiling_per_million_usd": "50",

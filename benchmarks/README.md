@@ -291,8 +291,10 @@ profile records separately bind Harbor, child, broker, and upstream model
 identities. OpenRouter is the default personal backend; LiteLLM is an explicit
 optional work backend. Calibration runs the topology probe first, reads the
 selected backend's authenticated pricing second, and starts attempts last.
-OpenRouter `/models` pricing takes conservative maxima across threshold overrides
-and every cache-write tier. LiteLLM retains `/model/info`. Both require finite
+OpenRouter `/models` pricing takes conservative maxima across every flat
+conditional override, including prompt thresholds and UTC windows, and every
+cache-write tier. Unknown override conditions or pricing keys fail closed.
+LiteLLM retains `/model/info`. Both require finite
 positive input, output, cache-read, and cache-write rates plus positive model
 limits for exactly the selected models. Input and cache rates above `$10` per
 million tokens or output rates above `$50` per million make calibration fail.
@@ -301,23 +303,33 @@ retains a redacted normalized pricing snapshot, backend, source, and digest.
 
 Each attempt receives one ephemeral OpenAI credential. Chat requests contain or
 receive `n = 1`; every multiplicity alias and Responses background mode is
-rejected. Message and input content admits only text, tool calls, and tool
-results, never image/audio/file/remote-reference blocks. Ordinary URLs inside a
-text string remain text. Its first valid request
+rejected. Plugins, web-search options, model fallback arrays, route, transforms,
+provider routing, and every server-side tool type are rejected before request
+counting, reservation, or forwarding. Ordinary client-defined function tools,
+tool calls, and tool results remain supported. Message and input content never
+admits image/audio/file/remote-reference blocks. Ordinary URLs inside a text
+string remain text. Its first valid request
 locks that attempt to either `/v1/responses` or `/v1/chat/completions`; later
 requests must use the same endpoint. The broker applies the endpoint's exact
 output-limit fields and caps them at 8,192 tokens. It treats the forwarded UTF-8
 body's byte length as the input-token upper bound because the supported
 tokenizers fall back to at most one token per byte. Before forwarding, the
-shared ledger atomically reserves that bound at the hard pricing ceilings plus
-a fixed safety margin. LiteLLM preserves its response-cost settlement behavior.
-OpenRouter successful nonstream and Responses-stream calls require terminal usage
-cost plus a response ID, followed by a bounded authenticated historical
-`/generation?id=...` cross-check for exact ID, model, stream shape, cost, and
-normalized token counts before bytes reach the child. Generation 404 retries only
-inside that settlement window and the attempt deadline. Streaming chat remains
-unsupported. Any ambiguity retains the full reservation. Direct compatible
-endpoints require explicit pricing and settlement adapters.
+attempt ledger atomically reserves that bound at the hard pricing ceilings plus
+a fixed safety margin. Before attempts begin, the available budget is divided
+deterministically into four clean allocations, or two debug allocations. They
+sum exactly, each covers one worst-case request, each broker receives only its
+allocation, and unused allocation is not spend. LiteLLM preserves its
+response-cost settlement behavior. OpenRouter Responses SSE accepts data-only
+frames and optional matching event lines while ignoring comments and blank
+separators. It requires one successful terminal followed only by `[DONE]`.
+Terminal usage cost is optional; when present it must equal authoritative
+generation `total_cost`. Responses input/output tokens and chat prompt/completion
+tokens normalize separately, then a bounded authenticated `/generation?id=...`
+cross-check requires exact ID, model, stream shape, cost, and token counts before
+bytes reach the child. Generation 404 retries only inside that settlement window
+and the attempt deadline. Streaming chat remains unsupported. Any ambiguity
+retains the full reservation. Direct compatible endpoints require explicit
+pricing and settlement adapters.
 
 Each attempt uses one fresh labeled external Docker bridge network and one
 credential-broker sidecar with a unique alias at port `62017`. No host port is
@@ -337,7 +349,11 @@ digests, safe canonical schema/outcome/reward fields, and bounded native
 structural status/counts/digests/exception class names. A nonzero or malformed
 CLI result cleans up and reads zero-request broker evidence without retaining
 raw output, paths, exception messages, prompts, model content, logs, or tool
-output.
+output. If broker ledger authority is missing, malformed, or unreadable after
+activation may have begun, the full attempt allocation is retained as
+conservative unknown exposure. Evidence distinguishes that fallback from a
+broker-known retained reservation. Zero exposure is retained only when evidence
+proves activation never started.
 
 The broker runs the source snapshot in a pinned Python image mounted read-only.
 Its parent key arrives through anonymous stdin and remains process memory.

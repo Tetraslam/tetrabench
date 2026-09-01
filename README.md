@@ -85,25 +85,39 @@ counts/digests. A future exception retains only its class and bounded native
 structure. Positive request-count checks cannot mask this evidence. Raw streams,
 paths, exception messages, prompts, model content, logs, and tool output are
 excluded.
-Each attempt locks to its first valid OpenCode endpoint only after successful
-budget reservation. The broker caps output at 8,192 tokens and atomically
-reserves each request's worst-case cost under a shared `$25` limit before
-forwarding. LiteLLM preserves exact cost-header settlement for nonstreaming
-responses and terminal usage settlement for Responses streams. OpenRouter
-requires successful nonstream or Responses-stream terminal usage with a response
-ID, finite nonnegative cost, and coherent bounded tokens, then polls the
-authenticated historical `/generation?id=...` record before forwarding. That
-record must match ID, model, stream shape, exact cost, and token counts. Streaming
-chat rejects before reservation. Missing, delayed beyond the bounded settlement
-window, or mismatched settlement makes the ledger fatal, retains the full
-reservation as unknown exposure, and prevents later forwarding. The 30-second
-client backpressure timeout applies only to the buffered downstream write.
+Before any attempt, the runner divides `$25` minus prior unknown exposure into
+four deterministic clean-run allocations, or two in debug mode. The allocations
+sum exactly to the available budget, each must cover one complete worst-case
+request for its profile, and each broker receives only its own allocation.
+Unused allocation is not spend and cannot be consumed by another attempt. Each
+attempt locks to its first valid OpenCode endpoint only after successful budget
+reservation. The broker caps output at 8,192 tokens and reserves each request's
+worst-case cost within that allocation before forwarding. LiteLLM preserves exact
+cost-header settlement for nonstreaming responses and terminal usage settlement
+for Responses streams. OpenRouter accepts documented data-only Responses frames
+and optional matching `event:` lines, ignores valid comments and blank separators,
+and requires one successful terminal followed only by `[DONE]`. Terminal
+`usage.cost` is optional; when present it must equal the finite nonnegative
+authoritative generation `total_cost`. Responses normalizes
+`input_tokens`/`output_tokens`, while chat normalizes
+`prompt_tokens`/`completion_tokens`, and both must match the bounded historical
+`/generation?id=...` record before forwarding. Streaming chat rejects before
+reservation. Missing, delayed, ambiguous, or mismatched settlement makes the
+ledger fatal, retains the full reservation as unknown exposure, and prevents
+later forwarding. If an activated attempt fails without readable valid broker
+ledger authority, its complete allocation is retained as conservative unknown
+exposure; broker-known retained reservations remain separately identified.
+Preactivation zero exposure requires evidence that activation never started. The
+30-second client backpressure timeout applies only to the buffered downstream
+write.
 Fake-upstream tests cover both backends without a model call.
 Chat requests are normalized to exactly one completion and both supported
 endpoints reject multiplicity, background generation, non-text modalities,
-remote media, and file references. Message/input content admits only text, tool
-calls, and tool results. Endpoint-specific output limits remain capped at 8,192,
-and every reservation covers that complete permitted output.
+remote media, file references, plugins, web-search options, model fallback
+arrays, routing/provider controls, transforms, and server-side tool types.
+Ordinary client-defined function tools, tool calls, and tool results remain
+supported. Endpoint-specific output limits remain capped at 8,192, and every
+reservation covers that complete permitted output.
 
 The clean task is copied into a temporary overlay whose only added or replaced
 path is `environment/docker-compose.yaml`. It builds the committed main

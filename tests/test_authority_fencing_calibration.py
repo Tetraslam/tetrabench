@@ -197,25 +197,32 @@ def responses_sse(
 
 
 def openrouter_responses_sse(
-    *, response_id: str = "gen-test-1", model: str = "openai/gpt-5.6-sol"
+    *,
+    response_id: str = "gen-test-1",
+    model: str = "openai/gpt-5.6-sol",
+    include_cost: bool = True,
+    include_event: bool = True,
+    include_comment: bool = False,
 ) -> bytes:
+    usage: dict[str, Any] = {
+        "input_tokens": 2,
+        "output_tokens": 3,
+        "total_tokens": 5,
+    }
+    if include_cost:
+        usage["cost"] = "0.00007"
     document = {
         "type": "response.completed",
         "response": {
             "id": response_id,
             "model": model,
             "status": "completed",
-            "usage": {
-                "cost": "0.00007",
-                "input_tokens": 2,
-                "output_tokens": 3,
-                "total_tokens": 5,
-            },
+            "usage": usage,
         },
     }
-    return (
-        f"event: response.completed\ndata: {json.dumps(document)}\n\ndata: [DONE]\n\n"
-    ).encode()
+    event = "event: response.completed\n" if include_event else ""
+    comment = ": OPENROUTER PROCESSING\n\n\n\n" if include_comment else ""
+    return f"{comment}{event}data: {json.dumps(document)}\n\ndata: [DONE]\n\n".encode()
 
 
 def openrouter_generation(
@@ -391,15 +398,19 @@ def openrouter_pricing_document() -> dict[str, Any]:
     target: dict[str, Any] = dict(base)
     target["overrides"] = [
         {
-            "threshold": 100000,
-            "pricing": {
-                "prompt": "0.000004",
-                "completion": "0.000015",
-                "input_cache_read": "0.0000004",
-                "input_cache_write": "0.000005",
-                "request": "0",
-            },
-        }
+            "min_prompt_tokens": 100000,
+            "prompt": "0.000004",
+            "completion": "0.000015",
+            "input_cache_read": "0.0000004",
+            "input_cache_write": "0.000005",
+            "request": "0",
+        },
+        {
+            "utc_start": 0,
+            "utc_end": 24,
+            "utc_days": [0, 1, 2, 3, 4, 5, 6],
+            "input_cache_write": "0.0000045",
+        },
     ]
     return {
         "data": [
@@ -628,6 +639,20 @@ def test_openrouter_models_rejects_unsupported_nonzero_paid_pricing(field: str) 
     document = openrouter_pricing_document()
     document["data"][0]["pricing"][field] = "0.000001"
     with pytest.raises(ValueError, match="unsupported paid pricing"):
+        calibration._validate_openrouter_pricing_document(document)
+
+
+def test_openrouter_models_rejects_unknown_paid_pricing_key() -> None:
+    document = openrouter_pricing_document()
+    document["data"][0]["pricing"]["new_paid_surface"] = "0.000001"
+    with pytest.raises(ValueError, match="unknown pricing field"):
+        calibration._validate_openrouter_pricing_document(document)
+
+
+def test_openrouter_models_rejects_unknown_override_condition() -> None:
+    document = openrouter_pricing_document()
+    document["data"][0]["pricing"]["overrides"][0]["region"] = "US"
+    with pytest.raises(ValueError, match="condition is unknown"):
         calibration._validate_openrouter_pricing_document(document)
 
 
@@ -1179,6 +1204,9 @@ def test_openrouter_responses_stream_settles_only_after_generation_404_retry() -
             assert returned_body == body
             assert ledger.cost == Decimal("0.00007")
             assert ledger.reserved == 0
+            deadline = time.monotonic() + 2
+            while not broker.state.records and time.monotonic() < deadline:
+                time.sleep(0.01)
             record = broker.state.records[0]
             assert record.request_id == "gen-test-1"
             assert record.usage == {
@@ -1195,6 +1223,85 @@ def test_openrouter_responses_stream_settles_only_after_generation_404_retry() -
         item["authorization"] == f"Bearer {TEST_PARENT_KEY}"
         for item in upstream.requests
     )
+
+
+@pytest.mark.parametrize("include_event", [False, True])
+def test_openrouter_stream_accepts_data_only_or_matching_event_with_comments(
+    include_event: bool,
+) -> None:
+    body = openrouter_responses_sse(
+        include_cost=False, include_event=include_event, include_comment=True
+    )
+    with fake_upstream(
+        headers=[("Content-Type", "text/event-stream")],
+        body=body,
+        queued_get_responses=[
+            (
+                HTTPStatus.OK,
+                [("Content-Type", "application/json")],
+                openrouter_generation(),
+            )
+        ],
+    ) as upstream:
+        ledger = calibration.SpendLedger()
+        with running_broker(
+            upstream, ledger=ledger, backend=calibration.OPENROUTER_BACKEND
+        ) as broker:
+            status, _headers, returned = request(
+                broker,
+                document={
+                    "model": "openai/gpt-5.6-sol",
+                    "input": "redacted",
+                    "stream": True,
+                },
+            )
+            assert status == 200
+            assert returned == body
+            assert ledger.cost == Decimal("0.00007")
+
+
+def test_openrouter_stream_rejects_mismatched_optional_event_type() -> None:
+    body = openrouter_responses_sse().replace(
+        b"event: response.completed", b"event: response.created"
+    )
+    with pytest.raises(ValueError, match="event is malformed"):
+        calibration._parse_openrouter_responses_stream(
+            body, expected_model="openai/gpt-5.6-sol"
+        )
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        pytest.param(b"data: [DONE]\n\n", id="missing-terminal"),
+        pytest.param(
+            openrouter_responses_sse().removesuffix(b"data: [DONE]\n\n"),
+            id="missing-done",
+        ),
+        pytest.param(
+            openrouter_responses_sse().replace(
+                b"data: [DONE]\n\n",
+                b'data: {"type":"response.created"}\n\ndata: [DONE]\n\n',
+            ),
+            id="trailing-event",
+        ),
+        pytest.param(
+            openrouter_responses_sse() + b"data: [DONE]\n\n",
+            id="duplicate-done",
+        ),
+        pytest.param(
+            openrouter_responses_sse().replace(b"data: {", b"data:{", 1),
+            id="malformed-field",
+        ),
+    ],
+)
+def test_openrouter_stream_rejects_missing_trailing_duplicate_or_malformed_frames(
+    body: bytes,
+) -> None:
+    with pytest.raises(ValueError):
+        calibration._parse_openrouter_responses_stream(
+            body, expected_model="openai/gpt-5.6-sol"
+        )
 
 
 def test_openrouter_nonstream_settles_from_body_and_generation() -> None:
@@ -1240,6 +1347,85 @@ def test_openrouter_nonstream_settles_from_body_and_generation() -> None:
         "/api/v1/responses",
         "/api/v1/generation?id=gen-test-1",
     ]
+
+
+def test_openrouter_nonstream_chat_normalizes_prompt_completion_usage() -> None:
+    body = json.dumps(
+        {
+            "id": "gen-test-1",
+            "model": "openai/gpt-5.6-sol",
+            "choices": [],
+            "usage": {
+                "prompt_tokens": 2,
+                "completion_tokens": 3,
+                "total_tokens": 5,
+            },
+        }
+    ).encode()
+    with fake_upstream(
+        body=body,
+        queued_get_responses=[
+            (
+                HTTPStatus.OK,
+                [("Content-Type", "application/json")],
+                openrouter_generation(streamed=False),
+            )
+        ],
+    ) as upstream:
+        ledger = calibration.SpendLedger()
+        with running_broker(
+            upstream, ledger=ledger, backend=calibration.OPENROUTER_BACKEND
+        ) as broker:
+            assert (
+                request(
+                    broker,
+                    path="/v1/chat/completions",
+                    document={
+                        "model": "openai/gpt-5.6-sol",
+                        "messages": [{"role": "user", "content": "redacted"}],
+                    },
+                )[0]
+                == 200
+            )
+            assert broker.state.records[0].usage == {
+                "input_tokens": 2,
+                "output_tokens": 3,
+                "total_tokens": 5,
+            }
+            assert ledger.cost == Decimal("0.00007")
+
+
+@pytest.mark.parametrize(
+    ("endpoint", "usage"),
+    [
+        (
+            "/v1/responses",
+            {"prompt_tokens": 2, "completion_tokens": 3, "total_tokens": 5},
+        ),
+        (
+            "/v1/chat/completions",
+            {"input_tokens": 2, "output_tokens": 3, "total_tokens": 5},
+        ),
+    ],
+)
+def test_openrouter_nonstream_rejects_cross_endpoint_usage_fields(
+    endpoint: str, usage: dict[str, int]
+) -> None:
+    document: dict[str, Any] = {
+        "id": "gen-test-1",
+        "model": "openai/gpt-5.6-sol",
+        "usage": usage,
+    }
+    if endpoint == "/v1/responses":
+        document["status"] = "completed"
+    else:
+        document["choices"] = []
+    with pytest.raises(ValueError, match="token usage"):
+        calibration._parse_openrouter_nonstream(
+            json.dumps(document).encode(),
+            endpoint=endpoint,
+            expected_model="openai/gpt-5.6-sol",
+        )
 
 
 @pytest.mark.parametrize(
@@ -1402,6 +1588,147 @@ def test_responses_rejects_multiplicity_and_background(field: str) -> None:
         with running_broker(upstream) as broker:
             assert request(broker, document=document)[0] == 400
             assert upstream.requests == []
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("plugins", [{"id": "web"}]),
+        ("web_search_options", {}),
+        ("models", ["fallback/model"]),
+        ("route", "fallback"),
+        ("transforms", ["middle-out"]),
+        ("provider", {"order": ["provider-a"]}),
+    ],
+)
+def test_unreserved_openrouter_routing_and_billable_surfaces_reject_before_reservation(
+    field: str, value: Any
+) -> None:
+    with fake_upstream() as upstream:
+        ledger = calibration.SpendLedger()
+        with running_broker(upstream, ledger=ledger) as broker:
+            status, _headers, _body = request(
+                broker,
+                document={
+                    "model": "openai/gpt-5.6-sol",
+                    "input": "text",
+                    field: value,
+                },
+            )
+            assert status == 400
+            assert broker.state.request_count == 0
+            assert ledger.cost == 0
+            assert ledger.reserved == 0
+            assert upstream.requests == []
+
+
+@pytest.mark.parametrize(
+    "tool",
+    [
+        {"type": "web_search_preview"},
+        {"type": "file_search", "vector_store_ids": ["vs-1"]},
+        {"type": "computer_use_preview"},
+        {"type": "code_interpreter"},
+        {"type": "mcp", "server_url": "https://example.test"},
+    ],
+)
+def test_server_side_tools_reject_before_reservation(tool: dict[str, Any]) -> None:
+    with fake_upstream() as upstream:
+        ledger = calibration.SpendLedger()
+        with running_broker(upstream, ledger=ledger) as broker:
+            assert (
+                request(
+                    broker,
+                    document={
+                        "model": "openai/gpt-5.6-sol",
+                        "input": "text",
+                        "tools": [tool],
+                    },
+                )[0]
+                == 400
+            )
+            assert broker.state.request_count == 0
+            assert ledger.cost == 0
+            assert ledger.reserved == 0
+            assert upstream.requests == []
+
+
+def test_client_function_tools_and_tool_results_are_preserved() -> None:
+    document = {
+        "model": "openai/gpt-5.6-sol",
+        "messages": [
+            {"role": "user", "content": "call it"},
+            {
+                "role": "assistant",
+                "content": None,
+                "tool_calls": [
+                    {
+                        "id": "call-1",
+                        "type": "function",
+                        "function": {"name": "read", "arguments": "{}"},
+                    }
+                ],
+            },
+            {"role": "tool", "tool_call_id": "call-1", "content": "result"},
+        ],
+        "tools": [
+            {
+                "type": "function",
+                "function": {
+                    "name": "read",
+                    "description": "read a value",
+                    "parameters": {"type": "object", "properties": {}},
+                },
+            }
+        ],
+    }
+    with fake_upstream() as upstream:
+        with running_broker(upstream) as broker:
+            assert (
+                request(broker, path="/v1/chat/completions", document=document)[0]
+                == 200
+            )
+    forwarded = upstream.requests[0]["body"]
+    assert forwarded["tools"] == document["tools"]
+    assert forwarded["messages"] == document["messages"]
+
+
+def test_responses_function_tools_calls_and_outputs_are_preserved() -> None:
+    document = {
+        "model": "openai/gpt-5.6-sol",
+        "input": [
+            {
+                "type": "message",
+                "role": "user",
+                "content": [{"type": "input_text", "text": "call it"}],
+            },
+            {
+                "type": "function_call",
+                "call_id": "call-1",
+                "name": "read",
+                "arguments": "{}",
+            },
+            {
+                "type": "function_call_output",
+                "call_id": "call-1",
+                "output": "result",
+            },
+        ],
+        "tools": [
+            {
+                "type": "function",
+                "name": "read",
+                "description": "read a value",
+                "parameters": {"type": "object", "properties": {}},
+            }
+        ],
+    }
+    with fake_upstream() as upstream:
+        with running_broker(upstream) as broker:
+            assert request(broker, document=document)[0] == 200
+    forwarded = upstream.requests[0]["body"]
+    assert forwarded["tools"] == document["tools"]
+    assert forwarded["input"] == document["input"]
 
 
 @pytest.mark.parametrize(
@@ -2483,6 +2810,47 @@ def test_four_worst_case_reservations_plus_recorded_prior_fit_shared_cap() -> No
     assert prior + 5 * worst > calibration.MAX_TOTAL_COST
 
 
+@pytest.mark.parametrize("attempts_per_profile", [1, 2])
+def test_attempt_allocations_are_deterministic_exact_and_individually_bounded(
+    attempts_per_profile: int,
+) -> None:
+    prior = Decimal("0.96086")
+    available = calibration.MAX_TOTAL_COST - prior
+    allocations = calibration._allocate_attempt_budgets(
+        available, attempts_per_profile=attempts_per_profile
+    )
+    assert len(allocations) == attempts_per_profile * len(calibration.PROFILE_CONTRACTS)
+    assert sum(allocations, start=Decimal(0)) == available
+    assert allocations == calibration._allocate_attempt_budgets(
+        available, attempts_per_profile=attempts_per_profile
+    )
+    worst = calibration._reservation_for_body(b"x" * calibration.MAX_BODY_BYTES)
+    assert all(allocation >= worst for allocation in allocations)
+
+
+def test_first_attempt_multiple_requests_cannot_consume_later_allocations() -> None:
+    allocations = calibration._allocate_attempt_budgets(
+        calibration.MAX_TOTAL_COST, attempts_per_profile=2
+    )
+    ledger = calibration.SpendLedger(max_total=allocations[0])
+    amount = allocations[0] / Decimal(2)
+    first = ledger.reserve(amount)
+    second = ledger.reserve(amount)
+    with pytest.raises(RuntimeError, match="remaining budget"):
+        ledger.reserve(Decimal("0.000001"))
+    ledger.settle(first, Decimal(0))
+    ledger.settle(second, Decimal(0))
+    assert sum(allocations[1:], start=Decimal(0)) > 0
+
+
+def test_attempt_allocation_fails_when_one_worst_request_cannot_fit() -> None:
+    worst = calibration._reservation_for_body(b"x" * calibration.MAX_BODY_BYTES)
+    with pytest.raises(RuntimeError, match="one worst-case request"):
+        calibration._allocate_attempt_budgets(
+            worst * 4 - Decimal("0.000001"), attempts_per_profile=2
+        )
+
+
 def test_arbitrary_settlement_cannot_exceed_its_reservation_or_cap() -> None:
     ledger = calibration.SpendLedger()
     reservation = ledger.reserve(Decimal("1"))
@@ -3399,11 +3767,22 @@ def test_early_command_exception_class_is_captured_without_content(
     assert str(error) not in json.dumps(outcome)
 
 
-@pytest.mark.parametrize("preactivation_failure", [False, True])
+@pytest.mark.parametrize(
+    ("preactivation_failure", "ledger_mode", "exposure_authority"),
+    [
+        (False, "valid", "broker_ledger"),
+        (True, "read_error", "preactivation_zero"),
+        (False, "missing", "conservative_allocation_fallback"),
+        (False, "malformed", "conservative_allocation_fallback"),
+        (False, "read_error", "conservative_allocation_fallback"),
+    ],
+)
 def test_run_attempt_captures_result_before_zero_request_ledger_after_cleanup(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     preactivation_failure: bool,
+    ledger_mode: str,
+    exposure_authority: str,
 ) -> None:
     pricing = calibration._validate_pricing_document(pricing_document())
     read_minimums: list[int] = []
@@ -3427,12 +3806,20 @@ def test_run_attempt_captures_result_before_zero_request_ledger_after_cleanup(
         def read_ledger(self, *, minimum_requests: int = 0) -> dict[str, Any]:
             assert cleanup_calls == 1
             read_minimums.append(minimum_requests)
+            if ledger_mode in {"missing", "read_error"}:
+                raise OSError("private ledger read failure")
+            if ledger_mode == "malformed":
+                return {"known_actual_cost_usd": "not-a-decimal"}
             return {
+                "active": False,
+                "activated": not preactivation_failure,
+                "fatal": None,
                 "known_actual_cost_usd": "0",
                 "locked_endpoint": None,
                 "request_count": 0,
                 "requests": [],
                 "retained_unknown_reservation_usd": "0",
+                "schema_version": 1,
             }
 
     class Authority:
@@ -3498,7 +3885,7 @@ def test_run_attempt_captures_result_before_zero_request_ledger_after_cleanup(
             parent_key=TEST_PARENT_KEY,
             pricing=pricing,
             model_pricing=pricing.models[0],
-            remaining_budget=Decimal("1"),
+            attempt_allocation=Decimal("1"),
             attempt_record=attempt,
         )
     assert caught.value.evidence == (
@@ -3509,6 +3896,11 @@ def test_run_attempt_captures_result_before_zero_request_ledger_after_cleanup(
     assert read_minimums == [0]
     assert cleanup_calls == 1
     assert attempt["broker"]["request_count"] == 0
+    assert attempt["spend"]["exposure_authority"] == exposure_authority
+    expected_retained = (
+        "1" if exposure_authority == "conservative_allocation_fallback" else "0"
+    )
+    assert attempt["spend"]["retained_unknown_reservation_usd"] == expected_retained
     assert attempt["command_outcome"]["return_code"] == 9
     assert attempt["command_outcome"]["completion"]["before_main_activation"] is (
         preactivation_failure
