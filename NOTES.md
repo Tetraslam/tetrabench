@@ -1264,3 +1264,19 @@ The preceding E-103 entry is superseded where it says full local validation is p
 Provenance: PR 8 at implementation commit `13ae57b`; GitHub Actions run `33560071630`; GitHub PR checks, review, comments, and mergeability inspection. No provider call occurred.
 
 The preceding E-103 entries are superseded where they say hosted validation is pending. Python 3.12 release parity and the independent full-history secret scan passed. GitHub reports no configured, requested, or posted automatic review and a cleanly mergeable PR. Merge and post-merge CI remain pending; no paid retry is permitted before both pass.
+
+## 2026-09-01T14:59:15-07:00: E-104 OpenRouter native token accounting
+
+Provenance: merged revision `40357dd`; PR 8 and post-merge GitHub Actions runs `33561156472` and `33562218476`; exact-four retry 5 bounded private report; authenticated OpenRouter `/generation`; current OpenRouter usage-accounting and generation API documentation; private raw and canonical reconciliation evidence; fake-provider regressions. No additional provider completion occurred during implementation or validation.
+
+Retry 5 used cumulative priors `$0.0494755` known and `$0.96086` unknown, admitted `$5.997416125` per attempt, and made one target `/v1/responses` request. The corrected generation and Responses identity checks reached authenticated generation validation. The obsolete comparison between terminal usage and normalized generation token counts then retained `$0.96086`, stopped the remaining attempts, completed cleanup, and wrote no proof. Authenticated `/generation` records normalized counts 7,415 prompt and 86 completion but native counts 6,028 prompt and 145 completion for the same canonical model, streamed tool-call generation, and exact cost `$0.0165185`.
+
+OpenRouter documents response usage as prompt and completion token counts using the model's native tokenizer. D-109 therefore compares strict coherent terminal usage to mandatory bounded `native_tokens_prompt` and `native_tokens_completion`. It still requires bounded nonnegative normalized `tokens_prompt` and `tokens_completion`, but does not equate those separate values. Identity, canonical model, stream, cost, and reservation checks remain unchanged. A live-shaped fake proves terminal `6028/145` settles against native `6028/145` while normalized `7415/86` differs; a native-token mismatch still retains the reservation. Private reconciliation `authority-fencing-openrouter-reconciliation-20260901-r5.json` is mode `0600`, 680 bytes, SHA-256 `be70724f2526ead594d3018c173aa8b3aa942f9cdc9fa50f48dc39ccf4553061`. The bounded retry report is mode `0600`, 4,947 bytes, SHA-256 `828bae5d7c002bcc3cbc88c68cc672509648b2c24ae4bcc917f9b3dff98325cf`; the private generation response is mode `0600`, 1,585 bytes, SHA-256 `c4559f4503e86a7b21ace06a64fd31305240a3aebe0b4f0985d3bcff775c59ce`.
+
+Retry 5's `$0.96086` reservation is superseded by `$0.0165185` known actual cost. Cumulative prior accounting is `$0.065994` known OpenRouter cost plus `$0.96086` unknown LiteLLM exposure, total `$1.026854`; four allocations are `$5.9932865`, above the `$5.90248` worst-case request. Focused native-token regressions, Ruff format/check, and ty pass. Full local, PR, review, and hosted parity remain pending; no paid retry is permitted before they pass.
+
+## 2026-09-01T15:11:08-07:00: E-104 local validation correction
+
+Provenance: 393 focused calibration tests; 1,132 non-Docker tests; ten required real-Docker tests; Ruff, format, ty, Bandit, lock, package, and diff checks. No provider call occurred.
+
+The preceding E-104 entry is superseded where it says full local validation is pending. All local release and Docker gates pass. PR, review, and hosted parity remain pending; no paid retry is permitted before they pass.

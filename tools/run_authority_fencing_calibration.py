@@ -1474,12 +1474,14 @@ def _validate_openrouter_generation(
         expected_cost is not None and total_cost != expected_cost
     ):
         raise ValueError("OpenRouter generation cost mismatch")
-    prompt = _usage_token_count(generation.get("tokens_prompt"))
-    completion = _usage_token_count(generation.get("tokens_completion"))
+    _usage_token_count(generation.get("tokens_prompt"))
+    _usage_token_count(generation.get("tokens_completion"))
+    native_prompt = _usage_token_count(generation.get("native_tokens_prompt"))
+    native_completion = _usage_token_count(generation.get("native_tokens_completion"))
     if {
-        "input_tokens": prompt,
-        "output_tokens": completion,
-        "total_tokens": prompt + completion,
+        "input_tokens": native_prompt,
+        "output_tokens": native_completion,
+        "total_tokens": native_prompt + native_completion,
     } != dict(expected_usage):
         raise ValueError("OpenRouter generation token usage mismatch")
     return total_cost

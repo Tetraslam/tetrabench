@@ -223,11 +223,13 @@ def openrouter_responses_sse(
     include_event: bool = True,
     include_comment: bool = False,
     event_type: str = "response.completed",
+    input_tokens: int = 2,
+    output_tokens: int = 3,
 ) -> bytes:
     usage: dict[str, Any] = {
-        "input_tokens": 2,
-        "output_tokens": 3,
-        "total_tokens": 5,
+        "input_tokens": input_tokens,
+        "output_tokens": output_tokens,
+        "total_tokens": input_tokens + output_tokens,
     }
     if include_cost:
         usage["cost"] = "0.00007"
@@ -254,6 +256,8 @@ def openrouter_generation(
     cost: str = "0.00007",
     input_tokens: int = 2,
     output_tokens: int = 3,
+    native_input_tokens: int | None = None,
+    native_output_tokens: int | None = None,
 ) -> bytes:
     return json.dumps(
         {
@@ -266,6 +270,14 @@ def openrouter_generation(
                 "usage": cost,
                 "tokens_prompt": input_tokens,
                 "tokens_completion": output_tokens,
+                "native_tokens_prompt": (
+                    input_tokens if native_input_tokens is None else native_input_tokens
+                ),
+                "native_tokens_completion": (
+                    output_tokens
+                    if native_output_tokens is None
+                    else native_output_tokens
+                ),
             }
         }
     ).encode()
@@ -1463,6 +1475,57 @@ def test_openrouter_generation_header_and_terminal_bind_distinct_identities(
     ]
 
 
+def test_openrouter_generation_compares_terminal_usage_to_native_tokens() -> None:
+    body = openrouter_responses_sse(
+        response_id="resp-terminal", input_tokens=6028, output_tokens=145
+    )
+    with fake_upstream(
+        headers=[
+            ("Content-Type", "text/event-stream"),
+            ("X-Generation-Id", "gen-header"),
+        ],
+        body=body,
+        queued_get_responses=[
+            (
+                HTTPStatus.OK,
+                [("Content-Type", "application/json")],
+                openrouter_generation(
+                    response_id="gen-header",
+                    upstream_id="resp-terminal",
+                    input_tokens=7415,
+                    output_tokens=86,
+                    native_input_tokens=6028,
+                    native_output_tokens=145,
+                ),
+            )
+        ],
+    ) as upstream:
+        ledger = calibration.SpendLedger()
+        with running_broker(
+            upstream, ledger=ledger, backend=calibration.OPENROUTER_BACKEND
+        ) as broker:
+            assert (
+                request(
+                    broker,
+                    document={
+                        "model": "openai/gpt-5.6-sol",
+                        "input": "redacted",
+                        "stream": True,
+                    },
+                )[0]
+                == HTTPStatus.OK
+            )
+            deadline = time.monotonic() + 2
+            while not broker.state.records and time.monotonic() < deadline:
+                time.sleep(0.01)
+            assert broker.state.records[0].usage == {
+                "input_tokens": 6028,
+                "output_tokens": 145,
+                "total_tokens": 6173,
+            }
+            assert ledger.cost == Decimal("0.00007")
+
+
 @pytest.mark.parametrize("stream", [False, True])
 def test_openrouter_generation_rejects_mismatched_upstream_identifier(
     stream: bool,
@@ -1945,7 +2008,7 @@ def test_openrouter_nonstream_rejects_cross_endpoint_usage_fields(
         openrouter_generation(model="other/model"),
         openrouter_generation(streamed=False),
         openrouter_generation(cost="0.00008"),
-        openrouter_generation(input_tokens=4),
+        openrouter_generation(native_input_tokens=4),
     ],
 )
 def test_openrouter_generation_mismatch_retains_reservation_and_blocks_retry(
