@@ -147,13 +147,13 @@ Cleanup reconciles exact random names and labels regardless of create-call
 outcomes, reaps the attach client, and proves no active authority or owned
 resource remains. A dead parent may leave an inert network; the next startup's
 exact-label sweep removes it. No host port is published. The shared `$25` cap can
-be seeded with explicit prior unknown exposure. That amount is reported
-separately and never becomes a completed attempt or known cost. The next clean
-proof must pass `--prior-unknown-exposure-usd 1.92172` for the retained
-conservative exposure. That leaves `$5.76957` per attempt, below the `$5.90248`
-worst-case request reservation, so the required clean four-attempt report cannot
-start until provider-side evidence reduces prior exposure to at most `$1.39008`,
-a reduction of at least `$0.53164`.
+be seeded with explicit prior known cost and prior unknown exposure. They remain
+separate in evidence and both reduce available budget. Provider activity
+reconciled the failed OpenRouter generation at `$0.0166085`; the earlier LiteLLM
+reservation remains `$0.96086` unknown. The next clean proof must pass
+`--prior-known-cost-usd 0.0166085 --prior-unknown-exposure-usd 0.96086`.
+Combined prior cap consumption is `$0.9774685`, leaving `$6.005632875` per
+attempt against the `$5.90248` worst-case reservation.
 Debug mode defaults prior exposure to zero and also supports
 `--debug-deny-upstream`. It requires one attempt per profile and forbids proof
 output. After normal authenticated pricing, each broker accepts exactly six
@@ -166,7 +166,7 @@ zero-cost route diagnostic remains non-admissible. Direct OpenAI- or
 Anthropic-compatible endpoints need explicit pricing and settlement adapters;
 protocol compatibility does not grant spend authority. A direct OpenRouter
 contract probe cost `$0.00007`; it is separate from benchmark calibration and
-does not reduce the retained `$1.92172` prior exposure.
+does not reduce the retained `$0.9774685` calibration cap consumption.
 
 Catalog tasks now bind `reward_policy = "numeric" | "binary"` into resolved-plan
 identity. Existing catalogs default to numeric, and retained plans without the

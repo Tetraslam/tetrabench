@@ -4956,10 +4956,12 @@ def _failure(
         ),
         start=Decimal(0),
     )
-    prior = args.prior_unknown_exposure_usd
+    prior_known = args.prior_known_cost_usd
+    prior_unknown = args.prior_unknown_exposure_usd
+    prior_total = prior_known + prior_unknown
     backend = BACKENDS[args.backend]
     planned_allocations = _deterministic_budget_split(
-        MAX_TOTAL_COST - prior,
+        MAX_TOTAL_COST - prior_total,
         args.attempts_per_profile * len(PROFILE_CONTRACTS),
     )
     return {
@@ -4969,7 +4971,7 @@ def _failure(
         "attempts_per_profile": args.attempts_per_profile,
         "budget": {
             "attempt_allocations_usd": [str(item) for item in planned_allocations],
-            "available_budget_usd": str(MAX_TOTAL_COST - prior),
+            "available_budget_usd": str(MAX_TOTAL_COST - prior_total),
             "total_cap_usd": str(MAX_TOTAL_COST),
         },
         "diagnostic": {
@@ -4981,15 +4983,16 @@ def _failure(
         "ok": False,
         "schema_version": 1,
         "spend_exposure": {
-            "prior_unknown_exposure_usd": str(prior),
+            "prior_known_cost_usd": str(prior_known),
+            "prior_unknown_exposure_usd": str(prior_unknown),
             "current_known_cost_usd": str(known),
             "current_retained_exposure_usd": str(retained),
-            "known_actual_cost_usd": str(known),
-            "retained_unknown_reservation_usd": str(retained),
-            "total_usd": str(prior + known + retained),
+            "known_actual_cost_usd": str(prior_known + known),
+            "retained_unknown_reservation_usd": str(prior_unknown + retained),
+            "total_usd": str(prior_total + known + retained),
         },
         "task_id": TASK_ID,
-        "total_authoritative_cost_usd": str(known),
+        "total_authoritative_cost_usd": str(prior_known + known),
         "pricing": (
             {
                 "backend": pricing.backend,
@@ -5045,11 +5048,18 @@ def parse_arguments(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--debug-deny-upstream", action="store_true")
     parser.add_argument("--output", type=Path)
     parser.add_argument(
+        "--prior-known-cost-usd",
+        type=_nonnegative_usd,
+        default=Decimal(0),
+    )
+    parser.add_argument(
         "--prior-unknown-exposure-usd",
         type=_nonnegative_usd,
         default=Decimal(0),
     )
     args = parser.parse_args(argv)
+    if args.prior_known_cost_usd + args.prior_unknown_exposure_usd > MAX_TOTAL_COST:
+        parser.error("combined prior cost and exposure must be at most 25")
     expected_attempts = 1 if args.debug else 2
     if args.attempts_per_profile is None:
         args.attempts_per_profile = expected_attempts
@@ -5080,7 +5090,8 @@ def main(argv: list[str] | None = None) -> int:
         if args.output is not None:
             authority = open_proof_output_authority(args.output)
         parent_key = _take_backend_credential(backend, os.environ)
-        available_budget = MAX_TOTAL_COST - args.prior_unknown_exposure_usd
+        prior_total = args.prior_known_cost_usd + args.prior_unknown_exposure_usd
+        available_budget = MAX_TOTAL_COST - prior_total
         attempt_allocations = _allocate_attempt_budgets(
             available_budget, attempts_per_profile=args.attempts_per_profile
         )
@@ -5173,7 +5184,7 @@ def main(argv: list[str] | None = None) -> int:
                 and snapshot.source_state == "clean"
                 and exact_four
                 and source_unchanged
-                and args.prior_unknown_exposure_usd + total_cost <= MAX_TOTAL_COST
+                and prior_total + total_cost <= MAX_TOTAL_COST
                 and recorded_cost == total_cost
                 and actual_within_reservations
             )
@@ -5223,13 +5234,14 @@ def main(argv: list[str] | None = None) -> int:
                     "actual_within_reservations": actual_within_reservations,
                     "reservation_safety_margin_usd": str(RESERVATION_SAFETY_MARGIN),
                     "recorded_actual_cost_usd": str(recorded_cost),
+                    "prior_known_cost_usd": str(args.prior_known_cost_usd),
                     "prior_unknown_exposure_usd": str(args.prior_unknown_exposure_usd),
                     "current_known_cost_usd": str(total_cost),
                     "current_retained_exposure_usd": "0",
-                    "total_cap_exposure_usd": str(
-                        args.prior_unknown_exposure_usd + total_cost
+                    "total_cap_exposure_usd": str(prior_total + total_cost),
+                    "total_authoritative_cost_usd": str(
+                        args.prior_known_cost_usd + total_cost
                     ),
-                    "total_authoritative_cost_usd": str(total_cost),
                     "total_cap_usd": str(MAX_TOTAL_COST),
                 },
                 "cli_distribution": installed_cli.attestation,
@@ -5275,10 +5287,17 @@ def main(argv: list[str] | None = None) -> int:
                     ),
                 },
                 "spend_exposure": {
+                    "prior_known_cost_usd": str(args.prior_known_cost_usd),
                     "prior_unknown_exposure_usd": str(args.prior_unknown_exposure_usd),
                     "current_known_cost_usd": str(total_cost),
                     "current_retained_exposure_usd": "0",
-                    "total_usd": str(args.prior_unknown_exposure_usd + total_cost),
+                    "known_actual_cost_usd": str(
+                        args.prior_known_cost_usd + total_cost
+                    ),
+                    "retained_unknown_reservation_usd": str(
+                        args.prior_unknown_exposure_usd
+                    ),
+                    "total_usd": str(prior_total + total_cost),
                 },
                 "task_id": TASK_ID,
                 "transport": transport,

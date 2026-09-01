@@ -381,11 +381,10 @@ reported IPAM gateway and `Internal` value are recorded as topology only;
 authenticated pricing and later forwarding prove actual egress. This transport
 requires no host reachability or firewall change. No real calibration has
 completed, so difficulty calibration remains unproven. The next clean proof
-explicitly carries the retained `$1.92172` prior unknown exposure against the
-shared `$25` cap without claiming it as actual spend or a completed attempt. The
-resulting `$5.76957` allocation is below the `$5.90248` worst-case request, so
-exact-four execution is blocked until provider-side reconciliation reduces prior
-exposure to at most `$1.39008`, a reduction of at least `$0.53164`. A
+explicitly carries `$0.0166085` prior known OpenRouter cost and `$0.96086` prior
+unknown LiteLLM exposure against the shared `$25` cap. The resulting total prior
+cap consumption is `$0.9774685`, leaving `$6.005632875` per attempt against the
+`$5.90248` worst-case request. A
 separate direct OpenRouter contract probe cost `$0.00007`; it is not benchmark
 calibration. `--debug-deny-upstream` is
 a non-admissible one-attempt-per-profile diagnostic with no proof output. It
