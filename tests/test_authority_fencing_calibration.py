@@ -222,6 +222,7 @@ def openrouter_responses_sse(
     include_cost: bool = True,
     include_event: bool = True,
     include_comment: bool = False,
+    event_type: str = "response.completed",
 ) -> bytes:
     usage: dict[str, Any] = {
         "input_tokens": 2,
@@ -231,7 +232,7 @@ def openrouter_responses_sse(
     if include_cost:
         usage["cost"] = "0.00007"
     document = {
-        "type": "response.completed",
+        "type": event_type,
         "response": {
             "id": response_id,
             "model": model,
@@ -239,7 +240,7 @@ def openrouter_responses_sse(
             "usage": usage,
         },
     }
-    event = "event: response.completed\n" if include_event else ""
+    event = f"event: {event_type}\n" if include_event else ""
     comment = ": OPENROUTER PROCESSING\n\n\n\n" if include_comment else ""
     return f"{comment}{event}data: {json.dumps(document)}\n\ndata: [DONE]\n\n".encode()
 
@@ -1276,15 +1277,21 @@ def test_valid_chunked_responses_stream_settles_terminal_cost() -> None:
             assert ledger.reserved == 0
 
 
-def test_openrouter_responses_stream_settles_only_after_generation_404_retry() -> None:
-    body = openrouter_responses_sse()
+@pytest.mark.parametrize("event_type", ["response.completed", "response.done"])
+def test_openrouter_responses_stream_settles_only_after_generation_404_retry(
+    event_type: str,
+) -> None:
+    body = openrouter_responses_sse(event_type=event_type)
     generation = openrouter_generation()
     queued: list[tuple[int, list[tuple[str, str]], bytes]] = [
         (int(HTTPStatus.NOT_FOUND), [("Content-Type", "application/json")], b"{}"),
         (int(HTTPStatus.OK), [("Content-Type", "application/json")], generation),
     ]
     with fake_upstream(
-        headers=[("Content-Type", "text/event-stream")],
+        headers=[
+            ("Content-Type", "text/event-stream"),
+            ("X-Generation-Id", "gen-test-1"),
+        ],
         body=body,
         queued_get_responses=queued,
     ) as upstream:
@@ -1324,6 +1331,61 @@ def test_openrouter_responses_stream_settles_only_after_generation_404_retry() -
         item["authorization"] == f"Bearer {TEST_PARENT_KEY}"
         for item in upstream.requests
     )
+
+
+@pytest.mark.parametrize("stream", [False, True])
+def test_openrouter_generation_header_must_match_terminal_identifier(
+    stream: bool,
+) -> None:
+    body = (
+        openrouter_responses_sse(response_id="gen-terminal")
+        if stream
+        else json.dumps(
+            {
+                "id": "gen-terminal",
+                "model": "openai/gpt-5.6-sol",
+                "status": "completed",
+                "usage": {
+                    "input_tokens": 2,
+                    "output_tokens": 3,
+                    "total_tokens": 5,
+                },
+            }
+        ).encode()
+    )
+    with fake_upstream(
+        headers=[
+            (
+                "Content-Type",
+                "text/event-stream" if stream else "application/json",
+            ),
+            ("X-Generation-Id", "gen-header"),
+        ],
+        body=body,
+    ) as upstream:
+        with running_broker(upstream, backend=calibration.OPENROUTER_BACKEND) as broker:
+            assert (
+                request(
+                    broker,
+                    document={
+                        "model": "openai/gpt-5.6-sol",
+                        "input": "redacted",
+                        "stream": stream,
+                    },
+                )[0]
+                == HTTPStatus.BAD_GATEWAY
+            )
+            deadline = time.monotonic() + 2
+            while not broker.state.records and time.monotonic() < deadline:
+                time.sleep(0.01)
+            record = broker.state.records[0]
+            assert record.request_id == "gen-header"
+            assert record.settlement == "retained_unknown"
+            assert record.cost is None
+            assert record.retained_unknown_reservation_usd == (
+                record.worst_case_reservation_usd
+            )
+    assert [item["path"] for item in upstream.requests] == ["/api/v1/responses"]
 
 
 def test_openrouter_generation_retry_timeout_shrinks(

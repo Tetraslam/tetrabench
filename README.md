@@ -96,12 +96,15 @@ worst-case cost within that allocation before forwarding. LiteLLM preserves exac
 cost-header settlement for nonstreaming responses and terminal usage settlement
 for Responses streams. OpenRouter accepts documented data-only Responses frames
 and optional matching `event:` lines, ignores valid comments and blank separators,
-and requires one successful terminal followed only by `[DONE]`. Terminal
+and accepts the documented `response.completed` and `response.done` successful
+terminals followed only by `[DONE]`. Terminal
 `usage.cost` is optional; when present it must equal the finite nonnegative
 authoritative generation `total_cost`. Responses normalizes
 `input_tokens`/`output_tokens`, while chat normalizes
 `prompt_tokens`/`completion_tokens`, and both must match the bounded historical
-`/generation?id=...` record before forwarding. Streaming chat rejects before
+`/generation?id=...` record before forwarding. A present `X-Generation-Id`
+header must match the terminal and remains bounded failure evidence if body
+validation fails. Streaming chat rejects before
 reservation. Missing, delayed, ambiguous, or mismatched settlement makes the
 ledger fatal, retains the full reservation as unknown exposure, and prevents
 later forwarding. The 30-second generation settlement window independently caps
@@ -146,7 +149,7 @@ resource remains. A dead parent may leave an inert network; the next startup's
 exact-label sweep removes it. No host port is published. The shared `$25` cap can
 be seeded with explicit prior unknown exposure. That amount is reported
 separately and never becomes a completed attempt or known cost. The next clean
-proof must pass `--prior-unknown-exposure-usd 0.96086` for the retained
+proof must pass `--prior-unknown-exposure-usd 1.92172` for the retained
 conservative exposure. The required clean four-attempt report remains unproven.
 Debug mode defaults prior exposure to zero and also supports
 `--debug-deny-upstream`. It requires one attempt per profile and forbids proof
@@ -160,7 +163,7 @@ zero-cost route diagnostic remains non-admissible. Direct OpenAI- or
 Anthropic-compatible endpoints need explicit pricing and settlement adapters;
 protocol compatibility does not grant spend authority. A direct OpenRouter
 contract probe cost `$0.00007`; it is separate from benchmark calibration and
-does not reduce the retained `$0.96086` prior exposure.
+does not reduce the retained `$1.92172` prior exposure.
 
 Catalog tasks now bind `reward_policy = "numeric" | "binary"` into resolved-plan
 identity. Existing catalogs default to numeric, and retained plans without the
