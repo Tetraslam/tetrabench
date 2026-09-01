@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import copy
 import dataclasses
+import hashlib
 import http.client
 import json
 import shutil
@@ -42,6 +43,8 @@ class FakeUpstreamServer(ThreadingHTTPServer):
     response_headers: list[tuple[str, str]]
     response_gate: threading.Event | None
     body_gate: threading.Event | None
+    get_response_gate: threading.Event | None
+    get_body_gate: threading.Event | None
     first_body_delay: float
     include_content_length: bool
     close_response: bool
@@ -107,6 +110,8 @@ class FakeUpstreamHandler(BaseHTTPRequestHandler):
                 "path": self.path,
             }
         )
+        if server.get_response_gate is not None:
+            server.get_response_gate.wait(timeout=30)
         if server.queued_get_responses:
             status, headers, response = server.queued_get_responses.pop(0)
         else:
@@ -124,6 +129,8 @@ class FakeUpstreamHandler(BaseHTTPRequestHandler):
             self.send_header("Connection", "close")
             self.close_connection = True
         self.end_headers()
+        if server.get_body_gate is not None:
+            server.get_body_gate.wait(timeout=30)
         try:
             self.wfile.write(response)
         except (BrokenPipeError, ConnectionResetError):
@@ -142,6 +149,8 @@ def fake_upstream(
     include_content_length: bool = True,
     close_response: bool = False,
     queued_get_responses: list[tuple[int, list[tuple[str, str]], bytes]] | None = None,
+    get_response_gate: threading.Event | None = None,
+    get_body_gate: threading.Event | None = None,
 ):
     server = FakeUpstreamServer(("127.0.0.1", 0), FakeUpstreamHandler)
     server.requests = []
@@ -157,6 +166,8 @@ def fake_upstream(
     )
     server.response_gate = response_gate
     server.body_gate = body_gate
+    server.get_response_gate = get_response_gate
+    server.get_body_gate = get_body_gate
     server.first_body_delay = first_body_delay
     server.include_content_length = include_content_length
     server.close_response = close_response
@@ -166,6 +177,14 @@ def fake_upstream(
     try:
         yield server
     finally:
+        for gate in (
+            response_gate,
+            body_gate,
+            get_response_gate,
+            get_body_gate,
+        ):
+            if gate is not None:
+                gate.set()
         server.shutdown()
         server.server_close()
         thread.join(timeout=5)
@@ -1294,6 +1313,131 @@ def test_openrouter_responses_stream_settles_only_after_generation_404_retry() -
         item["authorization"] == f"Bearer {TEST_PARENT_KEY}"
         for item in upstream.requests
     )
+
+
+def test_openrouter_generation_retry_timeout_shrinks(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(calibration, "SETTLEMENT_WINDOW_SECONDS", 0.5)
+    monkeypatch.setattr(calibration, "SETTLEMENT_POLL_SECONDS", 0.05)
+    original_connection = calibration._upstream_connection
+    timeouts: list[float] = []
+
+    def connection(
+        parsed: urllib.parse.SplitResult, timeout: float
+    ) -> http.client.HTTPConnection:
+        timeouts.append(timeout)
+        return original_connection(parsed, timeout)
+
+    monkeypatch.setattr(calibration, "_upstream_connection", connection)
+    with fake_upstream(
+        headers=[("Content-Type", "text/event-stream")],
+        body=openrouter_responses_sse(),
+        queued_get_responses=[
+            (HTTPStatus.NOT_FOUND, [("Content-Type", "application/json")], b"{}"),
+            (
+                HTTPStatus.OK,
+                [("Content-Type", "application/json")],
+                openrouter_generation(),
+            ),
+        ],
+    ) as upstream:
+        with running_broker(upstream, backend=calibration.OPENROUTER_BACKEND) as broker:
+            assert (
+                request(
+                    broker,
+                    document={
+                        "model": "openai/gpt-5.6-sol",
+                        "input": "redacted",
+                        "stream": True,
+                    },
+                )[0]
+                == HTTPStatus.OK
+            )
+    generation_timeouts = timeouts[1:]
+    assert len(generation_timeouts) == 2
+    assert 0 < generation_timeouts[1] < generation_timeouts[0] <= 0.5
+
+
+@pytest.mark.parametrize("stall", ["connect", "headers", "body"])
+def test_openrouter_generation_stalls_use_shrinking_settlement_window_and_retain(
+    monkeypatch: pytest.MonkeyPatch, stall: str
+) -> None:
+    settlement_window = 0.15
+    monkeypatch.setattr(calibration, "SETTLEMENT_WINDOW_SECONDS", settlement_window)
+    response_gate = threading.Event() if stall == "headers" else None
+    body_gate = threading.Event() if stall == "body" else None
+    with fake_upstream(
+        body=json.dumps(
+            {
+                "id": "gen-test-1",
+                "model": "openai/gpt-5.6-sol",
+                "status": "completed",
+                "usage": {
+                    "input_tokens": 2,
+                    "output_tokens": 3,
+                    "total_tokens": 5,
+                },
+            }
+        ).encode(),
+        queued_get_responses=[
+            (
+                HTTPStatus.OK,
+                [("Content-Type", "application/json")],
+                openrouter_generation(streamed=False),
+            )
+        ],
+        get_response_gate=response_gate,
+        get_body_gate=body_gate,
+    ) as upstream:
+        if stall == "connect":
+            original_connection = calibration._upstream_connection
+            calls = 0
+            observed_timeouts: list[float] = []
+
+            class StallingConnection(http.client.HTTPConnection):
+                def connect(self) -> None:
+                    assert self.timeout is not None
+                    observed_timeouts.append(self.timeout)
+                    time.sleep(self.timeout)
+                    raise TimeoutError("simulated connect stall")
+
+            def connection(
+                parsed: urllib.parse.SplitResult, timeout: float
+            ) -> http.client.HTTPConnection:
+                nonlocal calls
+                calls += 1
+                if calls == 1:
+                    return original_connection(parsed, timeout)
+                assert parsed.hostname is not None
+                return StallingConnection(parsed.hostname, parsed.port, timeout=timeout)
+
+            monkeypatch.setattr(calibration, "_upstream_connection", connection)
+        ledger = calibration.SpendLedger()
+        started = time.monotonic()
+        with running_broker(
+            upstream,
+            timeout=10,
+            ledger=ledger,
+            backend=calibration.OPENROUTER_BACKEND,
+        ) as broker:
+            status, _headers, _body = request(
+                broker,
+                document={
+                    "model": "openai/gpt-5.6-sol",
+                    "input": "redacted",
+                    "stream": False,
+                },
+            )
+        elapsed = time.monotonic() - started
+    assert status == HTTPStatus.BAD_GATEWAY
+    assert elapsed < 1.0
+    assert ledger.fatal is not None
+    assert ledger.cost == 0
+    assert ledger.reserved > 0
+    if stall == "connect":
+        assert observed_timeouts
+        assert 0 < observed_timeouts[0] <= settlement_window
 
 
 @pytest.mark.parametrize("include_event", [False, True])
@@ -3843,19 +3987,36 @@ def test_early_command_exception_class_is_captured_without_content(
 
 
 @pytest.mark.parametrize(
-    ("preactivation_failure", "ledger_mode", "exposure_authority"),
+    ("failure_point", "ledger_mode", "exposure_authority"),
     [
-        (False, "valid", "broker_ledger"),
-        (True, "read_error", "preactivation_zero"),
-        (False, "missing", "conservative_allocation_fallback"),
-        (False, "malformed", "conservative_allocation_fallback"),
-        (False, "read_error", "conservative_allocation_fallback"),
+        ("postactivation", "valid", "broker_ledger"),
+        ("preactivation", "read_error", "preactivation_zero"),
+        ("preactivation", "stale_preactivation", "broker_ledger"),
+        ("preactivation", "preactivation_nonzero", "preactivation_zero"),
+        ("postactivation", "missing", "conservative_allocation_fallback"),
+        ("postactivation", "malformed", "conservative_allocation_fallback"),
+        ("postactivation", "read_error", "conservative_allocation_fallback"),
+        (
+            "postactivation",
+            "stale_preactivation",
+            "conservative_allocation_fallback",
+        ),
+        (
+            "postactivation",
+            "wrong_attempt",
+            "conservative_allocation_fallback",
+        ),
+        (
+            "activation_token_write",
+            "stale_preactivation",
+            "conservative_allocation_fallback",
+        ),
     ],
 )
 def test_run_attempt_captures_result_before_zero_request_ledger_after_cleanup(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
-    preactivation_failure: bool,
+    failure_point: str,
     ledger_mode: str,
     exposure_authority: str,
 ) -> None:
@@ -3864,14 +4025,20 @@ def test_run_attempt_captures_result_before_zero_request_ledger_after_cleanup(
     cleanup_calls = 0
 
     class Sidecar:
-        def __init__(self, **_kwargs: Any) -> None:
-            pass
+        def __init__(self, **kwargs: Any) -> None:
+            self.attempt_token = kwargs["attempt_token"]
+            self.activated = False
 
         def start(self) -> None:
             pass
 
         def probe(self) -> None:
             pass
+
+        def activate(self) -> None:
+            if failure_point == "activation_token_write":
+                raise RuntimeError("private activation write failure")
+            self.activated = True
 
         def cleanup(self) -> dict[str, Any]:
             nonlocal cleanup_calls
@@ -3885,39 +4052,48 @@ def test_run_attempt_captures_result_before_zero_request_ledger_after_cleanup(
                 raise OSError("private ledger read failure")
             if ledger_mode == "malformed":
                 return {"known_actual_cost_usd": "not-a-decimal"}
+            activated = ledger_mode != "stale_preactivation" and (
+                failure_point == "postactivation"
+            )
             return {
                 "active": False,
-                "activated": not preactivation_failure,
+                "activation_token_sha256": (
+                    "0" * 64
+                    if ledger_mode == "wrong_attempt"
+                    else hashlib.sha256(self.attempt_token.encode()).hexdigest()
+                    if activated
+                    else None
+                ),
+                "activated": activated,
                 "fatal": None,
-                "known_actual_cost_usd": "0",
+                "known_actual_cost_usd": (
+                    "0.25" if ledger_mode == "preactivation_nonzero" else "0"
+                ),
                 "locked_endpoint": None,
                 "request_count": 0,
                 "requests": [],
                 "retained_unknown_reservation_usd": "0",
-                "schema_version": 1,
+                "schema_version": 2,
             }
 
     class Authority:
         def __init__(self, *_args: Any) -> None:
-            pass
+            self.sidecar = _args[3]
 
         def wait_inspect_activate(
             self, future: Future[Any], attempt: dict[str, Any]
         ) -> dict[str, Any]:
-            if preactivation_failure:
+            if failure_point == "preactivation":
 
                 def fail_discovery() -> None:
                     future.result(timeout=5)
                     raise RuntimeError("private discovery failure")
 
                 calibration._run_phase(attempt, "main_discovery", fail_discovery)
-            for phase in (
-                "main_discovery",
-                "main_config_validation",
-                "broker_activation",
-                "heartbeat_start",
-            ):
+            for phase in ("main_discovery", "main_config_validation"):
                 calibration._run_phase(attempt, phase, lambda: None)
+            calibration._run_phase(attempt, "broker_activation", self.sidecar.activate)
+            calibration._run_phase(attempt, "heartbeat_start", lambda: None)
             return {}
 
     def command(*_args: Any, **_kwargs: Any) -> calibration.CommandResult:
@@ -3965,8 +4141,12 @@ def test_run_attempt_captures_result_before_zero_request_ledger_after_cleanup(
         )
     assert caught.value.evidence == (
         {"cause_class": "RuntimeError", "failed_stage": "main_discovery"}
-        if preactivation_failure
-        else {"cause_class": "RuntimeError", "failed_stage": "cli_wait"}
+        if failure_point == "preactivation"
+        else (
+            {"cause_class": "RuntimeError", "failed_stage": "broker_activation"}
+            if failure_point == "activation_token_write"
+            else {"cause_class": "RuntimeError", "failed_stage": "cli_wait"}
+        )
     )
     assert read_minimums == [0]
     assert cleanup_calls == 1
@@ -3978,7 +4158,7 @@ def test_run_attempt_captures_result_before_zero_request_ledger_after_cleanup(
     assert attempt["spend"]["retained_unknown_reservation_usd"] == expected_retained
     assert attempt["command_outcome"]["return_code"] == 9
     assert attempt["command_outcome"]["completion"]["before_main_activation"] is (
-        preactivation_failure
+        failure_point != "postactivation"
     )
     assert "private" not in json.dumps(attempt)
 

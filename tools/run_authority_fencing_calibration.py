@@ -687,6 +687,9 @@ class BrokerState:
         self.locked_endpoint: str | None = None
         self.active = token is not None
         self.activated = token is not None
+        self.activation_token_sha256 = (
+            hashlib.sha256(token.encode()).hexdigest() if token is not None else None
+        )
         self.last_heartbeat: float | None = (
             time.monotonic() if token is not None else None
         )
@@ -702,6 +705,7 @@ class BrokerState:
             with self.lock:
                 document = {
                     "active": self.active,
+                    "activation_token_sha256": self.activation_token_sha256,
                     "activated": self.activated,
                     "backend": self.backend.name,
                     "fatal": self.ledger.fatal,
@@ -713,7 +717,7 @@ class BrokerState:
                     "request_count": self.request_count,
                     "requests": [dataclasses.asdict(item) for item in self.records],
                     "retained_unknown_reservation_usd": str(self.ledger.reserved),
-                    "schema_version": 1,
+                    "schema_version": 2,
                     "lease": {
                         "channel": "anonymous-stdin-pipe",
                         "heartbeat_interval_seconds": HEARTBEAT_INTERVAL_SECONDS,
@@ -834,6 +838,9 @@ class BrokerState:
                 self._token = token
                 self.active = True
                 self.activated = True
+                self.activation_token_sha256 = hashlib.sha256(
+                    token.encode()
+                ).hexdigest()
                 self.last_heartbeat = now
                 self.lease_channel_identity = channel_identity
         if expired:
@@ -1005,7 +1012,11 @@ class BrokerState:
             raise PermissionError("broker attempt expired")
 
     def send_connected_settlement_request(
-        self, upstream: http.client.HTTPConnection, path: str
+        self,
+        upstream: http.client.HTTPConnection,
+        path: str,
+        *,
+        io_timeout: float,
     ) -> None:
         expired = False
         with self.lock:
@@ -1025,7 +1036,11 @@ class BrokerState:
                 if upstream.sock is None:
                     raise RuntimeError("upstream is not connected")
                 upstream.sock.settimeout(
-                    min(self.deadline - now, float(MAX_ATTEMPT_SECONDS))
+                    min(
+                        self.deadline - now,
+                        float(MAX_ATTEMPT_SECONDS),
+                        io_timeout,
+                    )
                 )
                 upstream.request(
                     "GET",
@@ -1202,12 +1217,13 @@ def _read_bounded_response(
     state: BrokerState,
     declared_length: int | None,
     max_bytes: int = MAX_RESPONSE_BYTES,
+    io_deadline: float | None = None,
 ) -> bytes:
     retained = bytearray()
     while True:
         if len(retained) > max_bytes:
             raise ValueError("model response exceeds limit")
-        timeout = state.upstream_io_timeout()
+        timeout = _upstream_io_timeout(state, io_deadline=io_deadline)
         if upstream.sock is None:
             raise ConnectionError("model upstream socket closed")
         upstream.sock.settimeout(timeout)
@@ -1220,6 +1236,18 @@ def _read_bounded_response(
     if declared_length is not None and len(retained) != declared_length:
         raise ValueError("model response framing mismatch")
     return bytes(retained)
+
+
+def _upstream_io_timeout(
+    state: BrokerState, *, io_deadline: float | None = None
+) -> float:
+    timeout = state.upstream_io_timeout()
+    if io_deadline is None:
+        return timeout
+    remaining = io_deadline - time.monotonic()
+    if remaining <= 0:
+        raise TimeoutError("OpenRouter generation settlement timed out")
+    return min(timeout, remaining)
 
 
 def _parse_responses_stream(body: bytes) -> tuple[Decimal, dict[str, int]]:
@@ -1463,11 +1491,20 @@ def _poll_openrouter_generation(
     while True:
         if time.monotonic() >= deadline:
             raise TimeoutError("OpenRouter generation settlement timed out")
-        upstream = _upstream_connection(parsed, state.upstream_io_timeout())
+        upstream = _upstream_connection(
+            parsed, _upstream_io_timeout(state, io_deadline=deadline)
+        )
         response: http.client.HTTPResponse | None = None
         try:
             upstream.connect()
-            state.send_connected_settlement_request(upstream, path)
+            state.send_connected_settlement_request(
+                upstream,
+                path,
+                io_timeout=_upstream_io_timeout(state, io_deadline=deadline),
+            )
+            if upstream.sock is None:
+                raise ConnectionError("model upstream socket closed")
+            upstream.sock.settimeout(_upstream_io_timeout(state, io_deadline=deadline))
             response = upstream.getresponse()
             declared = _response_framing(response.headers, require_explicit=False)
             if declared is not None and declared > GENERATION_MAX_RESPONSE_BYTES:
@@ -1478,6 +1515,7 @@ def _poll_openrouter_generation(
                 state,
                 declared,
                 max_bytes=GENERATION_MAX_RESPONSE_BYTES,
+                io_deadline=deadline,
             )
             if response.status == HTTPStatus.NOT_FOUND:
                 if time.monotonic() + SETTLEMENT_POLL_SECONDS >= deadline:
@@ -3520,7 +3558,7 @@ class DockerBrokerSidecar:
                 document = strict_json(path.read_bytes())
                 if (
                     not isinstance(document, dict)
-                    or document.get("schema_version") != 1
+                    or document.get("schema_version") != 2
                 ):
                     raise ValueError("broker evidence schema rejected")
                 if document.get("pricing_sha256") != self.pricing.sha256:
@@ -4264,15 +4302,32 @@ def _mark_attempt_failed(
     attempt["outcome"] = "failed"
 
 
-def _ledger_spend_evidence(document: Any, *, allocation: Decimal) -> dict[str, str]:
+def _ledger_spend_evidence(
+    document: Any,
+    *,
+    allocation: Decimal,
+    activation_started: bool,
+    activation_token_sha256: str,
+) -> dict[str, str]:
     if not isinstance(document, dict):
         raise ValueError("broker ledger is malformed")
     request_count = document.get("request_count")
     requests = document.get("requests")
     if (
-        document.get("schema_version") != 1
+        document.get("schema_version") != 2
         or type(document.get("active")) is not bool
         or type(document.get("activated")) is not bool
+        or (
+            document.get("activation_token_sha256") is not None
+            and (
+                type(document.get("activation_token_sha256")) is not str
+                or len(document["activation_token_sha256"]) != 64
+                or any(
+                    character not in "0123456789abcdef"
+                    for character in document["activation_token_sha256"]
+                )
+            )
+        )
         or type(request_count) is not int
         or not 0 <= request_count <= MAX_REQUESTS
         or not isinstance(requests, list)
@@ -4285,6 +4340,20 @@ def _ledger_spend_evidence(document: Any, *, allocation: Decimal) -> dict[str, s
         or type(document.get("retained_unknown_reservation_usd")) is not str
     ):
         raise ValueError("broker ledger is malformed")
+    if activation_started:
+        if (
+            document["activated"] is not True
+            or document["activation_token_sha256"] != activation_token_sha256
+        ):
+            raise ValueError("broker ledger activation authority is stale")
+    elif (
+        document["active"] is not False
+        or document["activated"] is not False
+        or document["activation_token_sha256"] is not None
+        or request_count != 0
+        or requests
+    ):
+        raise ValueError("broker ledger preactivation authority is invalid")
     try:
         known = Decimal(document["known_actual_cost_usd"])
         retained = Decimal(document["retained_unknown_reservation_usd"])
@@ -4298,6 +4367,8 @@ def _ledger_spend_evidence(document: Any, *, allocation: Decimal) -> dict[str, s
         or known + retained > allocation
     ):
         raise ValueError("broker ledger spend exceeds attempt allocation")
+    if not activation_started and (known != 0 or retained != 0):
+        raise ValueError("broker ledger preactivation spend is nonzero")
     return {
         "exposure_authority": "broker_ledger",
         "known_actual_cost_usd": str(known),
@@ -4627,9 +4698,24 @@ def _run_attempt(
         if ledger_document is None:
             with suppress(BaseException):
                 ledger_document = sidecar.read_ledger()
+        activation = next(
+            (
+                item
+                for item in attempt_record.get("phases", {}).get("timeline", [])
+                if item.get("phase") == "broker_activation"
+            ),
+            {},
+        )
+        activation_started = bool(
+            getattr(sidecar, "activated", False) or activation.get("started") is True
+        )
+        activation_token_sha256 = hashlib.sha256(attempt_token.encode()).hexdigest()
         try:
             spend = _ledger_spend_evidence(
-                ledger_document, allocation=attempt_allocation
+                ledger_document,
+                allocation=attempt_allocation,
+                activation_started=activation_started,
+                activation_token_sha256=activation_token_sha256,
             )
         except ValueError:
             spend = _fallback_attempt_spend(
@@ -4665,7 +4751,12 @@ def _run_attempt(
         "security": security_evidence,
         "shutdown": cleanup_evidence,
     }
-    spend = _ledger_spend_evidence(ledger_document, allocation=attempt_allocation)
+    spend = _ledger_spend_evidence(
+        ledger_document,
+        allocation=attempt_allocation,
+        activation_started=True,
+        activation_token_sha256=hashlib.sha256(attempt_token.encode()).hexdigest(),
+    )
     attempt_record["broker"] = broker_evidence
     attempt_record["spend"] = spend
     attempt_record["outcome"] = "failed"

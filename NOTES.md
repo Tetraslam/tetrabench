@@ -1144,3 +1144,19 @@ OpenRouter documents UTC pricing windows as integer HHMM clock numbers, includin
 The nonstream chat regression no longer assumes the broker handler has appended its record when the client receives the flushed response. It uses the suite's bounded condition-polling pattern and asserts publication before reading the record.
 
 Fifty-two focused tests, all 1,094 non-Docker tests, and ten required real-Docker tests passed. `uv lock --check`, locked all-group sync, Ruff check/format, ty, Bandit, actionlint, wheel/sdist build, isolated locked-wheel installation and metadata/content smoke, all-groups pip-audit, `git diff --check`, and redacted 53-commit full-history Gitleaks passed. Hosted validation remains pending because this task forbids creating a PR.
+
+## 2026-08-31T21:43:06-07:00: E-097 activation and settlement review corrections
+
+Provenance: two Codex review findings on PR 2; race-focused broker-ledger fakes; fake OpenRouter connect, response-header, and body stalls; local Python 3.12 and real-Docker validation. No provider/model call or calibration occurred.
+
+Broker ledger schema v2 now records a SHA-256 current-attempt binding only after activation accepts the high-entropy attempt token. Once `broker_activation` starts, failure accounting trusts ledger spend only when the ledger proves both activated state and the current attempt binding. A stale schema-valid preactivation ledger after activation starts or the token write, and an activated ledger from another attempt, retain the complete allocation as conservative unknown exposure. A failure proven before activation remains zero.
+
+OpenRouter generation settlement now applies one fixed deadline independently to connect, credentialed request send, response-header wait, and every body read. Each operation and retry recomputes the smaller remaining settlement and attempt bounds. Fake stalls fail closed in under one second with a 150 ms test window and retain the forwarded reservation; a 404 retry receives a strictly smaller timeout.
+
+All 363 focused calibration tests, 1,102 non-Docker tests, and ten required real-Docker tests passed. Lock checking, Ruff check/format, ty, Bandit, actionlint, and diff checks passed. Package, dependency, installed-wheel, full-history secret-scan, and hosted evidence remain pending.
+
+## 2026-08-31T22:02:00-07:00: E-097 final local validation correction
+
+Provenance: final local Python 3.12 validation after adding explicit invalid preactivation-spend rejection. No provider/model call or calibration occurred.
+
+The preceding E-097 entry is superseded where its counts and pending checks differ. A failure proven before activation now reports zero even if a schema-valid inactive ledger improperly claims nonzero spend. All 364 focused calibration tests, 1,103 non-Docker tests, and ten required real-Docker tests passed. Lock checking, Ruff check/format, ty, Bandit, actionlint, wheel/sdist build, isolated locked-wheel installation and metadata/content smoke, all-groups pip-audit, `git diff --check`, redacted 54-commit full-history Gitleaks, and Docker residue inspection passed. Hosted validation remains pending.

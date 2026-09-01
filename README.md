@@ -104,12 +104,14 @@ authoritative generation `total_cost`. Responses normalizes
 `/generation?id=...` record before forwarding. Streaming chat rejects before
 reservation. Missing, delayed, ambiguous, or mismatched settlement makes the
 ledger fatal, retains the full reservation as unknown exposure, and prevents
-later forwarding. If an activated attempt fails without readable valid broker
-ledger authority, its complete allocation is retained as conservative unknown
-exposure; broker-known retained reservations remain separately identified.
-Preactivation zero exposure requires evidence that activation never started. The
-30-second client backpressure timeout applies only to the buffered downstream
-write.
+later forwarding. The 30-second generation settlement window independently caps
+connect, response-header, and body-read I/O, and its remaining bound shrinks
+across retries. If broker activation has started, a failed attempt trusts ledger
+spend only when the ledger proves activation by the current attempt token's
+digest. Stale preactivation, missing, malformed, or unreadable evidence retains
+the complete attempt allocation as conservative unknown exposure. Preactivation
+zero exposure requires phase proof that activation never started. The 30-second
+client backpressure timeout applies only to the buffered downstream write.
 Fake-upstream tests cover both backends without a model call.
 Chat requests are normalized to exactly one completion and both supported
 endpoints reject multiplicity, background generation, non-text modalities,
