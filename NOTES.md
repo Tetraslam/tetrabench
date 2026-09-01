@@ -1194,3 +1194,19 @@ Provenance: OpenRouter fake-provider streams; 372 focused calibration tests; loc
 The preceding E-099 entry is superseded where it says local validation is pending. Both `response.completed` and `response.done` pass identical strict stream and generation reconciliation. A present `X-Generation-Id` is captured before body parsing and must equal the terminal identifier.
 
 Codex correctly found that the first implementation compared header and terminal IDs after `/generation` polling assigned authoritative cost. On mismatch, the exception path could settle that cost instead of retaining the complete reservation. Both streaming and nonstreaming paths now compare IDs before any generation lookup or cost assignment. Regressions prove mismatches make zero generation requests, retain no known cost, and retain the complete reservation as unknown exposure. Hosted CI and review-thread resolution remain pending; no paid retry is permitted.
+
+## 2026-09-01T02:00:07-07:00: E-100 conservative budget block
+
+Provenance: merged revision `07a8711`; GitHub Actions run `33488334728`; exact-four retry 2 with explicit prior exposure `$1.92172`; bounded private failure evidence; read-only OpenRouter key/activity API checks; Agents-vault title inspection; unauthenticated isolated browser check. No provider completion occurred.
+
+PR 4 passed 372 focused calibration tests, full hosted Python 3.12 parity, full-history Gitleaks, Codex review, thread resolution, merge, and post-merge CI. Retry 2 then failed before attempts because deterministic four-way allocation produced `$5.76957` per attempt while one maximum accepted request requires `$5.90248`. The private report records zero attempts, no pricing snapshot, zero new known cost, zero new retained exposure, and total prior unknown exposure `$1.92172`. No Docker or model authority started, and no proof file exists. The budget gate is working as designed.
+
+The experiments key's read-only `/api/v1/key` response reports aggregate current-day usage but identifies the key as non-management. OpenRouter documents `/api/v1/activity` as management-key-only and individual `/generation` lookup requires an ID; the failed call predates `X-Generation-Id` retention. The Agents vault contains only the standard experiments key. A fresh isolated browser redirects `https://openrouter.ai/activity` to sign-in. Aggregate daily usage cannot authoritatively isolate this generation without proving key exclusivity.
+
+Exact-four calibration is externally blocked until an authenticated OpenRouter Activity view/export or management credential identifies the failed generation and actual cost. After reconciliation, the next run must carry the resulting authoritative prior exposure rather than `$1.92172`. No cap, reservation, or request-shape bound should be weakened to bypass this gate.
+
+## 2026-09-01T02:18:00-07:00: E-100 exposure-threshold correction
+
+Provenance: Codex review finding on PR 5 and direct budget arithmetic. No provider call occurred.
+
+The preceding E-100 entry is incomplete where it permits a rerun after unspecified reconciliation. Four `$5.90248` worst-case reservations require `$23.60992`, so the `$25` cap permits prior exposure of at most `$1.39008`. Starting from `$1.92172`, provider evidence must reduce conservative exposure by at least `$0.53164`. A reconciled value above `$1.39008` remains correctly blocked before attempts.
