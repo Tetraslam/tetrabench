@@ -142,6 +142,7 @@ MAX_OUTPUT_COST_PER_TOKEN = Decimal("50") / Decimal(1_000_000)
 RESERVATION_SAFETY_MARGIN = Decimal("0.25")
 MAX_OUTPUT_TOKENS = 8192
 MAX_REQUESTS = 64
+DENY_UPSTREAM_EXPECTED_REQUESTS = 6
 MAX_CONCURRENCY = 2
 MAX_WORKERS = 4
 DEFAULT_BROKER_PORT = 62017
@@ -1693,6 +1694,9 @@ OPENROUTER_UNSUPPORTED_PRICE_FIELDS = frozenset(
         "web_search",
     }
 )
+OPENROUTER_REACHABLE_UNRESERVED_PRICE_FIELDS = frozenset(
+    {"internal_reasoning", "request"}
+)
 OPENROUTER_OVERRIDE_CONDITION_FIELDS = frozenset(
     {
         "context_length",
@@ -1759,7 +1763,8 @@ def _openrouter_pricing_values(pricing: Any) -> dict[str, Decimal]:
             continue
         if field not in OPENROUTER_UNSUPPORTED_PRICE_FIELDS:
             raise ValueError("OpenRouter unknown pricing field rejected")
-        if _nonnegative_decimal(value, field) != 0:
+        price = _nonnegative_decimal(value, field)
+        if field in OPENROUTER_REACHABLE_UNRESERVED_PRICE_FIELDS and price != 0:
             raise ValueError("OpenRouter unsupported paid pricing is nonzero")
     required = ("prompt", "completion", "input_cache_read", "input_cache_write")
     values = {field: _positive_decimal(pricing.get(field), field) for field in required}
@@ -4173,11 +4178,19 @@ def _command_exception_evidence(
 
 
 def _validate_cli_outcome(
-    result: CommandResult, document: Any | None, parse_status: str
+    result: CommandResult,
+    document: Any | None,
+    parse_status: str,
+    *,
+    debug_deny_upstream: bool = False,
 ) -> dict[str, Any]:
-    if result.returncode != 0:
+    if not debug_deny_upstream and result.returncode != 0:
         raise AttemptFailure(
             "agent_install_or_execution", "nonzero_exit", RuntimeError()
+        )
+    if debug_deny_upstream and result.returncode == 0:
+        raise AttemptFailure(
+            "deny_upstream_diagnostic", "unexpected_zero_exit", RuntimeError()
         )
     if result.stderr:
         raise AttemptFailure(
@@ -4195,7 +4208,12 @@ def _validate_cli_outcome(
         raise AttemptFailure("cli_schema", "schema_mismatch", ValueError())
     if document.get("schema_version") != 1:
         raise AttemptFailure("cli_schema", "schema_version", ValueError())
-    if document["outcome"] != "succeeded" or document["reward"] not in {"0", "1"}:
+    expected_outcome = "failed" if debug_deny_upstream else "succeeded"
+    expected_rewards = {"0"} if debug_deny_upstream else {"0", "1"}
+    if (
+        document["outcome"] != expected_outcome
+        or document["reward"] not in expected_rewards
+    ):
         raise AttemptFailure("cli_outcome", "not_succeeded", ValueError())
     return document
 
@@ -4402,6 +4420,42 @@ def _fallback_attempt_spend(
     }
 
 
+def _validate_deny_upstream_ledger(document: Mapping[str, Any]) -> None:
+    requests = document.get("requests")
+    if (
+        document.get("request_count") != DENY_UPSTREAM_EXPECTED_REQUESTS
+        or not isinstance(requests, list)
+        or len(requests) != DENY_UPSTREAM_EXPECTED_REQUESTS
+        or document.get("known_actual_cost_usd") != "0"
+        or Decimal(document.get("retained_unknown_reservation_usd", "-1")) != 0
+    ):
+        raise AttemptFailure(
+            "deny_upstream_diagnostic", "ledger_summary_mismatch", ValueError()
+        )
+    expected = {
+        "call_id": None,
+        "cost": None,
+        "disconnected": False,
+        "parent_authorization_sent": False,
+        "request_id": None,
+        "response_bytes": 38,
+        "retained_unknown_reservation_usd": "0",
+        "settlement": "released_unforwarded",
+        "status": 503,
+        "upstream_opened": False,
+        "usage": {},
+    }
+    for request in requests:
+        if not isinstance(request, dict) or any(
+            request.get(field) != value for field, value in expected.items()
+        ):
+            raise AttemptFailure(
+                "deny_upstream_diagnostic",
+                "request_forwarded_or_malformed",
+                ValueError(),
+            )
+
+
 def _validate_native_attempt(
     *,
     output: Path,
@@ -4411,6 +4465,7 @@ def _validate_native_attempt(
     expected_task_digest: str,
     harbor_model: str,
     snapshot_status: str,
+    debug_deny_upstream: bool = False,
 ) -> tuple[NativeSnapshot, dict[str, Any], dict[str, Any], dict[str, Any]]:
     try:
         native: NativeSnapshot = snapshot_native_output(output)
@@ -4423,14 +4478,20 @@ def _validate_native_attempt(
             expected_agent_name="opencode",
             expected_model_name=harbor_model,
             expected_reward=int(document["reward"]),
-            require_atif=True,
+            expected_exception_type=(
+                "NonZeroAgentExitCodeError" if debug_deny_upstream else None
+            ),
+            require_atif=not debug_deny_upstream,
         )
     except BaseException as error:
         failure_type = "snapshot" if snapshot_status == "failed" else "validation"
         raise AttemptFailure("native_output", failure_type, error) from error
     if record["native"]["trial"]["agent"]["name"] != "opencode":
         raise ValueError("native OpenCode agent identity mismatch")
-    if record["trajectory"]["agent"]["model_name"] != harbor_model:
+    if (
+        not debug_deny_upstream
+        and record["trajectory"]["agent"]["model_name"] != harbor_model
+    ):
         raise ValueError("OpenCode ATIF model identity mismatch")
     trial_name = record["native"]["trial"]["trial_name"]
     diagnostics_path = f"harbor-job/{trial_name}/verifier/diagnostics.json"
@@ -4450,6 +4511,32 @@ def _validate_native_attempt(
         or diagnostics.get("task_id") != TASK_ID
     ):
         raise ValueError("trusted verifier gate diagnostics mismatch")
+    if debug_deny_upstream:
+        job = JobResult.model_validate_json(native.read("harbor-job/result.json"))
+        if record["trajectory"] is not None or any(
+            value is not None
+            for value in (
+                job.stats.n_cache_tokens,
+                job.stats.n_input_tokens,
+                job.stats.n_output_tokens,
+                job.stats.cost_usd,
+            )
+        ):
+            raise ValueError("diagnostic native usage evidence is nonzero")
+        return (
+            native,
+            record,
+            gates,
+            {
+                "atif": None,
+                "harbor": {
+                    "cache_tokens": None,
+                    "input_tokens": None,
+                    "output_tokens": None,
+                    "reported_cost_usd": None,
+                },
+            },
+        )
     trajectory_metrics = _validate_metrics(record)
     harbor_metrics = _validate_harbor_metrics(
         native,
@@ -4593,7 +4680,10 @@ def _run_attempt(
                     )
                     attempt_record["command_outcome"] = command_evidence
                     validated = _validate_cli_outcome(
-                        command_result, command_document, parse_status
+                        command_result,
+                        command_document,
+                        parse_status,
+                        debug_deny_upstream=debug_deny_upstream,
                     )
                     return command_result, validated
 
@@ -4653,6 +4743,8 @@ def _run_attempt(
                     )
                 if ledger["fatal"] is not None:
                     raise ValueError("calibration attempt ledger is fatal")
+                if debug_deny_upstream:
+                    _validate_deny_upstream_ledger(ledger)
                 return security, ledger
 
             security_evidence, ledger_document = _run_phase(
@@ -4672,6 +4764,7 @@ def _run_attempt(
                     expected_task_digest=expected_task_digest,
                     harbor_model=harbor_model,
                     snapshot_status=snapshot_status,
+                    debug_deny_upstream=debug_deny_upstream,
                 ),
             )
         except BaseException as error:
@@ -4765,6 +4858,7 @@ def _run_attempt(
     _native, record, gates, metrics = native_validation
     completed = {
         "allocation_usd": str(attempt_allocation),
+        "admissible": False,
         "broker": broker_evidence,
         "command_outcome": attempt_record["command_outcome"],
         "containment": result.containment,
@@ -4795,14 +4889,23 @@ def _run_attempt(
         "model": model_group,
         "model_group": model_group,
         "model_identities": dataclasses.asdict(profile_contract),
-        "outcome": "succeeded",
-        "phases": attempt_record["phases"],
-        "trajectory": {
-            "agent": record["trajectory"]["agent"],
-            "schema_version": record["trajectory"]["schema_version"],
-            "sha256": record["trajectory"]["sha256"],
-            "step_count": record["trajectory"]["step_count"],
+        "outcome": "diagnostic_succeeded" if debug_deny_upstream else "succeeded",
+        "diagnostic": {
+            "admissible": False,
+            "deny_upstream": debug_deny_upstream,
+            "passed": debug_deny_upstream,
         },
+        "phases": attempt_record["phases"],
+        "trajectory": (
+            None
+            if debug_deny_upstream
+            else {
+                "agent": record["trajectory"]["agent"],
+                "schema_version": record["trajectory"]["schema_version"],
+                "sha256": record["trajectory"]["sha256"],
+                "step_count": record["trajectory"]["step_count"],
+            }
+        ),
         "verifier": {
             "artifact_manifest_sha256": record["artifact_manifest"]["sha256"],
             "environment_mode": "separate",
@@ -5058,6 +5161,17 @@ def main(argv: list[str] | None = None) -> int:
                 and recorded_cost == total_cost
                 and actual_within_reservations
             )
+            diagnostic_passed = (
+                args.debug_deny_upstream
+                and len(attempts) == args.attempts_per_profile * len(PROFILE_CONTRACTS)
+                and source_unchanged
+                and total_cost == 0
+                and all(
+                    attempt.get("outcome") == "diagnostic_succeeded"
+                    for attempt in attempts
+                )
+            )
+            ok = admissible or diagnostic_passed
             installed = {
                 item["name"].lower(): item["version"]
                 for item in installed_cli.attestation["distribution"][
@@ -5113,8 +5227,9 @@ def main(argv: list[str] | None = None) -> int:
                 "diagnostic": {
                     "admissible": False,
                     "deny_upstream": args.debug_deny_upstream,
+                    "passed": diagnostic_passed,
                 },
-                "ok": admissible,
+                "ok": ok,
                 "profiles": [
                     dataclasses.asdict(profile) for profile in PROFILE_CONTRACTS
                 ],
@@ -5159,6 +5274,7 @@ def main(argv: list[str] | None = None) -> int:
                         {
                             attempt["trajectory"]["agent"]["version"]
                             for attempt in attempts
+                            if attempt["trajectory"] is not None
                         }
                     ),
                 },
@@ -5167,7 +5283,7 @@ def main(argv: list[str] | None = None) -> int:
             if authority is not None and admissible:
                 write_exclusive_proof(authority, encoded)
             _emit(evidence)
-            return 0 if admissible else 1
+            return 0 if ok else 1
     except BaseException as error:
         if run_id is not None:
             try:

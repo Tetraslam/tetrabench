@@ -1386,6 +1386,7 @@ def _native_run_record(
     expected_agent_name: str = "oracle",
     expected_model_name: str | None = None,
     expected_reward: int = 1,
+    expected_exception_type: str | None = None,
     require_atif: bool = False,
 ) -> dict[str, Any]:
     job_prefix = "harbor-job"
@@ -1424,7 +1425,7 @@ def _native_run_record(
     if (
         result.n_total_trials != 1
         or result.stats.n_completed_trials != 1
-        or result.stats.n_errored_trials != 0
+        or result.stats.n_errored_trials != (1 if expected_exception_type else 0)
         or result.stats.n_retries != 0
         or result.stats.n_cancelled_trials != 0
         or result.stats.n_running_trials != 0
@@ -1463,7 +1464,14 @@ def _native_run_record(
         raw_verifier.get("rewards") if isinstance(raw_verifier, dict) else None
     )
     if (
-        trial.exception_info is not None
+        (
+            trial.exception_info is not None
+            if expected_exception_type is None
+            else (
+                trial.exception_info is None
+                or trial.exception_info.exception_type != expected_exception_type
+            )
+        )
         or trial.step_results is not None
         or trial.started_at is None
         or trial.finished_at is None
