@@ -1160,3 +1160,9 @@ All 363 focused calibration tests, 1,102 non-Docker tests, and ten required real
 Provenance: final local Python 3.12 validation after adding explicit invalid preactivation-spend rejection. No provider/model call or calibration occurred.
 
 The preceding E-097 entry is superseded where its counts and pending checks differ. A failure proven before activation now reports zero even if a schema-valid inactive ledger improperly claims nonzero spend. All 364 focused calibration tests, 1,103 non-Docker tests, and ten required real-Docker tests passed. Lock checking, Ruff check/format, ty, Bandit, actionlint, wheel/sdist build, isolated locked-wheel installation and metadata/content smoke, all-groups pip-audit, `git diff --check`, redacted 54-commit full-history Gitleaks, and Docker residue inspection passed. Hosted validation remains pending.
+
+## 2026-08-31T22:23:46-07:00: E-097 hosted validation
+
+Provenance: GitHub Actions run [33472802576](https://github.com/Tetraslam/tetrabench/actions/runs/33472802576) for implementation commit `32ed9eacf2056629c26160476ae008ff9ec55efc`.
+
+The Python 3.12 job passed lock checking, locked installation, lint, formatting, type checking, Bandit, Docker availability, all ten required Docker tests, all 1,103 non-Docker tests, package build, isolated-wheel smoke, and the complete dependency audit. The independent full-history Gitleaks job passed. E-097 is complete. No provider/model call or calibration occurred.
