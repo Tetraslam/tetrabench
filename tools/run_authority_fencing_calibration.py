@@ -380,6 +380,7 @@ class RequestRecord:
     response_bytes: int
     disconnected: bool
     settlement: str
+    settlement_failure: str | None
     retained_unknown_reservation_usd: str
     upstream_opened: bool
     parent_authorization_sent: bool
@@ -493,6 +494,12 @@ class EarlyCommandSuccess(RuntimeError):
 
 class EarlyCommandNonzeroReturn(RuntimeError):
     pass
+
+
+class OpenRouterSettlementError(ValueError):
+    def __init__(self, code: str) -> None:
+        super().__init__(code)
+        self.code = code
 
 
 def _new_phase_evidence() -> dict[str, Any]:
@@ -1456,34 +1463,48 @@ def _validate_openrouter_generation(
 ) -> Decimal:
     document = _strict_json_decimal(body)
     if not isinstance(document, dict) or not isinstance(document.get("data"), dict):
-        raise ValueError("OpenRouter generation schema rejected")
+        raise OpenRouterSettlementError("generation_schema")
     generation = document["data"]
+    if generation.get("id") != expected_id:
+        raise OpenRouterSettlementError("generation_id_mismatch")
     if (
-        generation.get("id") != expected_id
-        or (
-            expected_upstream_id is not None
-            and generation.get("upstream_id") != expected_upstream_id
-        )
-        or generation.get("model") != expected_model
-        or generation.get("streamed") is not expected_streamed
+        expected_upstream_id is not None
+        and generation.get("upstream_id") != expected_upstream_id
     ):
-        raise ValueError("OpenRouter generation identity mismatch")
-    total_cost = _stream_cost(generation.get("total_cost"))
-    usage_cost = _stream_cost(generation.get("usage"))
+        raise OpenRouterSettlementError("generation_upstream_id_mismatch")
+    if generation.get("model") != expected_model:
+        raise OpenRouterSettlementError("generation_model_mismatch")
+    if generation.get("streamed") is not expected_streamed:
+        raise OpenRouterSettlementError("generation_stream_mismatch")
+    try:
+        total_cost = _stream_cost(generation.get("total_cost"))
+        usage_cost = _stream_cost(generation.get("usage"))
+    except ValueError as error:
+        raise OpenRouterSettlementError("generation_cost_malformed") from error
     if usage_cost != total_cost or (
         expected_cost is not None and total_cost != expected_cost
     ):
-        raise ValueError("OpenRouter generation cost mismatch")
-    _usage_token_count(generation.get("tokens_prompt"))
-    _usage_token_count(generation.get("tokens_completion"))
-    native_prompt = _usage_token_count(generation.get("native_tokens_prompt"))
-    native_completion = _usage_token_count(generation.get("native_tokens_completion"))
+        raise OpenRouterSettlementError("generation_cost_mismatch")
+    try:
+        _usage_token_count(generation.get("tokens_prompt"))
+        _usage_token_count(generation.get("tokens_completion"))
+    except ValueError as error:
+        raise OpenRouterSettlementError(
+            "generation_normalized_tokens_malformed"
+        ) from error
+    try:
+        native_prompt = _usage_token_count(generation.get("native_tokens_prompt"))
+        native_completion = _usage_token_count(
+            generation.get("native_tokens_completion")
+        )
+    except ValueError as error:
+        raise OpenRouterSettlementError("generation_native_tokens_malformed") from error
     if {
         "input_tokens": native_prompt,
         "output_tokens": native_completion,
         "total_tokens": native_prompt + native_completion,
     } != dict(expected_usage):
-        raise ValueError("OpenRouter generation token usage mismatch")
+        raise OpenRouterSettlementError("generation_native_tokens_mismatch")
     return total_cost
 
 
@@ -2835,6 +2856,7 @@ class CalibrationBrokerHandler(BaseHTTPRequestHandler):
         potentially_paid = False
         settlement_finalized = False
         settlement = "unforwarded"
+        settlement_failure: str | None = None
         response: http.client.HTTPResponse | None = None
         forwarding = ForwardingAdmission()
         upstream_opened = False
@@ -2947,7 +2969,9 @@ class CalibrationBrokerHandler(BaseHTTPRequestHandler):
                 self.wfile.flush()
             except (TimeoutError, BrokenPipeError, ConnectionResetError):
                 disconnected = True
-        except (OSError, http.client.HTTPException, RuntimeError, ValueError):
+        except (OSError, http.client.HTTPException, RuntimeError, ValueError) as error:
+            if isinstance(error, OpenRouterSettlementError):
+                settlement_failure = error.code
             potentially_paid = potentially_paid or forwarding.started
             if reservation is not None and not settlement_finalized:
                 try:
@@ -2995,6 +3019,7 @@ class CalibrationBrokerHandler(BaseHTTPRequestHandler):
                             response_bytes=response_bytes,
                             disconnected=disconnected,
                             settlement=settlement,
+                            settlement_failure=settlement_failure,
                             retained_unknown_reservation_usd=str(retained),
                             upstream_opened=upstream_opened,
                             parent_authorization_sent=forwarding.started,

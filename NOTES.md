@@ -1286,3 +1286,27 @@ The preceding E-104 entry is superseded where it says full local validation is p
 Provenance: PR 9 at implementation commit `dcec478`; GitHub Actions run `33565176902`; GitHub PR checks, review, comments, and mergeability inspection. No provider call occurred.
 
 The preceding E-104 entries are superseded where they say hosted validation is pending. Python 3.12 release parity and the independent full-history secret scan passed. GitHub reports no configured, requested, or posted automatic review and a cleanly mergeable PR. Merge and post-merge CI remain pending; no paid retry is permitted before both pass.
+
+## 2026-09-01T16:01:54-07:00: E-105 bounded settlement diagnostics
+
+Provenance: merged revision `19d36ef`; PR 9 and post-merge GitHub Actions runs `33566328476` and `33567394851`; exact-four retry 6 bounded private report; authenticated OpenRouter `/generation`; private raw and canonical reconciliation evidence; fake-provider regressions. No additional provider completion occurred during implementation or validation.
+
+Retry 6 used cumulative priors `$0.065994` known and `$0.96086` unknown, admitted `$5.9932865` per attempt, and made one target `/v1/responses` request. It reached the corrected generation identity and native-token path but still retained `$0.96086`, stopped remaining attempts, completed cleanup, and wrote no proof. Authenticated `/generation` records normalized counts 7,415 prompt and 82 completion, native counts 6,028 prompt and 127 completion, canonical model `openai/gpt-5.6-sol-20260709`, streamed tool-call completion, and exact cost `$0.0163385`. Existing bounded evidence cannot distinguish upstream-ID, cost, or native-token mismatch without retaining unsafe exception text or raw model output.
+
+D-110 adds one optional source-defined `settlement_failure` enum to broker request evidence. Typed generation validation distinguishes schema, generation ID, upstream ID, model, stream, malformed/mismatched cost, malformed normalized token, and malformed/mismatched native token failures. Successful records retain null; untyped earlier failures retain null. No provider value, message, terminal ID, raw response, or model content enters the field. Fake-provider tests assert safe codes for each identity/model/stream/cost/native-token mismatch while preserving full reservation retention and retry blocking.
+
+Private reconciliation `authority-fencing-openrouter-reconciliation-20260901-r6.json` is mode `0600`, 708 bytes, SHA-256 `acf1f5b3cf2e5d7d886841464bc8fb92c83424405b96e20149ed9d15655eb23a`. The bounded retry report is mode `0600`, 4,932 bytes, SHA-256 `1fdb5ba7cbcf5b65c48d6e849521613172ccf91e92dd951ad2530736515b300b`; the private generation response is mode `0600`, 1,583 bytes, SHA-256 `4fccd4c8663463504a05c43b578ab955b370ffdeeae8b030fc8d22db5dd7fd97`.
+
+Retry 6's `$0.96086` reservation is superseded by `$0.0163385` known actual cost. Cumulative prior accounting is `$0.0823325` known OpenRouter cost plus `$0.96086` unknown LiteLLM exposure, total `$1.0431925`; four allocations are `$5.989201875`, above the `$5.90248` worst-case request. Focused diagnostic regressions, Ruff format/check, and ty pass. Full local, PR, review, and hosted parity remain pending; no paid retry is permitted before they pass.
+
+## 2026-09-01T16:13:42-07:00: E-105 local validation correction
+
+Provenance: 393 focused calibration tests; 1,132 non-Docker tests; ten required real-Docker tests; Ruff, format, ty, Bandit, lock, package, and diff checks. No provider call occurred.
+
+The preceding E-105 entry is superseded where it says full local validation is pending. All local release and Docker gates pass. PR, review, and hosted parity remain pending; no paid retry is permitted before they pass.
+
+## 2026-09-01T16:28:32-07:00: E-105 hosted validation correction
+
+Provenance: PR 10 at implementation commit `f2918d7`; GitHub Actions run `33570222404`; GitHub PR checks, review, comments, and mergeability inspection. No provider call occurred.
+
+The preceding E-105 entries are superseded where they say hosted validation is pending. Python 3.12 release parity and the independent full-history secret scan passed. GitHub reports no configured, requested, or posted automatic review and a cleanly mergeable PR. Merge and post-merge CI remain pending; no paid retry is permitted before both pass.
