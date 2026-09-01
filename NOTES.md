@@ -1166,3 +1166,13 @@ The preceding E-097 entry is superseded where its counts and pending checks diff
 Provenance: GitHub Actions run [33472802576](https://github.com/Tetraslam/tetrabench/actions/runs/33472802576) for implementation commit `32ed9eacf2056629c26160476ae008ff9ec55efc`.
 
 The Python 3.12 job passed lock checking, locked installation, lint, formatting, type checking, Bandit, Docker availability, all ten required Docker tests, all 1,103 non-Docker tests, package build, isolated-wheel smoke, and the complete dependency audit. The independent full-history Gitleaks job passed. E-097 is complete. No provider/model call or calibration occurred.
+
+## 2026-09-01T00:09:07-07:00: E-098 live OpenRouter denied-upstream validation
+
+Provenance: authenticated OpenRouter `/models` reads; repeated local Docker/Harbor diagnostics using `--backend openrouter --debug --attempts-per-profile 1 --debug-deny-upstream`; fake-provider regressions; local lint, type, security, package, and focused calibration validation. No provider completion occurred.
+
+The live selected model rows advertise nonzero `web_search` pricing even though the broker rejects web-search options, plugins, server-side web tools, media modalities, and every other triggering request surface before reservation. Pricing normalization now accepts nonzero known media/search fields only when their triggering surfaces are unreachable. Nonzero per-request and internal-reasoning prices remain fatal because accepted text/function-tool requests could incur them. Unknown pricing fields still fail closed.
+
+The denied-upstream diagnostic now treats the intentional failed OpenCode/Harbor execution as evidence rather than an admission failure. Each fixed profile completed one native Harbor attempt, made exactly six retry requests, received six local 503 responses, opened no upstream connection, sent no parent authorization, released every `$0.96086` reservation, retained zero unknown exposure, and left no owned container or network. Native validation requires the exact `NonZeroAgentExitCodeError`, verifier reward `0`, absent ATIF trajectory, and zero Harbor token/cost usage. The final report returned `ok=true`, `admissible=false`, two `diagnostic_succeeded` attempts, and total exposure `$0`.
+
+All 369 focused calibration tests, Ruff check/format, ty, Bandit, and wheel/sdist build passed. A full 1,118-test run passed 1,117 tests and hit one unrelated descendant-reaping timing failure; that exact test passed immediately in isolation. Hosted CI is pending and remains the clean full-parity authority. The exact four-attempt paid calibration remains `unproven` and must include the prior `$0.96086` unknown exposure.

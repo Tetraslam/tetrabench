@@ -150,10 +150,13 @@ proof must pass `--prior-unknown-exposure-usd 0.96086` for the retained
 conservative exposure. The required clean four-attempt report remains unproven.
 Debug mode defaults prior exposure to zero and also supports
 `--debug-deny-upstream`. It requires one attempt per profile and forbids proof
-output. After normal authenticated pricing, the broker accepts one valid request,
-records its endpoint and reservation shape, releases the reservation, and
-returns a fixed local 503 without opening a completion upstream connection. This
-zero-cost route diagnostic is always non-admissible. Direct OpenAI- or
+output. After normal authenticated pricing, each broker accepts exactly six
+OpenCode retry requests, records their endpoint and reservation shape, releases
+every reservation, and returns a fixed local 503 without opening a completion
+upstream connection or sending parent authorization. The runner requires the
+resulting failed native Harbor trial, zero native usage, zero spend exposure, and
+complete cleanup for both profiles before reporting diagnostic success. This
+zero-cost route diagnostic remains non-admissible. Direct OpenAI- or
 Anthropic-compatible endpoints need explicit pricing and settlement adapters;
 protocol compatibility does not grant spend authority. A direct OpenRouter
 contract probe cost `$0.00007`; it is separate from benchmark calibration and

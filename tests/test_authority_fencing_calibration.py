@@ -653,12 +653,23 @@ def test_safe_upstream_join_preserves_base_for_all_openrouter_paths() -> None:
     assert calibration._join_upstream_path(base, "/generation") == "/api/v1/generation"
 
 
-@pytest.mark.parametrize("field", ["request", "image", "audio", "web_search"])
+@pytest.mark.parametrize("field", ["request", "internal_reasoning"])
 def test_openrouter_models_rejects_unsupported_nonzero_paid_pricing(field: str) -> None:
     document = openrouter_pricing_document()
     document["data"][0]["pricing"][field] = "0.000001"
     with pytest.raises(ValueError, match="unsupported paid pricing"):
         calibration._validate_openrouter_pricing_document(document)
+
+
+@pytest.mark.parametrize(
+    "field",
+    ["audio", "image", "input_audio", "output_audio", "web_search"],
+)
+def test_openrouter_models_accepts_paid_surfaces_rejected_by_broker(field: str) -> None:
+    document = openrouter_pricing_document()
+    document["data"][0]["pricing"][field] = "0.01"
+    snapshot = calibration._validate_openrouter_pricing_document(document)
+    assert snapshot.models[0]["model_group"] == "openai/gpt-5.6-sol"
 
 
 def test_openrouter_models_rejects_unknown_paid_pricing_key() -> None:
@@ -3798,6 +3809,59 @@ def test_malformed_cli_stdout_is_digest_only_cli_schema_failure(tmp_path: Path) 
     assert len(evidence["stdout"]["sha256"]) == 64
     assert evidence["canonical_cli"] is None
     assert "secret-bearing" not in json.dumps(evidence)
+
+
+def test_deny_upstream_accepts_expected_failed_cli_outcome() -> None:
+    document = {
+        "job_directory": "/private/output",
+        "outcome": "failed",
+        "reward": "0",
+        "schema_version": 1,
+        "summary": {},
+    }
+    result = calibration.CommandResult(
+        returncode=1,
+        stdout=(json.dumps(document) + "\n").encode(),
+        stderr=b"",
+        containment={"survivors": 0},
+    )
+    assert (
+        calibration._validate_cli_outcome(
+            result, document, "canonical", debug_deny_upstream=True
+        )
+        == document
+    )
+
+
+def test_deny_upstream_rejects_any_forwarded_request() -> None:
+    requests = [
+        {
+            "call_id": None,
+            "cost": None,
+            "disconnected": False,
+            "parent_authorization_sent": False,
+            "request_id": None,
+            "response_bytes": 38,
+            "retained_unknown_reservation_usd": "0",
+            "settlement": "released_unforwarded",
+            "status": 503,
+            "upstream_opened": False,
+            "usage": {},
+        }
+        for _ in range(calibration.DENY_UPSTREAM_EXPECTED_REQUESTS)
+    ]
+    requests[-1]["upstream_opened"] = True
+    with pytest.raises(
+        calibration.AttemptFailure, match="request_forwarded_or_malformed"
+    ):
+        calibration._validate_deny_upstream_ledger(
+            {
+                "known_actual_cost_usd": "0",
+                "request_count": len(requests),
+                "requests": requests,
+                "retained_unknown_reservation_usd": "0",
+            }
+        )
 
 
 def test_failed_native_output_retains_only_structure_digests_and_classes(
