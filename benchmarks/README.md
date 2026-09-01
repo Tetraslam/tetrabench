@@ -298,7 +298,9 @@ LiteLLM retains `/model/info`. Both require finite
 positive input, output, cache-read, and cache-write rates plus positive model
 limits for exactly the selected models. Input and cache rates above `$10` per
 million tokens or output rates above `$50` per million make calibration fail.
-Nonzero request charges or unsupported paid modalities also fail. Evidence
+Nonzero per-request or internal-reasoning charges also fail. Known media/search
+rates are accepted only where request admission makes their triggers unreachable.
+Evidence
 retains a redacted normalized pricing snapshot, backend, source, and digest.
 
 Each attempt receives one ephemeral OpenAI credential. Chat requests contain or
@@ -321,12 +323,15 @@ sum exactly, each covers one worst-case request, each broker receives only its
 allocation, and unused allocation is not spend. LiteLLM preserves its
 response-cost settlement behavior. OpenRouter Responses SSE accepts data-only
 frames and optional matching event lines while ignoring comments and blank
-separators. It requires one successful terminal followed only by `[DONE]`.
+separators. It accepts the documented `response.completed` and `response.done`
+successful terminals followed only by `[DONE]`.
 Terminal usage cost is optional; when present it must equal authoritative
 generation `total_cost`. Responses input/output tokens and chat prompt/completion
 tokens normalize separately, then a bounded authenticated `/generation?id=...`
 cross-check requires exact ID, model, stream shape, cost, and token counts before
-bytes reach the child. Generation 404 retries only inside that settlement window
+bytes reach the child. A present `X-Generation-Id` header must match the terminal
+and remains bounded failure evidence if body validation fails. Generation 404
+retries only inside that settlement window
 and the attempt deadline. Streaming chat remains unsupported. Any ambiguity
 retains the full reservation. Direct compatible endpoints require explicit
 pricing and settlement adapters.
@@ -376,14 +381,14 @@ reported IPAM gateway and `Internal` value are recorded as topology only;
 authenticated pricing and later forwarding prove actual egress. This transport
 requires no host reachability or firewall change. No real calibration has
 completed, so difficulty calibration remains unproven. The next clean proof
-explicitly carries the retained `$0.96086` prior unknown exposure against the
+explicitly carries the retained `$1.92172` prior unknown exposure against the
 shared `$25` cap without claiming it as actual spend or a completed attempt. A
 separate direct OpenRouter contract probe cost `$0.00007`; it is not benchmark
 calibration. `--debug-deny-upstream` is
 a non-admissible one-attempt-per-profile diagnostic with no proof output. It
-performs normal authenticated pricing, then accepts and reserves one valid broker
-request, locks its endpoint, releases the reservation, and returns a fixed local
-503 before opening a completion upstream connection. It proves OpenCode
+performs normal authenticated pricing, then requires exactly six locally denied
+OpenCode retries per profile, released reservations, native errored-trial
+evidence, zero usage/exposure, and complete cleanup. It proves OpenCode
 installation, configuration, and endpoint routing at zero completion cost.
 Attempt diagnostics retain ordered boolean status for every sidecar, topology,
 CLI, main-admission, broker, heartbeat, ledger, native-validation, and cleanup
