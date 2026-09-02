@@ -1460,3 +1460,9 @@ OpenCode configures the pinned OpenAI provider for stateless Responses use, requ
 Provenance: final local source; pinned OpenCode 1.18.26 and `@ai-sdk/openai` 3.0.84 source contracts; independent adversarial review; Python 3.12 validation; real Docker daemon; isolated wheel installation; full-history Gitleaks. No provider call occurred during validation.
 
 All 465 focused calibration, 1,204 non-Docker, and ten required Docker tests passed. Regressions preserve exact reasoning records with empty and populated summaries alongside function calls/outputs; reject missing, extra, ID-bearing, media-bearing, mistyped, and arbitrary-summary shapes before reservation; and return bounded 400 responses for parser-deep and parser-safe recursive content without request admission. Ruff check/format, ty, Bandit, lock checking, wheel/sdist build, installed-wheel metadata/content smoke, all-groups pip-audit, actionlint, diff checks, and full-history Gitleaks over 98 commits passed. Independent review's recursion, cardinality wording, and edge-shape findings were fixed; final review found no remaining issue. Hosted CI, review, merge, and post-merge validation remain pending.
+
+## 2026-09-02T03:12:16-07:00: E-112 hosted validation
+
+Provenance: PR 17 head `c673e0c`; GitHub Actions run `33617317766`; GitHub review, comments, and mergeability inspection. No provider call occurred.
+
+Python 3.12 release parity and full-history secret scanning passed. No automatic or human review feedback appeared, and GitHub reports clean merge state. This supersedes the preceding E-112 entry where hosted parity was pending. Final evidence commit, merge, and post-merge parity remain pending; no paid retry is permitted before they pass.
