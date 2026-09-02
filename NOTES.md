@@ -1398,3 +1398,9 @@ The preceding E-109 entry is superseded where it says full local validation is p
 Provenance: PR 14 head `3dbfc92`; GitHub Actions run `33595530906`; Codex thread `PRRT_kwDOUGmv486eYV_8`; recursive JSONL and ATIF regressions. No provider call occurred.
 
 Both initial hosted jobs passed. Codex correctly found that deeply recursive JSON can raise `RecursionError` from `json.loads`, outside the diagnostics' prior `ValueError` handlers. Both OpenCode JSONL and ATIF shape diagnostics now map recursion to the same fixed malformed status; no recursive value or content enters evidence. All 417 focused calibration and 1,156 non-Docker tests pass. Review-fix hosted parity and explicit thread resolution remain pending; no paid retry is permitted before both pass.
+
+## 2026-09-01T23:13:16-07:00: E-109 Codex correction review evidence
+
+Provenance: PR 14 head `854000aeec96536c2e3941a90c009bc113f74ae6`; GitHub Actions run `33596939701`; Codex thread `PRRT_kwDOUGmv486eYV_8`.
+
+Both review-fix hosted jobs pass. No new review comment or actionable feedback appeared, and the Codex recursive-JSON thread is explicitly resolved. This supersedes the preceding E-109 correction entry where hosted parity and thread resolution were pending. Final evidence commit, merge, and post-merge parity remain pending; no paid retry is permitted before they pass.
