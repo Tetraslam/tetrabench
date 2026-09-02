@@ -1426,3 +1426,23 @@ The preceding E-110 entry is superseded where it says local parity is pending. T
 Provenance: PR 15 head `3d830db7888544b6b1d14d93b75c7013d76419ba`; GitHub Actions run `33602582868`; GitHub review, comments, threads, and mergeability inspection. No provider call occurred.
 
 Python 3.12 release parity and full-history secret scanning passed. No automatic or human review feedback appeared, there are no review threads, and GitHub reports clean merge state. This supersedes the preceding E-110 entry where hosted parity was pending. Final evidence commit, merge, and post-merge parity remain pending; no paid retry is permitted before they pass.
+
+## 2026-09-02T01:18:33-07:00: E-111 retry 13 process-boundary evidence
+
+Provenance: merged revision `4df9b15`; post-merge GitHub Actions run `33605239737`; retry 13 bounded private report; exact broker settlement; Harbor v0.22.0 `BaseInstalledAgent` and OpenCode adapter source; OpenCode v1.18.26 run source. No read-only generation lookup was needed because both broker requests settled authoritatively.
+
+Retry 13 used priors `$0.2534380` known and `$0.96086` unknown. Target attempt 1 made two requests that settled exactly at `$0.0163685` and `$0.038771`. Harbor returned failed/reward zero, one completed and errored trial, `NonZeroAgentExitCodeError`, zero OpenCode error events, one completed agent step with four completed tool calls and observations, complete cleanup, and no proof. The private report `authority-fencing-calibration-4-r13.stdout.json` is mode `0600`, 6,033 bytes, SHA-256 `45cf50b293ffb837ba3b6724e5b6af8dce358c419764ef28524d870568de16ce`. Cumulative accounting is `$0.3085775` known OpenRouter cost plus `$0.96086` unknown LiteLLM exposure, total `$1.2694375`; four allocations are `$5.932640625`.
+
+Harbor's native exception message begins with the pipeline status as `Command failed (exit N):` before including sensitive command and stream excerpts. OpenCode's pinned run stream emits six fixed JSON event kinds and only completed/error tool states. D-115 permits retaining only the bounded 1..255 status and its cautious fixed classification, fixed event/tool-state histograms, and final event kind. Arbitrary exception text, event payloads, commands, streams, model content, and tool content remain excluded. Local and hosted validation remain pending; no paid retry is permitted before they pass.
+
+## 2026-09-02T01:53:12-07:00: E-111 local validation
+
+Provenance: final local source; pinned Harbor/OpenCode source contracts; independent adversarial review; Python 3.12 validation; real Docker daemon; isolated wheel installation; full-history Gitleaks.
+
+All 453 focused calibration, 1,192 non-Docker, and ten required Docker tests passed. Exact schema assertions bind the six OpenCode event names and two emitted tool states. Regressions cover every accepted member, unknown and malformed events, malformed nested tool containers, exact exit status bounds, leading zeros, non-command exception messages, and private-content exclusion. Ruff check/format, ty, Bandit, lock checking, wheel/sdist build, installed-wheel metadata/content smoke, all-groups pip-audit, actionlint, diff checks, and full-history Gitleaks over 95 commits passed. Independent review's two initial test-coverage findings and two representation-consistency findings were fixed; final review found no remaining privacy or contract issue. Hosted CI, review, merge, and post-merge validation remain pending. No provider call occurred during validation.
+
+## 2026-09-02T02:06:18-07:00: E-111 hosted validation
+
+Provenance: PR 16 head `3377e5f`; GitHub Actions run `33611275380`; GitHub review, comments, and mergeability inspection. No provider call occurred.
+
+Python 3.12 release parity and full-history secret scanning passed. No automatic or human review feedback appeared, and GitHub reports clean merge state. This supersedes the preceding E-111 entry where hosted parity was pending. Final evidence commit, merge, and post-merge parity remain pending; no paid retry is permitted before they pass.
