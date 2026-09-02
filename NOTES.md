@@ -1404,3 +1404,19 @@ Both initial hosted jobs passed. Codex correctly found that deeply recursive JSO
 Provenance: PR 14 head `854000aeec96536c2e3941a90c009bc113f74ae6`; GitHub Actions run `33596939701`; Codex thread `PRRT_kwDOUGmv486eYV_8`.
 
 Both review-fix hosted jobs pass. No new review comment or actionable feedback appeared, and the Codex recursive-JSON thread is explicitly resolved. This supersedes the preceding E-109 correction entry where hosted parity and thread resolution were pending. Final evidence commit, merge, and post-merge parity remain pending; no paid retry is permitted before they pass.
+
+## 2026-09-01T23:49:31-07:00: E-110 retry 12 OpenCode error-kind boundary
+
+Provenance: PR 14; final PR and post-merge GitHub Actions runs `33598126143` and `33598975779`; merged revision `b871c16`; retry 11 bounded private preflight report; retry 12 bounded private report; exact broker settlement; authenticated read-only generation metadata; OpenCode v1.18.26 source at tag commit `774cc7c1914e4329eefde5a669f938b0cf566661`; fake event regressions. Read-only metadata lookup made no provider completion.
+
+PR 14 merged with all review threads resolved, and post-merge parity passed. The first subsequent invocation misspelled the 1Password item reference and supplied no credential. Its bounded report proves zero attempts, zero current cost/exposure, absent proof, and no Docker lifecycle. Private `authority-fencing-calibration-4-r11.stdout.json` is mode `0600`, 1,497 bytes, SHA-256 `1758494b2ecdca4e71a8c3193ee3259f0b15fa11156b5dfead7612c80bdd0412`. This preflight did not change accounting.
+
+Retry 12 used priors `$0.2062885` known and `$0.96086` unknown. Target attempt 1 made two requests that settled exactly at `$0.0163685` and `$0.030781`. Authenticated generation metadata records canonical `openai/gpt-5.6-sol-20260709`, streamed noncancelled `tool_calls` finishes, and matching native tokens/costs. Harbor returned failed/reward one. D-113 records one completed and errored trial, `NonZeroAgentExitCodeError`, one OpenCode error event with no malformed lines, two agent steps, and a final step containing model text plus one completed tool call and observation. Cleanup left no owned resource and no proof.
+
+OpenCode's v1.18.26 noninteractive runner sets exit code 1 on any session error. Its source-defined error schema has eight fixed names. D-114 retains only a histogram over those names and fixed `other`/`malformed` buckets; all nested data, messages, metadata, arbitrary names, and raw events remain excluded. Private retry report `authority-fencing-calibration-4-r12.stdout.json` is mode `0600`, 6,026 bytes, SHA-256 `34d49a98328c63ec400781b085fffaae9384987f183750cff83aab330a7cdd36`. Cumulative accounting is `$0.2534380` known OpenRouter cost plus `$0.96086` unknown LiteLLM exposure, total `$1.2142980`; four allocations are `$5.9464255`. Full local, Docker, PR, review, merge, and post-merge parity remain pending; no paid retry is permitted before they pass.
+
+## 2026-09-02T00:11:26-07:00: E-110 local validation correction
+
+Provenance: 428 focused calibration tests; 1,168 non-Docker tests; ten real-Docker tests; Ruff, format, ty, Bandit, lock, build, all-groups audit, diff checks, and independent code review. No provider call occurred.
+
+The preceding E-110 entry is superseded where it says local parity is pending. Tests independently pin all eight OpenCode v1.18.26 error names and exercise each through JSONL parsing; unknown names, malformed error shapes, and private nested values collapse without content retention. Independent review reports no remaining finding. The Docker matrix initially passed eight tests while two fixture builds hit transient Docker Hub DNS failure; both exact tests passed after `debian:bookworm-slim` resolved. PR, hosted review, merge, and post-merge parity remain pending; no paid retry is permitted before they pass.
