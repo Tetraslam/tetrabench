@@ -429,7 +429,7 @@ def pricing_document() -> dict[str, Any]:
                     "cache_read_input_token_cost": 0.0000003,
                     "cache_creation_input_token_cost": 0.00000375,
                     "max_input_tokens": 200000,
-                    "max_output_tokens": 16384,
+                    "max_output_tokens": 65536,
                 },
             }
             for _profile, model in calibration.PROFILES
@@ -963,7 +963,7 @@ def test_model_info_rejects_truncated_or_malformed_document() -> None:
         ("cache_read_input_token_cost", None),
         ("cache_creation_input_token_cost", -1),
         ("max_input_tokens", 0),
-        ("max_output_tokens", 16383),
+        ("max_output_tokens", 65535),
     ],
 )
 def test_model_info_rejects_bad_rates_ceilings_and_limits(
@@ -1176,7 +1176,7 @@ def test_broker_forwards_exact_model_caps_output_and_strips_sensitive_headers() 
             assert observed["authorization"] == f"Bearer {TEST_PARENT_KEY}"
             assert observed["path"] == "/v1/responses"
             assert observed["body"]["model"] == "openai/gpt-5.6-sol"
-            assert observed["body"]["max_output_tokens"] == 16384
+            assert observed["body"]["max_output_tokens"] == 65536
             deadline = time.monotonic() + 2
             while not broker.state.records and time.monotonic() < deadline:
                 time.sleep(0.01)
@@ -1235,7 +1235,7 @@ def test_endpoint_specific_output_limit_is_injected_or_capped(
         with running_broker(upstream) as broker:
             status, _headers, _body = request(broker, path=path, document=document)
             assert status == 200
-            assert upstream.requests[0]["body"][field] == 16384
+            assert upstream.requests[0]["body"][field] == 65536
 
 
 @pytest.mark.parametrize(
@@ -3592,11 +3592,11 @@ def test_prior_unknown_exposure_consumes_cap_without_becoming_cost_or_attempt() 
 
 
 def test_four_worst_case_reservations_plus_recorded_prior_fit_shared_cap() -> None:
-    prior = Decimal("1.7327645")
+    prior = Decimal("2.280708")
     worst = calibration._reservation_for_body(b"x" * calibration.MAX_BODY_BYTES)
-    assert calibration.MAX_BODY_BYTES == 384 << 10
-    assert calibration.MAX_OUTPUT_TOKENS == 16384
-    assert worst == Decimal("5.00136")
+    assert calibration.MAX_BODY_BYTES == 192 << 10
+    assert calibration.MAX_OUTPUT_TOKENS == 65536
+    assert worst == Decimal("5.49288")
     assert prior + 4 * worst <= calibration.MAX_TOTAL_COST
     assert prior + 5 * worst > calibration.MAX_TOTAL_COST
 
@@ -5304,7 +5304,7 @@ def _docker_sidecar(
         model="openai/gpt-5.6-sol",
         pricing=pricing,
         max_input_tokens=200000,
-        budget_cap=Decimal("2"),
+        budget_cap=Decimal("6"),
         backend=backend,
         fake_response_cost=Decimal("0.125"),
     )
@@ -5758,7 +5758,7 @@ for _profile, model in c.PROFILES:
         'cache_read_input_token_cost':'3E-7',
         'input_cost_per_token':'0.000003',
         'max_input_tokens':200000,
-        'max_output_tokens':16384,
+        'max_output_tokens':65536,
         'model_group':model,
         'output_cost_per_token':'0.000015',
     })
