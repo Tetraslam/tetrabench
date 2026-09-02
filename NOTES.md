@@ -1548,3 +1548,9 @@ Provenance: independent accounting review; retry 19 bounded report; both retaine
 The preceding E-117 entry is incorrect where it treats two stable zero-cost reads without a finish reason as final billing evidence and where it says the second read occurred after exactly 30 seconds. The retained file metadata establishes two byte-identical reads more than one minute apart, not their exact request interval. The broker retained `$4.05369` because the forwarded HTTP 200 response lacked a valid successful terminal. Both later generation records remain unfinished, so their current zero cost does not prove that provider billing cannot change. The complete reservation remains unknown exposure.
 
 Correct cumulative accounting is `$1.9375816` known OpenRouter cost plus `$5.01455` unknown exposure, including the earlier `$0.96086` LiteLLM reservation and retry 19's `$4.05369`. Total cap consumption is `$6.9521316`; four allocations would be `$4.5119671`, below the `$5.49288` maximum request. Further exact-four calibration is budget-blocked pending final provider evidence or a separately reviewed bounded contract.
+
+## 2026-09-02T14:45:33-07:00: E-117 final hosted evidence
+
+Provenance: PR 23 squash merge `70c07d7`; post-merge GitHub Actions run `33685915940`; GitHub review, comments, threads, and mergeability inspection. No provider call occurred.
+
+PR 23 passed Python 3.12 release parity and full-history secret scanning with no review feedback. It merged as `70c07d7`, and post-merge run `33685915940` passed both jobs. The repository is clean at that revision, exact-four proof remains absent, and further calibration remains budget-blocked at `$6.9521316` total cap exposure.
