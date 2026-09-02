@@ -1334,3 +1334,33 @@ The preceding E-106 entry is superseded where it says full local validation is p
 Provenance: PR 11 at implementation commit `31c286c`; GitHub Actions run `33574737811`; GitHub PR checks, review, comments, and mergeability inspection. No provider call occurred.
 
 The preceding E-106 entries are superseded where they say hosted validation is pending. Python 3.12 release parity and the independent full-history secret scan passed. GitHub reports no configured, requested, or posted automatic review and a cleanly mergeable PR. Merge and post-merge CI remain pending; no paid retry is permitted before both pass.
+
+## 2026-09-01T18:04:30-07:00: E-107 OpenRouter alias/canonical cross-surface equivalence
+
+Provenance: merged revision `9d5daac`; PR 11 and post-merge GitHub Actions runs `33575608345` and `33576709939`; exact-four retry 8 bounded private report with typed settlement failure; authenticated OpenRouter `/generation` and signed `/models` snapshot; private raw and canonical reconciliation evidence; fake-provider regressions. No additional provider completion occurred during implementation or validation.
+
+Retry 8 used cumulative priors `$0.098711` known and `$0.96086` unknown, admitted `$5.98510725` per attempt, and made one target `/v1/responses` request. Its broker record retained exact safe failure `generation_model_mismatch`, stopped remaining attempts, completed cleanup, and wrote no proof. Authenticated `/generation` records canonical model `openai/gpt-5.6-sol-20260709`, normalized counts 7,415 prompt and 85 completion, native counts 6,028 prompt and 126 completion, streamed tool-call completion, and exact cost `$0.0163285`.
+
+The authenticated `/models` snapshot already binds requested alias `openai/gpt-5.6-sol` to exact canonical slug `openai/gpt-5.6-sol-20260709`. D-112 applies that same signed two-member set independently to the terminal and historical generation. Either surface may use either member; an arbitrary third model still retains the reservation. Generation ID, terminal schema/status/usage, stream, cost, normalized-token shape, and native-token equality remain exact. The live-shaped native-token fake now uses an alias terminal with canonical generation and settles; existing canonical-terminal and third-model rejection coverage remains.
+
+Private reconciliation `authority-fencing-openrouter-reconciliation-20260901-r8.json` is mode `0600`, 679 bytes, SHA-256 `d1bf1cb245109a929b21573ea96778824df745dc537b0920e558ea5089870afa`. The bounded retry report is mode `0600`, 4,986 bytes, SHA-256 `06714cd4607a587c09aaba6bc7ebf4bf47062aee7b7959fff1f1312e88ecc0a7`; the private generation response is mode `0600`, 1,582 bytes, SHA-256 `a54e4bfca01bbf31f54976f33e470e8a68d73cbff7d582702c07f25c29cb20ab`.
+
+Retry 8's `$0.96086` reservation is superseded by `$0.0163285` known actual cost. Cumulative prior accounting is `$0.1150395` known OpenRouter cost plus `$0.96086` unknown LiteLLM exposure, total `$1.0758995`; four allocations are `$5.981025125`, above the `$5.90248` worst-case request. Focused model-equivalence regressions, Ruff format/check, and ty pass. Full local, PR, review, and hosted parity remain pending; no paid retry is permitted before they pass.
+
+## 2026-09-01T19:30:01-07:00: E-107 local validation correction
+
+Provenance: 393 focused calibration tests; 1,132 non-Docker tests; ten required real-Docker tests; Ruff, format, ty, Bandit, lock, package, and diff checks. No provider call occurred.
+
+The preceding E-107 entry is superseded where it says full local validation is pending. All local release and Docker gates pass. PR, review, and hosted parity remain pending; no paid retry is permitted before they pass.
+
+## 2026-09-01T19:59:01-07:00: E-107 Codex P1 correction
+
+Provenance: Codex review on PR 12; malformed fake generation metadata; 394 focused calibration tests; 1,133 non-Docker tests; ten required real-Docker tests; Ruff, format, ty, Bandit, lock, package, and diff checks. No provider call occurred.
+
+Codex correctly found that checking untrusted `/generation.data.model` directly against the signed model set lets list or object values raise `TypeError` outside the broker's caught fail-closed settlement exceptions. Generation validation now parses that value through the existing bounded printable response-identifier contract first. Malformed values produce fixed safe `generation_model_malformed`; valid third-model strings produce `generation_model_mismatch`. Full local and Docker parity pass. Review-fix hosted CI and explicit thread resolution remain pending; no paid retry is permitted before both pass.
+
+## 2026-09-01T20:21:59-07:00: E-107 Codex correction review evidence
+
+Provenance: PR 12 head `dcd0dc15d0610bf770f185ef9b98216db2ba9a20`; GitHub Actions run `33585397595`; Python 3.12 job `100108381893`; full-history secret-scan job `100108382067`; Codex thread `PRRT_kwDOUGmv486eWHfx`.
+
+Both hosted jobs pass on the correction commit. No new review comments or actionable feedback appeared, the Codex thread is explicitly resolved, and GitHub reports the PR mergeable with clean merge state. This supersedes the preceding E-107 correction entry where hosted parity and thread resolution were pending. Final evidence-note parity, merge, and post-merge parity remain pending; no paid retry is permitted before they pass.
