@@ -1455,7 +1455,7 @@ def _validate_openrouter_generation(
     body: bytes,
     *,
     expected_id: str,
-    expected_model: str,
+    expected_models: frozenset[str],
     expected_streamed: bool,
     expected_cost: Decimal | None,
     expected_usage: Mapping[str, int],
@@ -1466,7 +1466,7 @@ def _validate_openrouter_generation(
     generation = document["data"]
     if generation.get("id") != expected_id:
         raise OpenRouterSettlementError("generation_id_mismatch")
-    if generation.get("model") != expected_model:
+    if generation.get("model") not in expected_models:
         raise OpenRouterSettlementError("generation_model_mismatch")
     if generation.get("streamed") is not expected_streamed:
         raise OpenRouterSettlementError("generation_stream_mismatch")
@@ -1556,7 +1556,7 @@ def _poll_openrouter_generation(
                 return _validate_openrouter_generation(
                     body,
                     expected_id=lookup_id,
-                    expected_model=settlement.model,
+                    expected_models=state.response_models,
                     expected_streamed=streamed,
                     expected_cost=settlement.cost,
                     expected_usage=settlement.usage,

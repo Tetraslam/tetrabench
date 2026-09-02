@@ -1493,6 +1493,7 @@ def test_openrouter_generation_compares_terminal_usage_to_native_tokens() -> Non
                 openrouter_generation(
                     response_id="gen-header",
                     upstream_id="resp-terminal",
+                    model="openai/gpt-5.6-sol-20260709",
                     input_tokens=7415,
                     output_tokens=86,
                     native_input_tokens=6028,
@@ -1503,7 +1504,10 @@ def test_openrouter_generation_compares_terminal_usage_to_native_tokens() -> Non
     ) as upstream:
         ledger = calibration.SpendLedger()
         with running_broker(
-            upstream, ledger=ledger, backend=calibration.OPENROUTER_BACKEND
+            upstream,
+            ledger=ledger,
+            backend=calibration.OPENROUTER_BACKEND,
+            canonical_model="openai/gpt-5.6-sol-20260709",
         ) as broker:
             assert (
                 request(
