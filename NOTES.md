@@ -1492,3 +1492,9 @@ Provenance: PR 18 head `b976db7`; GitHub Actions runs `33627294360` and `3362842
 The first hosted run passed Python 3.12 and found two generic-key false positives where token-accounting prose preceded private-evidence SHA-256 values in commit `f0b3741`. Exact Gitleaks fingerprints now suppress only those two historical findings, and current prose avoids the trigger shape. Codex correctly found that E-113's table status still said implementation was pending; the status now records completed local validation. Full-history Gitleaks passed locally over 102 commits after the correction.
 
 Run `33628423241` passed Python 3.12 release parity and full-history secret scanning. The Codex thread is resolved, no other review or comment exists, and GitHub reports clean merge state. Final evidence commit, merge, and post-merge validation remain pending. No paid retry is permitted before they pass.
+
+## 2026-09-02T05:48:06-07:00: E-113 squash-fingerprint correction
+
+Provenance: PR 18 squash merge `e66496e`; post-merge GitHub Actions run `33630923515`; redacted Gitleaks output. No provider call occurred.
+
+Post-merge Python 3.12 passed. Full-history Gitleaks repeated only the known `NOTES.md:1476` generic-key false positive because squash assigned the line a new commit identity. The two branch-commit fingerprints are unreachable from merged history and are replaced by one exact fingerprint for squash commit `e66496e`, file `NOTES.md`, rule `generic-api-key`, and line 1476. The pre-existing unrelated historical fingerprint remains unchanged. Follow-up review, merge, and post-merge validation are pending. No paid retry is permitted before they pass.
