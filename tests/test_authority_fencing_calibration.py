@@ -2328,6 +2328,96 @@ def test_responses_function_tools_calls_and_outputs_are_preserved() -> None:
     assert forwarded["input"] == document["input"]
 
 
+def test_responses_pinned_encrypted_reasoning_replay_is_preserved() -> None:
+    for summary in (
+        [],
+        [{"type": "summary_text", "text": "bounded summary"}],
+    ):
+        reasoning = {
+            "type": "reasoning",
+            "encrypted_content": "opaque-provider-reasoning",
+            "summary": summary,
+        }
+        document = {
+            "model": "openai/gpt-5.6-sol",
+            "input": [
+                reasoning,
+                {
+                    "type": "function_call",
+                    "call_id": "call-1",
+                    "name": "read",
+                    "arguments": "{}",
+                },
+                {
+                    "type": "function_call_output",
+                    "call_id": "call-1",
+                    "output": "result",
+                },
+            ],
+        }
+        with fake_upstream() as upstream:
+            with running_broker(upstream) as broker:
+                assert request(broker, document=document)[0] == 200
+
+        assert upstream.requests[0]["body"]["input"] == document["input"]
+
+
+@pytest.mark.parametrize(
+    "reasoning",
+    [
+        {"type": "reasoning", "encrypted_content": "opaque"},
+        {
+            "type": "reasoning",
+            "encrypted_content": "opaque",
+            "summary": [],
+            "id": "provider-item-id",
+        },
+        {
+            "type": "reasoning",
+            "encrypted_content": "opaque",
+            "summary": [],
+            "image_url": "https://private.invalid/image",
+        },
+        {"type": "reasoning", "encrypted_content": None, "summary": []},
+        {"type": "reasoning", "encrypted_content": {}, "summary": []},
+        {"type": "reasoning", "encrypted_content": "opaque", "summary": None},
+        {
+            "type": "reasoning",
+            "encrypted_content": "opaque",
+            "summary": [{"type": "private", "text": "summary"}],
+        },
+        {
+            "type": "reasoning",
+            "encrypted_content": "opaque",
+            "summary": [{"type": "summary_text", "text": 1}],
+        },
+        {
+            "type": "reasoning",
+            "encrypted_content": "opaque",
+            "summary": [
+                {"type": "summary_text", "text": "summary", "private": "value"}
+            ],
+        },
+    ],
+)
+def test_responses_rejects_non_pinned_reasoning_replay_shape(
+    reasoning: dict[str, Any],
+) -> None:
+    with fake_upstream() as upstream:
+        ledger = calibration.SpendLedger()
+        with running_broker(upstream, ledger=ledger) as broker:
+            status, _headers, _body = request(
+                broker,
+                document={"model": "openai/gpt-5.6-sol", "input": [reasoning]},
+            )
+
+            assert status == 400
+            assert broker.state.request_count == 0
+            assert ledger.cost == 0
+            assert ledger.reserved == 0
+            assert upstream.requests == []
+
+
 @pytest.mark.parametrize(
     "field",
     [
@@ -2474,6 +2564,64 @@ def test_broker_rejects_connect_transfer_encoding_and_ambiguous_length() -> None
                 + b"\r\nContent-Length: 2\r\nContent-Length: 2\r\n\r\n{}",
             )
             assert b" 400 " in ambiguous
+
+
+def test_broker_rejects_deep_valid_json_before_request_admission() -> None:
+    depth = 2_000
+    body = (
+        b'{"model":"openai/gpt-5.6-sol","input":'
+        + b"[" * depth
+        + b'"private"'
+        + b"]" * depth
+        + b"}"
+    )
+    with fake_upstream() as upstream:
+        with running_broker(upstream) as broker:
+            token = broker.token.encode()
+            response = raw_request(
+                broker.port,
+                b"POST /v1/responses HTTP/1.1\r\nHost: localhost\r\n"
+                + b"Authorization: Bearer "
+                + token
+                + b"\r\nContent-Type: application/json\r\nContent-Length: "
+                + str(len(body)).encode()
+                + b"\r\n\r\n"
+                + body,
+            )
+
+            assert b" 400 " in response
+            assert broker.state.request_count == 0
+            assert upstream.requests == []
+
+
+def test_broker_rejects_parser_safe_recursive_content_before_admission() -> None:
+    depth = 1_100
+    body = (
+        b'{"model":"openai/gpt-5.6-sol","input":[{"type":'
+        b'"function_call_output","call_id":"call-1","output":'
+        + b"[" * depth
+        + b'"private"'
+        + b"]" * depth
+        + b"}]}"
+    )
+    calibration.strict_json(body)
+    with fake_upstream() as upstream:
+        with running_broker(upstream) as broker:
+            token = broker.token.encode()
+            response = raw_request(
+                broker.port,
+                b"POST /v1/responses HTTP/1.1\r\nHost: localhost\r\n"
+                + b"Authorization: Bearer "
+                + token
+                + b"\r\nContent-Type: application/json\r\nContent-Length: "
+                + str(len(body)).encode()
+                + b"\r\n\r\n"
+                + body,
+            )
+
+            assert b" 400 " in response
+            assert broker.state.request_count == 0
+            assert upstream.requests == []
             duplicate_auth = raw_request(
                 broker.port,
                 b"POST /v1/responses HTTP/1.1\r\nHost: localhost\r\n"
