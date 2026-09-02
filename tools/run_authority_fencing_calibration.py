@@ -2583,6 +2583,20 @@ def _validate_responses_content(document: dict[str, Any]) -> None:
         item_type = item.get("type", "message")
         if item_type == "message":
             _validate_content_blocks(item.get("content"))
+        elif item_type == "reasoning":
+            if set(item) != {"type", "encrypted_content", "summary"}:
+                raise ValueError("broker responses reasoning shape rejected")
+            if not isinstance(item["encrypted_content"], str):
+                raise ValueError("broker responses reasoning content rejected")
+            summary = item["summary"]
+            if not isinstance(summary, list) or not all(
+                isinstance(part, dict)
+                and set(part) == {"type", "text"}
+                and part["type"] == "summary_text"
+                and isinstance(part["text"], str)
+                for part in summary
+            ):
+                raise ValueError("broker responses reasoning summary rejected")
         elif item_type not in TOOL_CONTENT_TYPES:
             raise ValueError("broker responses content type rejected")
         _reject_media_fields(item, within_content=True)
@@ -2837,7 +2851,7 @@ class CalibrationBrokerHandler(BaseHTTPRequestHandler):
         except BlockingIOError:
             self._reject(HTTPStatus.TOO_MANY_REQUESTS, "concurrency rejected")
             return
-        except (RuntimeError, ValueError):
+        except (RecursionError, RuntimeError, ValueError):
             self._reject(HTTPStatus.BAD_REQUEST, "request rejected")
             return
 

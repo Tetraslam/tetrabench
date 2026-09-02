@@ -123,7 +123,9 @@ endpoints reject multiplicity, background generation, non-text modalities,
 remote media, file references, plugins, web-search options, model fallback
 arrays, routing/provider controls, transforms, and server-side tool types.
 Ordinary client-defined function tools, tool calls, and tool results remain
-supported. Endpoint-specific output limits remain capped at 8,192, and every
+supported. Responses also accepts only OpenCode's pinned stateless encrypted
+reasoning replay shape; arbitrary reasoning fields and item IDs remain rejected.
+Endpoint-specific output limits remain capped at 8,192, and every
 reservation covers that complete permitted output.
 
 The clean task is copied into a temporary overlay whose only added or replaced
@@ -151,14 +153,14 @@ resource remains. A dead parent may leave an inert network; the next startup's
 exact-label sweep removes it. No host port is published. The shared `$25` cap can
 be seeded with explicit prior known cost and prior unknown exposure. They remain
 separate in evidence and both reduce available budget. Provider evidence
-reconciled fifteen OpenRouter generations at `$0.0166085`, `$0.0165085`,
+reconciled seventeen OpenRouter generations at `$0.0166085`, `$0.0165085`,
 `$0.0163585`, `$0.0165185`, `$0.0163385`, `$0.0163785`, `$0.0163285`,
 `$0.0163685`, `$0.016681`, `$0.0163685`, `$0.041831`, `$0.0163685`, and
-`$0.030781`, `$0.0163685`, and `$0.038771`; the earlier LiteLLM reservation
-remains `$0.96086` unknown. The
+`$0.030781`, `$0.0163685`, `$0.038771`, `$0.0163985`, and `$0.0390585`; the
+earlier LiteLLM reservation remains `$0.96086` unknown. The
 next clean proof must pass
-`--prior-known-cost-usd 0.3085775 --prior-unknown-exposure-usd 0.96086`.
-Combined prior cap consumption is `$1.2694375`, leaving `$5.932640625` per
+`--prior-known-cost-usd 0.3640345 --prior-unknown-exposure-usd 0.96086`.
+Combined prior cap consumption is `$1.3248945`, leaving `$5.918776375` per
 attempt against the `$5.90248` worst-case reservation.
 Debug mode defaults prior exposure to zero and also supports
 `--debug-deny-upstream`. It requires one attempt per profile and forbids proof

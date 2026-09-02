@@ -1446,3 +1446,23 @@ All 453 focused calibration, 1,192 non-Docker, and ten required Docker tests pas
 Provenance: PR 16 head `3377e5f`; GitHub Actions run `33611275380`; GitHub review, comments, and mergeability inspection. No provider call occurred.
 
 Python 3.12 release parity and full-history secret scanning passed. No automatic or human review feedback appeared, and GitHub reports clean merge state. This supersedes the preceding E-111 entry where hosted parity was pending. Final evidence commit, merge, and post-merge parity remain pending; no paid retry is permitted before they pass.
+
+## 2026-09-02T02:31:53-07:00: E-112 retry 14 encrypted-reasoning boundary
+
+Provenance: PR 16 and merged revision `8b92280`; post-merge GitHub Actions run `33613280572`; retry 14 bounded private report; exact broker settlement; OpenCode v1.18.26 source; pinned `@ai-sdk/openai` 3.0.84 source and types; current OpenAI Responses documentation. No read-only generation lookup was needed because both requests settled authoritatively.
+
+Retry 14 used priors `$0.3085775` known and `$0.96086` unknown. Target attempt 1 made two requests that settled exactly at `$0.0163985` and `$0.0390585`. Harbor returned failed/reward one, one completed and errored trial, `NonZeroAgentExitCodeError`, exact pipeline status one, and one final `APIError`. OpenCode recorded two complete agent turns, five completed tool calls, and one reasoning event. The API error followed the second turn, while no third request entered the broker ledger. Cleanup left no owned resource and no proof. Private report `authority-fencing-calibration-4-r14.stdout.json` is mode `0600`, 6,296 bytes, SHA-256 `89584d40d389c284bc26ca27ed25d107b80334704ffb331b08351138c9af28dd`. Cumulative accounting is `$0.3640345` known OpenRouter cost plus `$0.96086` unknown LiteLLM exposure, total `$1.3248945`; four allocations are `$5.918776375`.
+
+OpenCode configures the pinned OpenAI provider for stateless Responses use, requests `reasoning.encrypted_content`, and strips persisted item IDs. The pinned AI SDK converts following turns to reasoning input items with one exact shape: keys `type`, `encrypted_content`, and `summary`; each summary member has exact `summary_text` type and string text. The broker's prior closed input-item set rejected `reasoning` before reservation or request counting. D-116 admits only this exact replay shape under the existing body/input/spend limits and retains all other reasoning shapes as pre-forward rejections. Local and hosted validation remain pending; no paid retry is permitted before they pass.
+
+## 2026-09-02T02:58:31-07:00: E-112 local validation
+
+Provenance: final local source; pinned OpenCode 1.18.26 and `@ai-sdk/openai` 3.0.84 source contracts; independent adversarial review; Python 3.12 validation; real Docker daemon; isolated wheel installation; full-history Gitleaks. No provider call occurred during validation.
+
+All 465 focused calibration, 1,204 non-Docker, and ten required Docker tests passed. Regressions preserve exact reasoning records with empty and populated summaries alongside function calls/outputs; reject missing, extra, ID-bearing, media-bearing, mistyped, and arbitrary-summary shapes before reservation; and return bounded 400 responses for parser-deep and parser-safe recursive content without request admission. Ruff check/format, ty, Bandit, lock checking, wheel/sdist build, installed-wheel metadata/content smoke, all-groups pip-audit, actionlint, diff checks, and full-history Gitleaks over 98 commits passed. Independent review's recursion, cardinality wording, and edge-shape findings were fixed; final review found no remaining issue. Hosted CI, review, merge, and post-merge validation remain pending.
+
+## 2026-09-02T03:12:16-07:00: E-112 hosted validation
+
+Provenance: PR 17 head `c673e0c`; GitHub Actions run `33617317766`; GitHub review, comments, and mergeability inspection. No provider call occurred.
+
+Python 3.12 release parity and full-history secret scanning passed. No automatic or human review feedback appeared, and GitHub reports clean merge state. This supersedes the preceding E-112 entry where hosted parity was pending. Final evidence commit, merge, and post-merge parity remain pending; no paid retry is permitted before they pass.
