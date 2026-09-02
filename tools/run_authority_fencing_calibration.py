@@ -4096,6 +4096,27 @@ def _native_exception_kind(value: Any) -> str | None:
     return "other"
 
 
+OPENCODE_ERROR_KINDS = frozenset(
+    {
+        "APIError",
+        "ContentFilterError",
+        "ContextOverflowError",
+        "MessageAbortedError",
+        "MessageOutputLengthError",
+        "ProviderAuthError",
+        "StructuredOutputError",
+        "UnknownError",
+    }
+)
+
+
+def _opencode_error_kind(value: Any) -> str:
+    if not isinstance(value, dict) or not isinstance(value.get("name"), str):
+        return "malformed"
+    name = value["name"]
+    return name if name in OPENCODE_ERROR_KINDS else "other"
+
+
 def _opencode_event_diagnostic(
     native: NativeSnapshot, *, trial_name: str
 ) -> dict[str, Any]:
@@ -4104,6 +4125,7 @@ def _opencode_event_diagnostic(
     if data is None:
         return {"status": "absent"}
     error_events = 0
+    error_kinds: dict[str, int] = {}
     malformed_lines = 0
     for line_number, line in enumerate(io.BytesIO(data), start=1):
         if line_number > 10_000 or len(line) > 1 << 20:
@@ -4119,8 +4141,11 @@ def _opencode_event_diagnostic(
             continue
         if isinstance(event, dict) and event.get("type") == "error":
             error_events += 1
+            kind = _opencode_error_kind(event.get("error"))
+            error_kinds[kind] = error_kinds.get(kind, 0) + 1
     return {
         "error_event_count": error_events,
+        "error_kinds": dict(sorted(error_kinds.items())),
         "malformed_line_count": malformed_lines,
         "status": "captured",
     }

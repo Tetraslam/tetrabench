@@ -35,6 +35,18 @@ TEST_PARENT_KEY = "sk-test-deployed-key-1234"
 TEST_PROBE_TOKEN = "probe-token-0123456789-abcdefghijklmnopqr"
 TEST_ATTEMPT_TOKEN = "attempt-token-0123456789-abcdefghijklmnop"
 TEST_OPENROUTER_KEY = "sk-or-v1-test-deployed-key-1234"
+PINNED_OPENCODE_ERROR_KINDS = frozenset(
+    {
+        "APIError",
+        "ContentFilterError",
+        "ContextOverflowError",
+        "MessageAbortedError",
+        "MessageOutputLengthError",
+        "ProviderAuthError",
+        "StructuredOutputError",
+        "UnknownError",
+    }
+)
 
 
 class FakeUpstreamServer(ThreadingHTTPServer):
@@ -4259,7 +4271,8 @@ def test_native_runtime_diagnostic_retains_only_failure_shapes_and_counts() -> N
         files={
             f"harbor-job/{trial_name}/agent/opencode.txt": (
                 b'{"type":"step_start","private":"prompt"}\n'
-                b'{"type":"error","error":{"data":{"message":"private error"}}}\n'
+                b'{"type":"error","error":{"name":"UnknownError",'
+                b'"data":{"message":"private error"}}}\n'
                 b"private malformed line\n"
             ),
             f"harbor-job/{trial_name}/agent/trajectory.json": json.dumps(
@@ -4313,6 +4326,7 @@ def test_native_runtime_diagnostic_retains_only_failure_shapes_and_counts() -> N
         },
         "opencode_events": {
             "error_event_count": 1,
+            "error_kinds": {"UnknownError": 1},
             "malformed_line_count": 1,
             "status": "captured",
         },
@@ -4452,6 +4466,46 @@ def test_native_exception_kind_is_a_fixed_bounded_enum(
     value: Any, expected: str | None
 ) -> None:
     assert calibration._native_exception_kind(value) == expected
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        *[
+            ({"name": name, "data": {"message": "private"}}, name)
+            for name in sorted(PINNED_OPENCODE_ERROR_KINDS)
+        ],
+        ({"name": "PrivateError", "data": {"message": "private"}}, "other"),
+        ({"name": {"private": "value"}}, "malformed"),
+        (["private"], "malformed"),
+    ],
+)
+def test_opencode_event_diagnostic_retains_only_fixed_error_kind(
+    value: Any, expected: str
+) -> None:
+    trial_name = "private-trial"
+    native = calibration.NativeSnapshot(
+        files={
+            f"harbor-job/{trial_name}/agent/opencode.txt": json.dumps(
+                {"type": "error", "error": value, "private": "event value"}
+            ).encode()
+        },
+        manifest=[],
+    )
+
+    diagnostic = calibration._opencode_event_diagnostic(native, trial_name=trial_name)
+
+    assert diagnostic == {
+        "error_event_count": 1,
+        "error_kinds": {expected: 1},
+        "malformed_line_count": 0,
+        "status": "captured",
+    }
+    assert "private" not in json.dumps(diagnostic)
+
+
+def test_opencode_error_kind_contract_matches_pinned_v1_18_26_schema() -> None:
+    assert calibration.OPENCODE_ERROR_KINDS == PINNED_OPENCODE_ERROR_KINDS
 
 
 def test_trajectory_shape_diagnostic_rejects_malformed_shape_without_content() -> None:
