@@ -1466,7 +1466,11 @@ def _validate_openrouter_generation(
     generation = document["data"]
     if generation.get("id") != expected_id:
         raise OpenRouterSettlementError("generation_id_mismatch")
-    if generation.get("model") not in expected_models:
+    try:
+        generation_model = _response_identifier(generation.get("model"))
+    except ValueError as error:
+        raise OpenRouterSettlementError("generation_model_malformed") from error
+    if generation_model not in expected_models:
         raise OpenRouterSettlementError("generation_model_mismatch")
     if generation.get("streamed") is not expected_streamed:
         raise OpenRouterSettlementError("generation_stream_mismatch")

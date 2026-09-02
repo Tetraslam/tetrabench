@@ -251,7 +251,7 @@ def openrouter_generation(
     *,
     response_id: str = "gen-test-1",
     upstream_id: str | None = None,
-    model: str = "openai/gpt-5.6-sol",
+    model: Any = "openai/gpt-5.6-sol",
     streamed: bool = True,
     cost: str = "0.00007",
     input_tokens: int = 2,
@@ -2005,6 +2005,7 @@ def test_openrouter_nonstream_rejects_cross_endpoint_usage_fields(
     [
         (openrouter_generation(response_id="wrong"), "generation_id_mismatch"),
         (openrouter_generation(model="other/model"), "generation_model_mismatch"),
+        (openrouter_generation(model=["other/model"]), "generation_model_malformed"),
         (openrouter_generation(streamed=False), "generation_stream_mismatch"),
         (openrouter_generation(cost="0.00008"), "generation_cost_mismatch"),
         (

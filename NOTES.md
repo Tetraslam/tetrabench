@@ -1352,3 +1352,9 @@ Retry 8's `$0.96086` reservation is superseded by `$0.0163285` known actual cost
 Provenance: 393 focused calibration tests; 1,132 non-Docker tests; ten required real-Docker tests; Ruff, format, ty, Bandit, lock, package, and diff checks. No provider call occurred.
 
 The preceding E-107 entry is superseded where it says full local validation is pending. All local release and Docker gates pass. PR, review, and hosted parity remain pending; no paid retry is permitted before they pass.
+
+## 2026-09-01T19:59:01-07:00: E-107 Codex P1 correction
+
+Provenance: Codex review on PR 12; malformed fake generation metadata; 394 focused calibration tests; 1,133 non-Docker tests; ten required real-Docker tests; Ruff, format, ty, Bandit, lock, package, and diff checks. No provider call occurred.
+
+Codex correctly found that checking untrusted `/generation.data.model` directly against the signed model set lets list or object values raise `TypeError` outside the broker's caught fail-closed settlement exceptions. Generation validation now parses that value through the existing bounded printable response-identifier contract first. Malformed values produce fixed safe `generation_model_malformed`; valid third-model strings produce `generation_model_mismatch`. Full local and Docker parity pass. Review-fix hosted CI and explicit thread resolution remain pending; no paid retry is permitted before both pass.
