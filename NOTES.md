@@ -1358,3 +1358,9 @@ The preceding E-107 entry is superseded where it says full local validation is p
 Provenance: Codex review on PR 12; malformed fake generation metadata; 394 focused calibration tests; 1,133 non-Docker tests; ten required real-Docker tests; Ruff, format, ty, Bandit, lock, package, and diff checks. No provider call occurred.
 
 Codex correctly found that checking untrusted `/generation.data.model` directly against the signed model set lets list or object values raise `TypeError` outside the broker's caught fail-closed settlement exceptions. Generation validation now parses that value through the existing bounded printable response-identifier contract first. Malformed values produce fixed safe `generation_model_malformed`; valid third-model strings produce `generation_model_mismatch`. Full local and Docker parity pass. Review-fix hosted CI and explicit thread resolution remain pending; no paid retry is permitted before both pass.
+
+## 2026-09-01T20:21:59-07:00: E-107 Codex correction review evidence
+
+Provenance: PR 12 head `dcd0dc15d0610bf770f185ef9b98216db2ba9a20`; GitHub Actions run `33585397595`; Python 3.12 job `100108381893`; full-history secret-scan job `100108382067`; Codex thread `PRRT_kwDOUGmv486eWHfx`.
+
+Both hosted jobs pass on the correction commit. No new review comments or actionable feedback appeared, the Codex thread is explicitly resolved, and GitHub reports the PR mergeable with clean merge state. This supersedes the preceding E-107 correction entry where hosted parity and thread resolution were pending. Final evidence-note parity, merge, and post-merge parity remain pending; no paid retry is permitted before they pass.
