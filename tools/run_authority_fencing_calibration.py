@@ -4112,6 +4112,8 @@ def _opencode_event_diagnostic(
             continue
         try:
             event = strict_json(line)
+        except RecursionError:
+            return {"status": "malformed"}
         except ValueError:
             malformed_lines += 1
             continue
@@ -4171,7 +4173,7 @@ def _trajectory_shape_diagnostic(
                 and bool(final["reasoning_content"]),
                 "tool_call_count": len(tool_calls or []),
             }
-    except ValueError:
+    except (RecursionError, ValueError):
         return {"status": "malformed"}
     return {
         "agent_step_count": agent_step_count,

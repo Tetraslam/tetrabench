@@ -4482,9 +4482,16 @@ def test_trajectory_shape_diagnostic_rejects_malformed_shape_without_content() -
 @pytest.mark.parametrize(
     "data",
     [
-        b'{"steps":[0]}',
-        json.dumps({"steps": [{"source": "agent"}] * 10_001}).encode(),
-        b"{" + b"x" * (4 << 20),
+        pytest.param(b'{"steps":[0]}', id="non-object-step"),
+        pytest.param(
+            b"[" * 10_000 + b"]" * 10_000,
+            id="recursive-json",
+        ),
+        pytest.param(
+            json.dumps({"steps": [{"source": "agent"}] * 10_001}).encode(),
+            id="too-many-steps",
+        ),
+        pytest.param(b"{" + b"x" * (4 << 20), id="oversized"),
     ],
 )
 def test_trajectory_shape_diagnostic_bounds_input(data: bytes) -> None:
@@ -4502,8 +4509,15 @@ def test_trajectory_shape_diagnostic_bounds_input(data: bytes) -> None:
 @pytest.mark.parametrize(
     "data",
     [
-        b"{}\n" * 10_001,
-        b'{"type":"error","private":"' + b"x" * (1 << 20) + b'"}\n',
+        pytest.param(b"{}\n" * 10_001, id="too-many-lines"),
+        pytest.param(
+            b"[" * 10_000 + b"]" * 10_000 + b"\n",
+            id="recursive-json",
+        ),
+        pytest.param(
+            b'{"type":"error","private":"' + b"x" * (1 << 20) + b'"}\n',
+            id="oversized-line",
+        ),
     ],
 )
 def test_opencode_event_diagnostic_bounds_jsonl_work(data: bytes) -> None:
