@@ -384,11 +384,11 @@ peers and unrelated host containers are not containment evidence. Docker's
 reported IPAM gateway and `Internal` value are recorded as topology only;
 authenticated pricing and later forwarding prove actual egress. This transport
 requires no host reachability or firewall change. No real calibration has
-completed, so difficulty calibration remains unproven. The next clean proof
-explicitly carries `$1.6008966` prior known OpenRouter cost and `$0.96086` prior
-unknown LiteLLM exposure against the shared `$25` cap. The resulting total prior
-cap consumption is `$2.5617566`, leaving `$5.60956085` per attempt against the
-`$5.49288` worst-case request. A
+completed, so difficulty calibration remains unproven. Current accounting is
+`$1.9375816` known cost plus `$5.01455` unknown exposure against the shared `$25`
+cap. Four-way allocation would be `$4.5119671`, below the `$5.49288` worst-case
+request, so another clean proof cannot run without final provider billing
+evidence or a new bounded contract. A
 separate direct OpenRouter contract probe cost `$0.00007`; it is not benchmark
 calibration. `--debug-deny-upstream` is
 a non-admissible one-attempt-per-profile diagnostic with no proof output. It
