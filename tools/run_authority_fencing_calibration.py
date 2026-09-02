@@ -7,6 +7,7 @@ import argparse
 import dataclasses
 import hashlib
 import http.client
+import io
 import ipaddress
 import json
 import math
@@ -4085,6 +4086,157 @@ def _failure_evidence(error: BaseException) -> dict[str, str]:
     }
 
 
+def _native_exception_kind(value: Any) -> str | None:
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        return "malformed"
+    if value in {"CancelledError", "NonZeroAgentExitCodeError"}:
+        return value
+    return "other"
+
+
+def _opencode_event_diagnostic(
+    native: NativeSnapshot, *, trial_name: str
+) -> dict[str, Any]:
+    path = f"harbor-job/{trial_name}/agent/opencode.txt"
+    data = native.files.get(path)
+    if data is None:
+        return {"status": "absent"}
+    error_events = 0
+    malformed_lines = 0
+    for line_number, line in enumerate(io.BytesIO(data), start=1):
+        if line_number > 10_000 or len(line) > 1 << 20:
+            return {"status": "malformed"}
+        if not line.strip():
+            continue
+        try:
+            event = strict_json(line)
+        except RecursionError:
+            return {"status": "malformed"}
+        except ValueError:
+            malformed_lines += 1
+            continue
+        if isinstance(event, dict) and event.get("type") == "error":
+            error_events += 1
+    return {
+        "error_event_count": error_events,
+        "malformed_line_count": malformed_lines,
+        "status": "captured",
+    }
+
+
+def _trajectory_shape_diagnostic(
+    native: NativeSnapshot, *, trial_name: str
+) -> dict[str, Any]:
+    path = f"harbor-job/{trial_name}/agent/trajectory.json"
+    data = native.files.get(path)
+    if data is None:
+        return {"status": "absent"}
+    if len(data) > 4 << 20:
+        return {"status": "malformed"}
+    try:
+        document = strict_json(data)
+        steps = document.get("steps") if isinstance(document, dict) else None
+        if not isinstance(steps, list) or len(steps) > 10_000:
+            raise ValueError("trajectory steps are malformed")
+        agent_step_count = 0
+        final = None
+        for step in steps:
+            if not isinstance(step, dict):
+                raise ValueError("trajectory step is malformed")
+            if step.get("source") == "agent":
+                agent_step_count += 1
+                final = step
+        if final is None:
+            final_shape = None
+        else:
+            tool_calls = final.get("tool_calls")
+            if tool_calls is not None and not isinstance(tool_calls, list):
+                raise ValueError("trajectory tool calls are malformed")
+            observation = final.get("observation")
+            if observation is None:
+                observation_results = None
+            elif isinstance(observation, dict):
+                observation_results = observation.get("results")
+                if observation_results is not None and not isinstance(
+                    observation_results, list
+                ):
+                    raise ValueError("trajectory observation is malformed")
+            else:
+                raise ValueError("trajectory observation is malformed")
+            final_shape = {
+                "message_present": isinstance(final.get("message"), str)
+                and bool(final["message"]),
+                "observation_result_count": len(observation_results or []),
+                "reasoning_present": isinstance(final.get("reasoning_content"), str)
+                and bool(final["reasoning_content"]),
+                "tool_call_count": len(tool_calls or []),
+            }
+    except (RecursionError, ValueError):
+        return {"status": "malformed"}
+    return {
+        "agent_step_count": agent_step_count,
+        "final_agent_step": final_shape,
+        "status": "captured",
+        "step_count": len(steps),
+    }
+
+
+def _native_runtime_diagnostic(
+    native: NativeSnapshot, *, job: JobResult, trial: TrialResult
+) -> dict[str, Any]:
+    completed = job.stats.n_completed_trials
+    errored = job.stats.n_errored_trials
+    cancelled = job.stats.n_cancelled_trials
+    exception_kind = _native_exception_kind(
+        trial.exception_info.exception_type
+        if trial.exception_info is not None
+        else None
+    )
+    if (
+        type(job.n_total_trials) is not int
+        or job.n_total_trials != 1
+        or type(completed) is not int
+        or type(errored) is not int
+        or type(cancelled) is not int
+        or completed != 1
+        or errored != int(trial.exception_info is not None)
+        or cancelled != int(exception_kind == "CancelledError")
+    ):
+        return {"status": "malformed"}
+    rewards = (
+        trial.verifier_result.rewards if trial.verifier_result is not None else None
+    )
+    reward = rewards.get("reward") if rewards is not None else None
+    if trial.verifier_result is None:
+        retained_reward = None
+    elif type(reward) is int and reward in {0, 1}:
+        retained_reward = reward
+    elif isinstance(reward, float) and math.isfinite(reward) and reward in {0, 1}:
+        retained_reward = int(reward)
+    else:
+        return {"status": "malformed"}
+    return {
+        "job": {
+            "cancelled_trials": cancelled,
+            "completed_trials": completed,
+            "errored_trials": errored,
+        },
+        "opencode_events": _opencode_event_diagnostic(
+            native, trial_name=trial.trial_name
+        ),
+        "status": "captured",
+        "trajectory": _trajectory_shape_diagnostic(native, trial_name=trial.trial_name),
+        "trial": {
+            "agent_result_present": trial.agent_result is not None,
+            "exception_kind": exception_kind,
+            "verifier_result_present": trial.verifier_result is not None,
+            "verifier_reward": retained_reward,
+        },
+    }
+
+
 def _native_diagnostic(output: Path) -> dict[str, Any]:
     try:
         metadata = os.lstat(output)
@@ -4109,18 +4261,20 @@ def _native_diagnostic(output: Path) -> dict[str, Any]:
     result_count = 0
     parsed_results = 0
     exception_classes: set[str] = set()
+    parsed_job: JobResult | None = None
+    parsed_trials: list[TrialResult] = []
     for path, data in native.files.items():
         if path == "harbor-job/result.json":
             result_count += 1
             try:
-                JobResult.model_validate_json(data)
+                parsed_job = JobResult.model_validate_json(data)
                 parsed_results += 1
             except BaseException as error:
                 exception_classes.add(type(error).__name__)
         elif path.startswith("harbor-job/") and path.endswith("/result.json"):
             result_count += 1
             try:
-                TrialResult.model_validate_json(data)
+                parsed_trials.append(TrialResult.model_validate_json(data))
                 parsed_results += 1
             except BaseException as error:
                 exception_classes.add(type(error).__name__)
@@ -4146,6 +4300,14 @@ def _native_diagnostic(output: Path) -> dict[str, Any]:
             "result_count": result_count,
             "status": inspection_status,
         },
+        "runtime": (
+            _native_runtime_diagnostic(native, job=parsed_job, trial=parsed_trials[0])
+            if inspection_status == "valid"
+            and result_count == 2
+            and parsed_job is not None
+            and len(parsed_trials) == 1
+            else {"status": "unavailable"}
+        ),
     }
 
 

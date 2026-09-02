@@ -1374,3 +1374,33 @@ Retry 9 used cumulative priors `$0.1150395` known and `$0.96086` unknown and adm
 Harbor returned canonical `outcome=failed`, `reward=0`, and exit 1 after the two requests. Native evidence contains 47 files and 83 entries, two structurally valid results, no exception classes, and no surviving descendants. This is an unsuccessful model attempt rather than a provider settlement or harness invariant failure. The runner stopped later attempts, completed cleanup, left no labeled Docker container or network, and wrote no proof.
 
 Private report `authority-fencing-calibration-4-r9.stdout.json` is mode `0600`, 5,512 bytes, SHA-256 `e943b367cf376b91c301dd133799817adfe0b839d79172c93482c3e0666f54b8`. Cumulative accounting is `$0.1480890` known OpenRouter cost plus `$0.96086` unknown LiteLLM exposure, total `$1.1089490`; four retry allocations are `$5.97276275`, above the `$5.90248` worst-case request. Evidence PR, review, merge, and post-merge parity remain pending; no paid retry is permitted before they pass.
+
+## 2026-09-01T21:52:41-07:00: E-109 retry 10 lifecycle diagnostic
+
+Provenance: merged revision `e5128fe`; PR 13 and GitHub Actions runs `33589568923` and `33590500152`; exact-four retry 10 bounded private report; exact broker settlement evidence; authenticated read-only generation metadata; native structural evidence; Docker residue inspection; Harbor 0.22.0 `JobStats` and OpenCode adapter source; focused fake-native regressions. The read-only generation lookups made no provider completion.
+
+Retry 10 used cumulative priors `$0.1480890` known and `$0.96086` unknown and admitted `$5.97276275` per attempt. Target attempt 1 made two `/v1/responses` requests. Both returned HTTP 200 and settled exactly at `$0.0163685` and `$0.041831`; authenticated generation metadata records canonical `openai/gpt-5.6-sol-20260709`, streamed noncancelled `tool_calls` finishes, and matching native token/cost values. Current known cost is `$0.0581995`; no current unknown exposure was retained.
+
+The verifier awarded reward one, but Harbor still returned canonical `outcome=failed` and exit 1. Native evidence contains 49 files and 82 entries, two structurally valid results, no parse exception classes, and no surviving descendants. This contradicts retry 9's provisional classification as only an unsuccessful model attempt: task reward alone does not explain the failed lifecycle. Both retries stopped after exactly two settled tool-call generations. The current private report cannot identify the source-defined trial exception, OpenCode error-event count, or final ATIF step shape because D-094/D-095 intentionally retained only structural parse evidence.
+
+D-113 closes that specific evidence gap. Failed native diagnostics retain only validated job counts, a fixed exception enum, agent/verifier presence and binary reward, OpenCode error/malformed-line counts, and ATIF step/tool/observation counts and presence booleans. They never retain messages, prompts, reasoning/model text, tool names/arguments/outputs, trial/path names, logs, raw streams, or provider identifiers. Private-content and malformed-shape regressions pass in the focused suite.
+
+Private report `authority-fencing-calibration-4-r10.stdout.json` is mode `0600`, 5,509 bytes, SHA-256 `92be801eb600a7c4bcbfb3747908ccc223cf6391e07b1cb5bc259913af43274e`. Cumulative accounting is `$0.2062885` known OpenRouter cost plus `$0.96086` unknown LiteLLM exposure, total `$1.1671485`; four retry allocations are `$5.958212875`, above the `$5.90248` worst-case request. Full local, Docker, PR, review, merge, and post-merge parity remain pending; no paid retry is permitted before they pass.
+
+## 2026-09-01T22:37:17-07:00: E-109 local validation and review correction
+
+Provenance: 415 focused calibration tests; 1,154 non-Docker tests; ten required real-Docker tests; Ruff, format, ty, Bandit, lock, wheel/sdist build, installed-wheel smoke, all-groups audit, diff, full-history Gitleaks over 88 commits, Docker residue inspection, and independent code review. No provider call occurred.
+
+The preceding E-109 entry is superseded where it says full local validation is pending. Review found and the implementation fixed unbounded/malformed native count and reward handling, partial-result runtime capture, JSONL line/list work, ATIF byte/step/list work, one-trial lifecycle incoherence, non-object ATIF steps, incomplete regression coverage, and one stale README accounting value. Native runtime capture now requires exact valid job-plus-trial topology and coherent one-trial counts. OpenCode JSONL and ATIF diagnostics have independent byte, line, and step bounds and return only fixed malformed status on overflow or malformed structure. The final independent review reports no remaining finding. PR, hosted review, merge, and post-merge parity remain pending; no paid retry is permitted before they pass.
+
+## 2026-09-01T22:50:10-07:00: E-109 Codex recursive-JSON correction
+
+Provenance: PR 14 head `3dbfc92`; GitHub Actions run `33595530906`; Codex thread `PRRT_kwDOUGmv486eYV_8`; recursive JSONL and ATIF regressions. No provider call occurred.
+
+Both initial hosted jobs passed. Codex correctly found that deeply recursive JSON can raise `RecursionError` from `json.loads`, outside the diagnostics' prior `ValueError` handlers. Both OpenCode JSONL and ATIF shape diagnostics now map recursion to the same fixed malformed status; no recursive value or content enters evidence. All 417 focused calibration and 1,156 non-Docker tests pass. Review-fix hosted parity and explicit thread resolution remain pending; no paid retry is permitted before both pass.
+
+## 2026-09-01T23:13:16-07:00: E-109 Codex correction review evidence
+
+Provenance: PR 14 head `854000aeec96536c2e3941a90c009bc113f74ae6`; GitHub Actions run `33596939701`; Codex thread `PRRT_kwDOUGmv486eYV_8`.
+
+Both review-fix hosted jobs pass. No new review comment or actionable feedback appeared, and the Codex recursive-JSON thread is explicitly resolved. This supersedes the preceding E-109 correction entry where hosted parity and thread resolution were pending. Final evidence commit, merge, and post-merge parity remain pending; no paid retry is permitted before they pass.
