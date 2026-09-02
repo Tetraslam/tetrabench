@@ -47,6 +47,10 @@ PINNED_OPENCODE_ERROR_KINDS = frozenset(
         "UnknownError",
     }
 )
+PINNED_OPENCODE_EVENT_KINDS = frozenset(
+    {"error", "reasoning", "step_finish", "step_start", "text", "tool_use"}
+)
+PINNED_OPENCODE_TOOL_STATUSES = frozenset({"completed", "error"})
 
 
 class FakeUpstreamServer(ThreadingHTTPServer):
@@ -4271,6 +4275,8 @@ def test_native_runtime_diagnostic_retains_only_failure_shapes_and_counts() -> N
         files={
             f"harbor-job/{trial_name}/agent/opencode.txt": (
                 b'{"type":"step_start","private":"prompt"}\n'
+                b'{"type":"tool_use","part":{"state":{"status":"completed"},'
+                b'"private":"tool output"}}\n'
                 b'{"type":"error","error":{"name":"UnknownError",'
                 b'"data":{"message":"private error"}}}\n'
                 b"private malformed line\n"
@@ -4309,7 +4315,12 @@ def test_native_runtime_diagnostic_retains_only_failure_shapes_and_counts() -> N
     )
     trial = SimpleNamespace(
         agent_result=object(),
-        exception_info=SimpleNamespace(exception_type="NonZeroAgentExitCodeError"),
+        exception_info=SimpleNamespace(
+            exception_message=(
+                "Command failed (exit 137): private command and private output"
+            ),
+            exception_type="NonZeroAgentExitCodeError",
+        ),
         trial_name=trial_name,
         verifier_result=SimpleNamespace(rewards={"reward": 1}),
     )
@@ -4327,8 +4338,17 @@ def test_native_runtime_diagnostic_retains_only_failure_shapes_and_counts() -> N
         "opencode_events": {
             "error_event_count": 1,
             "error_kinds": {"UnknownError": 1},
+            "event_kinds": {
+                "error": 1,
+                "malformed": 1,
+                "step_start": 1,
+                "tool_use": 1,
+            },
+            "final_event_kind": "malformed",
             "malformed_line_count": 1,
+            "parsed_event_count": 3,
             "status": "captured",
+            "tool_statuses": {"completed": 1},
         },
         "status": "captured",
         "trajectory": {
@@ -4344,6 +4364,11 @@ def test_native_runtime_diagnostic_retains_only_failure_shapes_and_counts() -> N
         },
         "trial": {
             "agent_result_present": True,
+            "exit": {
+                "exit_code": 137,
+                "exit_kind": "signal_compatible_status",
+                "status": "captured",
+            },
             "exception_kind": "NonZeroAgentExitCodeError",
             "verifier_result_present": True,
             "verifier_reward": 1,
@@ -4469,6 +4494,63 @@ def test_native_exception_kind_is_a_fixed_bounded_enum(
 
 
 @pytest.mark.parametrize(
+    ("exception_kind", "message", "expected"),
+    [
+        (
+            "NonZeroAgentExitCodeError",
+            "Command failed (exit 1): private command\nstdout: private output",
+            {"exit_code": 1, "exit_kind": "status", "status": "captured"},
+        ),
+        (
+            "NonZeroAgentExitCodeError",
+            "Command failed (exit 255): private command",
+            {
+                "exit_code": 255,
+                "exit_kind": "signal_compatible_status",
+                "status": "captured",
+            },
+        ),
+        (
+            "NonZeroAgentExitCodeError",
+            "OpenCode emitted error event(s): private error",
+            {"status": "unavailable"},
+        ),
+        (
+            "NonZeroAgentExitCodeError",
+            "Command failed (exit 0): private command",
+            {"status": "unavailable"},
+        ),
+        (
+            "NonZeroAgentExitCodeError",
+            "Command failed (exit 001): private command",
+            {"status": "unavailable"},
+        ),
+        (
+            "NonZeroAgentExitCodeError",
+            "Command failed (exit 256): private command",
+            {"status": "unavailable"},
+        ),
+        (
+            "NonZeroAgentExitCodeError",
+            "Command failed (exit 999): private command",
+            {"status": "unavailable"},
+        ),
+        ("other", "Command failed (exit 1): private", {"status": "not_applicable"}),
+        ("NonZeroAgentExitCodeError", {"private": "value"}, {"status": "malformed"}),
+    ],
+)
+def test_native_agent_exit_diagnostic_retains_only_bounded_status(
+    exception_kind: str, message: Any, expected: dict[str, Any]
+) -> None:
+    diagnostic = calibration._native_agent_exit_diagnostic(
+        SimpleNamespace(exception_message=message), exception_kind=exception_kind
+    )
+
+    assert diagnostic == expected
+    assert "private" not in json.dumps(diagnostic)
+
+
+@pytest.mark.parametrize(
     ("value", "expected"),
     [
         *[
@@ -4498,14 +4580,99 @@ def test_opencode_event_diagnostic_retains_only_fixed_error_kind(
     assert diagnostic == {
         "error_event_count": 1,
         "error_kinds": {expected: 1},
+        "event_kinds": {"error": 1},
+        "final_event_kind": "error",
         "malformed_line_count": 0,
+        "parsed_event_count": 1,
         "status": "captured",
+        "tool_statuses": {},
     }
     assert "private" not in json.dumps(diagnostic)
 
 
 def test_opencode_error_kind_contract_matches_pinned_v1_18_26_schema() -> None:
     assert calibration.OPENCODE_ERROR_KINDS == PINNED_OPENCODE_ERROR_KINDS
+
+
+def test_opencode_event_contract_matches_pinned_v1_18_26_schema() -> None:
+    assert calibration.OPENCODE_EVENT_KINDS == PINNED_OPENCODE_EVENT_KINDS
+    assert calibration.OPENCODE_TOOL_STATUSES == PINNED_OPENCODE_TOOL_STATUSES
+
+
+@pytest.mark.parametrize(
+    ("event_type", "tool_status", "expected_event", "expected_tool"),
+    [
+        ("step_start", None, "step_start", None),
+        ("step_finish", None, "step_finish", None),
+        ("text", None, "text", None),
+        ("reasoning", None, "reasoning", None),
+        ("tool_use", "completed", "tool_use", "completed"),
+        ("tool_use", "error", "tool_use", "error"),
+        ("tool_use", "private", "tool_use", "other"),
+        ("private", None, "other", None),
+        (None, None, "malformed", None),
+    ],
+)
+def test_opencode_event_diagnostic_retains_only_fixed_shape(
+    event_type: Any,
+    tool_status: Any,
+    expected_event: str,
+    expected_tool: str | None,
+) -> None:
+    trial_name = "private-trial"
+    event: dict[str, Any] = {"type": event_type, "private": "event content"}
+    if event_type == "tool_use":
+        event["part"] = {
+            "state": {"status": tool_status, "private": "state content"},
+            "private": "part content",
+        }
+    native = calibration.NativeSnapshot(
+        files={
+            f"harbor-job/{trial_name}/agent/opencode.txt": json.dumps(event).encode()
+        },
+        manifest=[],
+    )
+
+    diagnostic = calibration._opencode_event_diagnostic(native, trial_name=trial_name)
+
+    assert diagnostic == {
+        "error_event_count": 0,
+        "error_kinds": {},
+        "event_kinds": {expected_event: 1},
+        "final_event_kind": expected_event,
+        "malformed_line_count": 0,
+        "parsed_event_count": 1,
+        "status": "captured",
+        "tool_statuses": ({expected_tool: 1} if expected_tool is not None else {}),
+    }
+    assert "private" not in json.dumps(diagnostic)
+
+
+@pytest.mark.parametrize(
+    "part",
+    [
+        None,
+        ["private"],
+        {"state": None, "private": "part content"},
+        {"state": ["private"], "private": "part content"},
+        {"state": {"status": None, "private": "state content"}},
+    ],
+)
+def test_opencode_event_diagnostic_collapses_malformed_tool_shape(part: Any) -> None:
+    trial_name = "private-trial"
+    native = calibration.NativeSnapshot(
+        files={
+            f"harbor-job/{trial_name}/agent/opencode.txt": json.dumps(
+                {"type": "tool_use", "part": part}
+            ).encode()
+        },
+        manifest=[],
+    )
+
+    diagnostic = calibration._opencode_event_diagnostic(native, trial_name=trial_name)
+
+    assert diagnostic["tool_statuses"] == {"malformed": 1}
+    assert "private" not in json.dumps(diagnostic)
 
 
 def test_trajectory_shape_diagnostic_rejects_malformed_shape_without_content() -> None:

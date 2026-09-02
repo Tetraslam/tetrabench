@@ -4096,6 +4096,27 @@ def _native_exception_kind(value: Any) -> str | None:
     return "other"
 
 
+def _native_agent_exit_diagnostic(
+    exception_info: Any, *, exception_kind: str | None
+) -> dict[str, Any]:
+    if exception_kind != "NonZeroAgentExitCodeError":
+        return {"status": "not_applicable"}
+    message = getattr(exception_info, "exception_message", None)
+    if not isinstance(message, str):
+        return {"status": "malformed"}
+    match = re.match(r"\ACommand failed \(exit ([1-9][0-9]{0,2})\):", message)
+    if match is None:
+        return {"status": "unavailable"}
+    exit_code = int(match.group(1))
+    if not 1 <= exit_code <= 255:
+        return {"status": "unavailable"}
+    return {
+        "exit_code": exit_code,
+        "exit_kind": "status" if exit_code < 128 else "signal_compatible_status",
+        "status": "captured",
+    }
+
+
 OPENCODE_ERROR_KINDS = frozenset(
     {
         "APIError",
@@ -4108,6 +4129,10 @@ OPENCODE_ERROR_KINDS = frozenset(
         "UnknownError",
     }
 )
+OPENCODE_EVENT_KINDS = frozenset(
+    {"error", "reasoning", "step_finish", "step_start", "text", "tool_use"}
+)
+OPENCODE_TOOL_STATUSES = frozenset({"completed", "error"})
 
 
 def _opencode_error_kind(value: Any) -> str:
@@ -4126,7 +4151,11 @@ def _opencode_event_diagnostic(
         return {"status": "absent"}
     error_events = 0
     error_kinds: dict[str, int] = {}
+    event_kinds: dict[str, int] = {}
+    final_event_kind = None
     malformed_lines = 0
+    parsed_events = 0
+    tool_statuses: dict[str, int] = {}
     for line_number, line in enumerate(io.BytesIO(data), start=1):
         if line_number > 10_000 or len(line) > 1 << 20:
             return {"status": "malformed"}
@@ -4138,16 +4167,43 @@ def _opencode_event_diagnostic(
             return {"status": "malformed"}
         except ValueError:
             malformed_lines += 1
+            event_kinds["malformed"] = event_kinds.get("malformed", 0) + 1
+            final_event_kind = "malformed"
             continue
-        if isinstance(event, dict) and event.get("type") == "error":
+        parsed_events += 1
+        event_type = event.get("type") if isinstance(event, dict) else None
+        if not isinstance(event_type, str):
+            event_kind = "malformed"
+        elif event_type in OPENCODE_EVENT_KINDS:
+            event_kind = event_type
+        else:
+            event_kind = "other"
+        event_kinds[event_kind] = event_kinds.get(event_kind, 0) + 1
+        final_event_kind = event_kind
+        if event_type == "error":
             error_events += 1
             kind = _opencode_error_kind(event.get("error"))
             error_kinds[kind] = error_kinds.get(kind, 0) + 1
+        if event_type == "tool_use":
+            part = event.get("part")
+            state = part.get("state") if isinstance(part, dict) else None
+            status = state.get("status") if isinstance(state, dict) else None
+            if not isinstance(status, str):
+                tool_status = "malformed"
+            elif status in OPENCODE_TOOL_STATUSES:
+                tool_status = status
+            else:
+                tool_status = "other"
+            tool_statuses[tool_status] = tool_statuses.get(tool_status, 0) + 1
     return {
         "error_event_count": error_events,
         "error_kinds": dict(sorted(error_kinds.items())),
+        "event_kinds": dict(sorted(event_kinds.items())),
+        "final_event_kind": final_event_kind,
         "malformed_line_count": malformed_lines,
+        "parsed_event_count": parsed_events,
         "status": "captured",
+        "tool_statuses": dict(sorted(tool_statuses.items())),
     }
 
 
@@ -4255,6 +4311,9 @@ def _native_runtime_diagnostic(
         "trajectory": _trajectory_shape_diagnostic(native, trial_name=trial.trial_name),
         "trial": {
             "agent_result_present": trial.agent_result is not None,
+            "exit": _native_agent_exit_diagnostic(
+                trial.exception_info, exception_kind=exception_kind
+            ),
             "exception_kind": exception_kind,
             "verifier_result_present": trial.verifier_result is not None,
             "verifier_reward": retained_reward,

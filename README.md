@@ -81,8 +81,10 @@ failure retains only its phase and cause class. If the production CLI future
 finishes before activation, the runner immediately retains any returned result:
 return code, stream byte counts and SHA-256 digests, safe canonical
 schema/outcome/reward fields, containment, and no-follow native structural
-counts/digests. A future exception retains only its class and bounded native
-structure. Positive request-count checks cannot mask this evidence. Raw streams,
+counts/digests. Failed native diagnostics retain only fixed Harbor exception and
+pipeline-status classes, fixed OpenCode event/error/tool-state histograms and
+final event kind, and bounded ATIF shape. A future exception retains only its
+class and bounded native structure. Positive request-count checks cannot mask this evidence. Raw streams,
 paths, exception messages, prompts, model content, logs, and tool output are
 excluded.
 Before any attempt, the runner divides `$25` minus prior unknown exposure into
@@ -149,13 +151,14 @@ resource remains. A dead parent may leave an inert network; the next startup's
 exact-label sweep removes it. No host port is published. The shared `$25` cap can
 be seeded with explicit prior known cost and prior unknown exposure. They remain
 separate in evidence and both reduce available budget. Provider evidence
-reconciled thirteen OpenRouter generations at `$0.0166085`, `$0.0165085`,
+reconciled fifteen OpenRouter generations at `$0.0166085`, `$0.0165085`,
 `$0.0163585`, `$0.0165185`, `$0.0163385`, `$0.0163785`, `$0.0163285`,
 `$0.0163685`, `$0.016681`, `$0.0163685`, `$0.041831`, `$0.0163685`, and
-`$0.030781`; the earlier LiteLLM reservation remains `$0.96086` unknown. The
+`$0.030781`, `$0.0163685`, and `$0.038771`; the earlier LiteLLM reservation
+remains `$0.96086` unknown. The
 next clean proof must pass
-`--prior-known-cost-usd 0.2534380 --prior-unknown-exposure-usd 0.96086`.
-Combined prior cap consumption is `$1.2142980`, leaving `$5.9464255` per
+`--prior-known-cost-usd 0.3085775 --prior-unknown-exposure-usd 0.96086`.
+Combined prior cap consumption is `$1.2694375`, leaving `$5.932640625` per
 attempt against the `$5.90248` worst-case reservation.
 Debug mode defaults prior exposure to zero and also supports
 `--debug-deny-upstream`. It requires one attempt per profile and forbids proof
