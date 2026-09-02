@@ -1484,3 +1484,11 @@ Provenance: final local source; fake LiteLLM and OpenRouter providers; Python 3.
 The preceding E-113 entry is incomplete where it says each authenticated model's input limit still applies without reserving output headroom. OpenRouter's `context_length` is a combined input/output window. Its signed effective input limit now subtracts the complete 16,384-token output allowance before broker enforcement. LiteLLM retains its explicit `max_input_tokens` contract. Regressions cover insufficient OpenRouter context, signed broker binding, an exact 384 KiB canonical body, one-byte overflow, the 16,384-token endpoint fields, and exact `$5.00136` reservation arithmetic. Independent review found the missing context subtraction; the corrected diff has no remaining finding.
 
 All 463 focused calibration, 1,206 non-Docker, and ten required Docker tests passed. Ruff check/format, ty, Bandit, lock checking and locked all-group sync, wheel/sdist build, installed-wheel metadata/content smoke, all-groups pip-audit, actionlint, diff checks, and full-history Gitleaks over 101 commits passed. Hosted CI, review, merge, and post-merge validation remain pending. No paid retry is permitted before they pass.
+
+## 2026-09-02T05:22:13-07:00: E-113 hosted validation
+
+Provenance: PR 18 head `b976db7`; GitHub Actions runs `33627294360` and `33628423241`; Codex review and resolved thread; GitHub comments and mergeability inspection. No provider call occurred.
+
+The first hosted run passed Python 3.12 and found two generic-key false positives where token-accounting prose preceded private-evidence SHA-256 values in commit `f0b3741`. Exact Gitleaks fingerprints now suppress only those two historical findings, and current prose avoids the trigger shape. Codex correctly found that E-113's table status still said implementation was pending; the status now records completed local validation. Full-history Gitleaks passed locally over 102 commits after the correction.
+
+Run `33628423241` passed Python 3.12 release parity and full-history secret scanning. The Codex thread is resolved, no other review or comment exists, and GitHub reports clean merge state. Final evidence commit, merge, and post-merge validation remain pending. No paid retry is permitted before they pass.
