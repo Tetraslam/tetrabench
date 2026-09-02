@@ -162,11 +162,12 @@ reconciled seventeen earlier OpenRouter generations at `$0.0166085`, `$0.0165085
 `$0.0163685`, `$0.016681`, `$0.0163685`, `$0.041831`, `$0.0163685`, and
 `$0.030781`, `$0.0163685`, `$0.038771`, `$0.0163985`, and `$0.0390585`.
 Nineteen retry 15 generations add `$0.40787`, twenty-five retry 16 generations
-add `$0.5479435`, and sixteen retry 17 generations add `$0.2259166`. The earlier
-LiteLLM reservation remains `$0.96086` unknown. The next clean proof must pass
-`--prior-known-cost-usd 1.5457646 --prior-unknown-exposure-usd 0.96086`.
-Combined prior cap consumption is `$2.5066246`, leaving `$5.62334385` per attempt
-against the `$5.49288` worst-case reservation.
+add `$0.5479435`, sixteen retry 17 generations add `$0.2259166`, and two retry
+18 generations add `$0.0551320`. The earlier LiteLLM reservation remains
+`$0.96086` unknown. The next clean proof must pass
+`--prior-known-cost-usd 1.6008966 --prior-unknown-exposure-usd 0.96086`.
+Combined prior cap consumption is `$2.5617566`, leaving `$5.60956085` per
+attempt against the `$5.49288` worst-case reservation.
 Debug mode defaults prior exposure to zero and also supports
 `--debug-deny-upstream`. It requires one attempt per profile and forbids proof
 output. After normal authenticated pricing, each broker accepts exactly six
@@ -179,7 +180,7 @@ zero-cost route diagnostic remains non-admissible. Direct OpenAI- or
 Anthropic-compatible endpoints need explicit pricing and settlement adapters;
 protocol compatibility does not grant spend authority. A direct OpenRouter
 contract probe cost `$0.00007`; it is separate from benchmark calibration and
-does not reduce the retained `$2.5066246` calibration cap consumption.
+does not reduce the retained `$2.5617566` calibration cap consumption.
 
 Catalog tasks now bind `reward_policy = "numeric" | "binary"` into resolved-plan
 identity. Existing catalogs default to numeric, and retained plans without the
