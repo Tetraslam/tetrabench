@@ -141,7 +141,7 @@ MAX_TOTAL_COST = Decimal("25")
 MAX_INPUT_OR_CACHE_COST_PER_TOKEN = Decimal("10") / Decimal(1_000_000)
 MAX_OUTPUT_COST_PER_TOKEN = Decimal("50") / Decimal(1_000_000)
 RESERVATION_SAFETY_MARGIN = Decimal("0.25")
-MAX_OUTPUT_TOKENS = 8192
+MAX_OUTPUT_TOKENS = 16384
 MAX_REQUESTS = 64
 DENY_UPSTREAM_EXPECTED_REQUESTS = 6
 MAX_CONCURRENCY = 2
@@ -156,7 +156,7 @@ BROKER_IMAGE = (
     "python:3.12.11-slim-bookworm@sha256:"
     "519591d6871b7bc437060736b9f7456b8731f1499a57e22e6c285135ae657bf7"
 )
-MAX_BODY_BYTES = 512 << 10
+MAX_BODY_BYTES = 384 << 10
 MAX_HEADER_BYTES = 16 << 10
 MAX_RESPONSE_BYTES = 64 << 20
 MODEL_INFO_MAX_RESPONSE_BYTES = 4 << 20
@@ -1886,7 +1886,7 @@ def _validate_openrouter_pricing_document(document: Any) -> PricingSnapshot:
             raise ValueError(
                 "OpenRouter model pricing exceeds calibration hard ceiling"
             )
-        max_input = _positive_limit(row.get("context_length"), "context_length")
+        context_length = _positive_limit(row.get("context_length"), "context_length")
         top_provider = row.get("top_provider")
         if not isinstance(top_provider, dict):
             raise ValueError("OpenRouter top provider is missing")
@@ -1895,6 +1895,11 @@ def _validate_openrouter_pricing_document(document: Any) -> PricingSnapshot:
         )
         if max_output < MAX_OUTPUT_TOKENS:
             raise ValueError("OpenRouter model output limit is below calibration cap")
+        if context_length <= MAX_OUTPUT_TOKENS:
+            raise ValueError(
+                "OpenRouter context limit cannot cover calibration output cap"
+            )
+        max_input = context_length - MAX_OUTPUT_TOKENS
         canonical_model = _openrouter_canonical_model(
             row.get("canonical_slug"), requested_model=model
         )

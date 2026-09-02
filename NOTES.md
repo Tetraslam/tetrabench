@@ -1466,3 +1466,21 @@ All 465 focused calibration, 1,204 non-Docker, and ten required Docker tests pas
 Provenance: PR 17 head `c673e0c`; GitHub Actions run `33617317766`; GitHub review, comments, and mergeability inspection. No provider call occurred.
 
 Python 3.12 release parity and full-history secret scanning passed. No automatic or human review feedback appeared, and GitHub reports clean merge state. This supersedes the preceding E-112 entry where hosted parity was pending. Final evidence commit, merge, and post-merge parity remain pending; no paid retry is permitted before they pass.
+
+## 2026-09-02T04:10:57-07:00: E-113 retry 15 output-length boundary and reconciliation
+
+Provenance: PR 17 and merged revision `783a383`; post-merge GitHub Actions run `33619339497`; retry 15 bounded private report; authenticated read-only OpenRouter `/generation` record; exact reservation arithmetic; Docker residue inspection. The generation lookup made no provider completion.
+
+Retry 15 used priors `$0.3640345` known and `$0.96086` unknown. Both target attempts completed with rewards zero and one across sixteen settled requests, costing `$0.1299857` and `$0.1137303`. Alternate attempt one settled two requests at `$0.02169` and `$0.023152`, then failed after forwarding request three and retained its `$1.18967` reservation. Cleanup left no owned resource and no proof. Private report `authority-fencing-calibration-4-r15.stdout.json` is mode `0600`, 44,040 bytes, SHA-256 `5ee95fae2d4a480293b40baeb53b838a4fb9988a869a386160be5e45d4f96e2b`.
+
+Authenticated `/generation` identifies the retained request as streamed, noncancelled canonical model `anthropic/claude-sonnet-5-20260630`, with 18,696 native prompt tokens, exactly 8,192 native completion and reasoning tokens, `finish_reason=length`, `native_finish_reason=max_tokens`, and exact cost `$0.119312`. Private record `authority-fencing-openrouter-generation-r15.json` is mode `0600`, 1,579 bytes, SHA-256 `0644c6fd746828321883f4535dfd1c25713292d2f53bda158e5cd1c5e7da0913`. This cost supersedes retry 15's retained reservation. Cumulative accounting is `$0.7719045` known OpenRouter cost plus `$0.96086` unknown LiteLLM exposure, total `$1.7327645`; four allocations are `$5.816808875`, below the old `$5.90248` maximum request.
+
+D-117 raises the output cap to 16,384 tokens, which both authenticated model rows support, and narrows the canonical request body cap from 512 KiB to 384 KiB. Retry 15's largest request was 107,588 bytes under the exact reservation formula. The changed largest request reserves `$5.00136` at the unchanged hard pricing ceilings and safety margin. Four such reservations plus current prior exposure total `$21.7382045`, leaving `$3.2617955` beneath the shared `$25` cap. Local and hosted validation remain pending; no paid retry is permitted before they pass.
+
+## 2026-09-02T04:53:28-07:00: E-113 context correction and local validation
+
+Provenance: final local source; fake LiteLLM and OpenRouter providers; Python 3.12 validation; real Docker daemon; isolated wheel installation; full-history Gitleaks; independent adversarial review. No provider call occurred.
+
+The preceding E-113 entry is incomplete where it says each authenticated model's input limit still applies without reserving output headroom. OpenRouter's `context_length` is a combined input/output window. Its signed effective input limit now subtracts the complete 16,384-token output allowance before broker enforcement. LiteLLM retains its explicit `max_input_tokens` contract. Regressions cover insufficient OpenRouter context, signed broker binding, an exact 384 KiB canonical body, one-byte overflow, the 16,384-token endpoint fields, and exact `$5.00136` reservation arithmetic. Independent review found the missing context subtraction; the corrected diff has no remaining finding.
+
+All 463 focused calibration, 1,206 non-Docker, and ten required Docker tests passed. Ruff check/format, ty, Bandit, lock checking and locked all-group sync, wheel/sdist build, installed-wheel metadata/content smoke, all-groups pip-audit, actionlint, diff checks, and full-history Gitleaks over 101 commits passed. Hosted CI, review, merge, and post-merge validation remain pending. No paid retry is permitted before they pass.

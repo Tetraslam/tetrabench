@@ -87,14 +87,16 @@ final event kind, and bounded ATIF shape. A future exception retains only its
 class and bounded native structure. Positive request-count checks cannot mask this evidence. Raw streams,
 paths, exception messages, prompts, model content, logs, and tool output are
 excluded.
-Before any attempt, the runner divides `$25` minus prior unknown exposure into
-four deterministic clean-run allocations, or two in debug mode. The allocations
+Before any attempt, the runner divides `$25` minus prior known cost and prior
+unknown exposure into four deterministic clean-run allocations, or two in debug
+mode. The allocations
 sum exactly to the available budget, each must cover one complete worst-case
 request for its profile, and each broker receives only its own allocation.
 Unused allocation is not spend and cannot be consumed by another attempt. Each
 attempt locks to its first valid OpenCode endpoint only after successful budget
-reservation. The broker caps output at 8,192 tokens and reserves each request's
-worst-case cost within that allocation before forwarding. LiteLLM preserves exact
+reservation. The broker caps canonical request bodies at 384 KiB and output at
+16,384 tokens, then reserves each request's worst-case cost within that
+allocation before forwarding. LiteLLM preserves exact
 cost-header settlement for nonstreaming responses and terminal usage settlement
 for Responses streams. OpenRouter accepts documented data-only Responses frames
 and optional matching `event:` lines, ignores valid comments and blank separators,
@@ -118,6 +120,8 @@ the complete attempt allocation as conservative unknown exposure. Preactivation
 zero exposure requires phase proof that activation never started. The 30-second
 client backpressure timeout applies only to the buffered downstream write.
 Fake-upstream tests cover both backends without a model call.
+OpenRouter subtracts the complete output allowance from authenticated
+`context_length` before it signs and enforces the effective input limit.
 Chat requests are normalized to exactly one completion and both supported
 endpoints reject multiplicity, background generation, non-text modalities,
 remote media, file references, plugins, web-search options, model fallback
@@ -125,7 +129,7 @@ arrays, routing/provider controls, transforms, and server-side tool types.
 Ordinary client-defined function tools, tool calls, and tool results remain
 supported. Responses also accepts only OpenCode's pinned stateless encrypted
 reasoning replay shape; arbitrary reasoning fields and item IDs remain rejected.
-Endpoint-specific output limits remain capped at 8,192, and every
+Endpoint-specific output limits remain capped at 16,384, and every
 reservation covers that complete permitted output.
 
 The clean task is copied into a temporary overlay whose only added or replaced
@@ -153,15 +157,15 @@ resource remains. A dead parent may leave an inert network; the next startup's
 exact-label sweep removes it. No host port is published. The shared `$25` cap can
 be seeded with explicit prior known cost and prior unknown exposure. They remain
 separate in evidence and both reduce available budget. Provider evidence
-reconciled seventeen OpenRouter generations at `$0.0166085`, `$0.0165085`,
+reconciled seventeen earlier OpenRouter generations at `$0.0166085`, `$0.0165085`,
 `$0.0163585`, `$0.0165185`, `$0.0163385`, `$0.0163785`, `$0.0163285`,
 `$0.0163685`, `$0.016681`, `$0.0163685`, `$0.041831`, `$0.0163685`, and
-`$0.030781`, `$0.0163685`, `$0.038771`, `$0.0163985`, and `$0.0390585`; the
-earlier LiteLLM reservation remains `$0.96086` unknown. The
-next clean proof must pass
-`--prior-known-cost-usd 0.3640345 --prior-unknown-exposure-usd 0.96086`.
-Combined prior cap consumption is `$1.3248945`, leaving `$5.918776375` per
-attempt against the `$5.90248` worst-case reservation.
+`$0.030781`, `$0.0163685`, `$0.038771`, `$0.0163985`, and `$0.0390585`.
+Nineteen retry 15 generations add `$0.40787`. The earlier LiteLLM reservation
+remains `$0.96086` unknown. The next clean proof must pass
+`--prior-known-cost-usd 0.7719045 --prior-unknown-exposure-usd 0.96086`.
+Combined prior cap consumption is `$1.7327645`, leaving `$5.816808875` per
+attempt against the `$5.00136` worst-case reservation.
 Debug mode defaults prior exposure to zero and also supports
 `--debug-deny-upstream`. It requires one attempt per profile and forbids proof
 output. After normal authenticated pricing, each broker accepts exactly six
@@ -174,7 +178,7 @@ zero-cost route diagnostic remains non-admissible. Direct OpenAI- or
 Anthropic-compatible endpoints need explicit pricing and settlement adapters;
 protocol compatibility does not grant spend authority. A direct OpenRouter
 contract probe cost `$0.00007`; it is separate from benchmark calibration and
-does not reduce the retained `$1.2142980` calibration cap consumption.
+does not reduce the retained `$1.7327645` calibration cap consumption.
 
 Catalog tasks now bind `reward_policy = "numeric" | "binary"` into resolved-plan
 identity. Existing catalogs default to numeric, and retained plans without the

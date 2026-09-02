@@ -661,7 +661,7 @@ def test_openrouter_models_pricing_preserves_base_path_and_takes_override_maxima
         "cache_read_input_token_cost": "4E-7",
         "canonical_model": "openai/gpt-5.6-sol-20260709",
         "input_cost_per_token": "0.000004",
-        "max_input_tokens": 400000,
+        "max_input_tokens": 400000 - calibration.MAX_OUTPUT_TOKENS,
         "max_output_tokens": 128000,
         "model_group": "openai/gpt-5.6-sol",
         "output_cost_per_token": "0.000015",
@@ -963,7 +963,7 @@ def test_model_info_rejects_truncated_or_malformed_document() -> None:
         ("cache_read_input_token_cost", None),
         ("cache_creation_input_token_cost", -1),
         ("max_input_tokens", 0),
-        ("max_output_tokens", 8191),
+        ("max_output_tokens", 16383),
     ],
 )
 def test_model_info_rejects_bad_rates_ceilings_and_limits(
@@ -1011,10 +1011,11 @@ def test_openrouter_broker_binding_requires_signed_canonical_model() -> None:
         models,
         snapshot.sha256,
         "openai/gpt-5.6-sol",
-        400000,
+        400000 - calibration.MAX_OUTPUT_TOKENS,
         calibration.OPENROUTER_BACKEND,
     )
     assert selected["canonical_model"] == "openai/gpt-5.6-sol-20260709"
+    assert selected["max_input_tokens"] == 400000 - calibration.MAX_OUTPUT_TOKENS
 
     models[0].pop("canonical_model")
     digest = hashlib.sha256(calibration.canonical(models).encode()).hexdigest()
@@ -1023,9 +1024,16 @@ def test_openrouter_broker_binding_requires_signed_canonical_model() -> None:
             models,
             digest,
             "openai/gpt-5.6-sol",
-            400000,
+            400000 - calibration.MAX_OUTPUT_TOKENS,
             calibration.OPENROUTER_BACKEND,
         )
+
+
+def test_openrouter_context_limit_reserves_complete_output_headroom() -> None:
+    document = openrouter_pricing_document()
+    document["data"][0]["context_length"] = calibration.MAX_OUTPUT_TOKENS
+    with pytest.raises(ValueError, match="context limit cannot cover"):
+        calibration._validate_openrouter_pricing_document(document)
 
 
 def test_atif_token_metrics_are_mandatory_coherent_and_nonzero() -> None:
@@ -1168,7 +1176,7 @@ def test_broker_forwards_exact_model_caps_output_and_strips_sensitive_headers() 
             assert observed["authorization"] == f"Bearer {TEST_PARENT_KEY}"
             assert observed["path"] == "/v1/responses"
             assert observed["body"]["model"] == "openai/gpt-5.6-sol"
-            assert observed["body"]["max_output_tokens"] == 8192
+            assert observed["body"]["max_output_tokens"] == 16384
             deadline = time.monotonic() + 2
             while not broker.state.records and time.monotonic() < deadline:
                 time.sleep(0.01)
@@ -1227,7 +1235,7 @@ def test_endpoint_specific_output_limit_is_injected_or_capped(
         with running_broker(upstream) as broker:
             status, _headers, _body = request(broker, path=path, document=document)
             assert status == 200
-            assert upstream.requests[0]["body"][field] == 8192
+            assert upstream.requests[0]["body"][field] == 16384
 
 
 @pytest.mark.parametrize(
@@ -2655,14 +2663,49 @@ def test_broker_rejects_body_and_header_size_limits(
 ) -> None:
     with fake_upstream() as upstream:
         with running_broker(upstream) as broker:
+            body_limit = calibration.MAX_BODY_BYTES
             monkeypatch.setattr(calibration, "MAX_BODY_BYTES", 8)
             status, _headers, _body = request(broker)
             assert status == 400
-            monkeypatch.setattr(calibration, "MAX_BODY_BYTES", 512 << 10)
+            monkeypatch.setattr(calibration, "MAX_BODY_BYTES", body_limit)
             monkeypatch.setattr(calibration, "MAX_HEADER_BYTES", 32)
             status, _headers, _body = request(broker, headers={"X-Oversized": "x" * 64})
             assert status == 400
             assert upstream.requests == []
+
+
+def test_broker_accepts_exact_body_limit_and_rejects_one_byte_over() -> None:
+    document = {
+        "input": "",
+        "max_output_tokens": calibration.MAX_OUTPUT_TOKENS,
+        "model": "openai/gpt-5.6-sol",
+    }
+    empty = calibration.canonical(document).encode()
+    document["input"] = "x" * (calibration.MAX_BODY_BYTES - len(empty))
+    exact = calibration.canonical(document).encode()
+    document["input"] += "x"
+    over = calibration.canonical(document).encode()
+    assert len(exact) == calibration.MAX_BODY_BYTES
+    assert len(over) == calibration.MAX_BODY_BYTES + 1
+    with fake_upstream() as upstream:
+        with running_broker(upstream) as broker:
+            token = broker.token.encode()
+
+            def send(body: bytes) -> bytes:
+                return raw_request(
+                    broker.port,
+                    b"POST /v1/responses HTTP/1.1\r\nHost: localhost\r\n"
+                    + b"Authorization: Bearer "
+                    + token
+                    + b"\r\nContent-Type: application/json\r\nContent-Length: "
+                    + str(len(body)).encode()
+                    + b"\r\n\r\n"
+                    + body,
+                )
+
+            assert b" 200 " in send(exact)
+            assert b" 400 " in send(over)
+            assert len(upstream.requests) == 1
 
 
 def test_conservative_input_byte_bound_honors_live_model_limit() -> None:
@@ -3549,8 +3592,11 @@ def test_prior_unknown_exposure_consumes_cap_without_becoming_cost_or_attempt() 
 
 
 def test_four_worst_case_reservations_plus_recorded_prior_fit_shared_cap() -> None:
-    prior = Decimal("0.96086")
+    prior = Decimal("1.7327645")
     worst = calibration._reservation_for_body(b"x" * calibration.MAX_BODY_BYTES)
+    assert calibration.MAX_BODY_BYTES == 384 << 10
+    assert calibration.MAX_OUTPUT_TOKENS == 16384
+    assert worst == Decimal("5.00136")
     assert prior + 4 * worst <= calibration.MAX_TOTAL_COST
     assert prior + 5 * worst > calibration.MAX_TOTAL_COST
 
@@ -5258,7 +5304,7 @@ def _docker_sidecar(
         model="openai/gpt-5.6-sol",
         pricing=pricing,
         max_input_tokens=200000,
-        budget_cap=Decimal("1"),
+        budget_cap=Decimal("2"),
         backend=backend,
         fake_response_cost=Decimal("0.125"),
     )
