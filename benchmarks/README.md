@@ -313,8 +313,8 @@ admits image/audio/file/remote-reference blocks. Ordinary URLs inside a text
 string remain text. Its first valid request
 locks that attempt to either `/v1/responses` or `/v1/chat/completions`; later
 requests must use the same endpoint. The broker applies the endpoint's exact
-output-limit fields and caps them at 16,384 tokens. Canonical request bodies are
-limited to 384 KiB. The broker treats the forwarded UTF-8 body's byte length as
+output-limit fields and caps them at 65,536 tokens. Canonical request bodies are
+limited to 192 KiB. The broker treats the forwarded UTF-8 body's byte length as
 the input-token upper bound because the supported tokenizers fall back to at
 most one token per byte. The OpenRouter path subtracts the complete output
 allowance from authenticated
@@ -385,10 +385,10 @@ reported IPAM gateway and `Internal` value are recorded as topology only;
 authenticated pricing and later forwarding prove actual egress. This transport
 requires no host reachability or firewall change. No real calibration has
 completed, so difficulty calibration remains unproven. The next clean proof
-explicitly carries `$0.7719045` prior known OpenRouter cost and `$0.96086` prior
+explicitly carries `$1.319848` prior known OpenRouter cost and `$0.96086` prior
 unknown LiteLLM exposure against the shared `$25` cap. The resulting total prior
-cap consumption is `$1.7327645`, leaving `$5.816808875` per attempt against the
-`$5.00136` worst-case request. A
+cap consumption is `$2.280708`, leaving `$5.679823` per attempt against the
+`$5.49288` worst-case request. A
 separate direct OpenRouter contract probe cost `$0.00007`; it is not benchmark
 calibration. `--debug-deny-upstream` is
 a non-admissible one-attempt-per-profile diagnostic with no proof output. It

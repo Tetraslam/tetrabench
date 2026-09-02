@@ -94,8 +94,8 @@ sum exactly to the available budget, each must cover one complete worst-case
 request for its profile, and each broker receives only its own allocation.
 Unused allocation is not spend and cannot be consumed by another attempt. Each
 attempt locks to its first valid OpenCode endpoint only after successful budget
-reservation. The broker caps canonical request bodies at 384 KiB and output at
-16,384 tokens, then reserves each request's worst-case cost within that
+reservation. The broker caps canonical request bodies at 192 KiB and output at
+65,536 tokens, then reserves each request's worst-case cost within that
 allocation before forwarding. LiteLLM preserves exact
 cost-header settlement for nonstreaming responses and terminal usage settlement
 for Responses streams. OpenRouter accepts documented data-only Responses frames
@@ -129,7 +129,7 @@ arrays, routing/provider controls, transforms, and server-side tool types.
 Ordinary client-defined function tools, tool calls, and tool results remain
 supported. Responses also accepts only OpenCode's pinned stateless encrypted
 reasoning replay shape; arbitrary reasoning fields and item IDs remain rejected.
-Endpoint-specific output limits remain capped at 16,384, and every
+Endpoint-specific output limits remain capped at 65,536, and every
 reservation covers that complete permitted output.
 
 The clean task is copied into a temporary overlay whose only added or replaced
@@ -161,11 +161,12 @@ reconciled seventeen earlier OpenRouter generations at `$0.0166085`, `$0.0165085
 `$0.0163585`, `$0.0165185`, `$0.0163385`, `$0.0163785`, `$0.0163285`,
 `$0.0163685`, `$0.016681`, `$0.0163685`, `$0.041831`, `$0.0163685`, and
 `$0.030781`, `$0.0163685`, `$0.038771`, `$0.0163985`, and `$0.0390585`.
-Nineteen retry 15 generations add `$0.40787`. The earlier LiteLLM reservation
-remains `$0.96086` unknown. The next clean proof must pass
-`--prior-known-cost-usd 0.7719045 --prior-unknown-exposure-usd 0.96086`.
-Combined prior cap consumption is `$1.7327645`, leaving `$5.816808875` per
-attempt against the `$5.00136` worst-case reservation.
+Nineteen retry 15 generations add `$0.40787`, and twenty-five retry 16
+generations add `$0.5479435`. The earlier LiteLLM reservation remains `$0.96086`
+unknown. The next clean proof must pass
+`--prior-known-cost-usd 1.319848 --prior-unknown-exposure-usd 0.96086`.
+Combined prior cap consumption is `$2.280708`, leaving `$5.679823` per attempt
+against the `$5.49288` worst-case reservation.
 Debug mode defaults prior exposure to zero and also supports
 `--debug-deny-upstream`. It requires one attempt per profile and forbids proof
 output. After normal authenticated pricing, each broker accepts exactly six
@@ -178,7 +179,7 @@ zero-cost route diagnostic remains non-admissible. Direct OpenAI- or
 Anthropic-compatible endpoints need explicit pricing and settlement adapters;
 protocol compatibility does not grant spend authority. A direct OpenRouter
 contract probe cost `$0.00007`; it is separate from benchmark calibration and
-does not reduce the retained `$1.7327645` calibration cap consumption.
+does not reduce the retained `$2.280708` calibration cap consumption.
 
 Catalog tasks now bind `reward_policy = "numeric" | "binary"` into resolved-plan
 identity. Existing catalogs default to numeric, and retained plans without the
