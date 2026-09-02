@@ -1440,3 +1440,9 @@ Harbor's native exception message begins with the pipeline status as `Command fa
 Provenance: final local source; pinned Harbor/OpenCode source contracts; independent adversarial review; Python 3.12 validation; real Docker daemon; isolated wheel installation; full-history Gitleaks.
 
 All 453 focused calibration, 1,192 non-Docker, and ten required Docker tests passed. Exact schema assertions bind the six OpenCode event names and two emitted tool states. Regressions cover every accepted member, unknown and malformed events, malformed nested tool containers, exact exit status bounds, leading zeros, non-command exception messages, and private-content exclusion. Ruff check/format, ty, Bandit, lock checking, wheel/sdist build, installed-wheel metadata/content smoke, all-groups pip-audit, actionlint, diff checks, and full-history Gitleaks over 95 commits passed. Independent review's two initial test-coverage findings and two representation-consistency findings were fixed; final review found no remaining privacy or contract issue. Hosted CI, review, merge, and post-merge validation remain pending. No provider call occurred during validation.
+
+## 2026-09-02T02:06:18-07:00: E-111 hosted validation
+
+Provenance: PR 16 head `3377e5f`; GitHub Actions run `33611275380`; GitHub review, comments, and mergeability inspection. No provider call occurred.
+
+Python 3.12 release parity and full-history secret scanning passed. No automatic or human review feedback appeared, and GitHub reports clean merge state. This supersedes the preceding E-111 entry where hosted parity was pending. Final evidence commit, merge, and post-merge parity remain pending; no paid retry is permitted before they pass.
