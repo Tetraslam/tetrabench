@@ -20,6 +20,7 @@ from email.message import Message
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, cast
 
 import pytest
@@ -4250,6 +4251,272 @@ def test_failed_native_output_retains_only_structure_digests_and_classes(
     retained = json.dumps(native)
     assert "private model output" not in retained
     assert str(output) not in retained
+
+
+def test_native_runtime_diagnostic_retains_only_failure_shapes_and_counts() -> None:
+    trial_name = "authority-fencing__opencode__model__1"
+    native = calibration.NativeSnapshot(
+        files={
+            f"harbor-job/{trial_name}/agent/opencode.txt": (
+                b'{"type":"step_start","private":"prompt"}\n'
+                b'{"type":"error","error":{"data":{"message":"private error"}}}\n'
+                b"private malformed line\n"
+            ),
+            f"harbor-job/{trial_name}/agent/trajectory.json": json.dumps(
+                {
+                    "steps": [
+                        {"message": "private prompt", "source": "user"},
+                        {
+                            "message": "private model text",
+                            "observation": {
+                                "results": [{"content": "private tool output"}]
+                            },
+                            "reasoning_content": "private reasoning",
+                            "source": "agent",
+                            "tool_calls": [
+                                {
+                                    "arguments": {"secret": "private"},
+                                    "function_name": "private_tool_name",
+                                }
+                            ],
+                        },
+                    ]
+                }
+            ).encode(),
+        },
+        manifest=[],
+    )
+    job = SimpleNamespace(
+        n_total_trials=1,
+        stats=SimpleNamespace(
+            n_cancelled_trials=0,
+            n_completed_trials=1,
+            n_errored_trials=1,
+        ),
+    )
+    trial = SimpleNamespace(
+        agent_result=object(),
+        exception_info=SimpleNamespace(exception_type="NonZeroAgentExitCodeError"),
+        trial_name=trial_name,
+        verifier_result=SimpleNamespace(rewards={"reward": 1}),
+    )
+
+    diagnostic = calibration._native_runtime_diagnostic(
+        native, job=cast(Any, job), trial=cast(Any, trial)
+    )
+
+    assert diagnostic == {
+        "job": {
+            "cancelled_trials": 0,
+            "completed_trials": 1,
+            "errored_trials": 1,
+        },
+        "opencode_events": {
+            "error_event_count": 1,
+            "malformed_line_count": 1,
+            "status": "captured",
+        },
+        "status": "captured",
+        "trajectory": {
+            "agent_step_count": 1,
+            "final_agent_step": {
+                "message_present": True,
+                "observation_result_count": 1,
+                "reasoning_present": True,
+                "tool_call_count": 1,
+            },
+            "status": "captured",
+            "step_count": 2,
+        },
+        "trial": {
+            "agent_result_present": True,
+            "exception_kind": "NonZeroAgentExitCodeError",
+            "verifier_result_present": True,
+            "verifier_reward": 1,
+        },
+    }
+    retained = json.dumps(diagnostic)
+    assert "private" not in retained
+    assert trial_name not in retained
+
+
+@pytest.mark.parametrize(
+    ("total", "counts", "reward"),
+    [
+        (2, (1, 1, 0), 1),
+        (1, (-1, 1, 0), 1),
+        (1, (0, 0, 0), 1),
+        (1, (2, 1, 0), 1),
+        (1, (1, 0, 0), 1),
+        (1, (1, 2, 0), 1),
+        (1, (1, 1, 2), 1),
+        (1, (1, 1, 0), 10**1000),
+    ],
+)
+def test_native_runtime_diagnostic_rejects_unbounded_counts_and_rewards(
+    total: int, counts: tuple[int, int, int], reward: int
+) -> None:
+    completed, errored, cancelled = counts
+    job = SimpleNamespace(
+        n_total_trials=total,
+        stats=SimpleNamespace(
+            n_cancelled_trials=cancelled,
+            n_completed_trials=completed,
+            n_errored_trials=errored,
+        ),
+    )
+    trial = SimpleNamespace(
+        agent_result=object(),
+        exception_info=SimpleNamespace(exception_type="PrivateException"),
+        trial_name="private-trial-name",
+        verifier_result=SimpleNamespace(rewards={"reward": reward}),
+    )
+
+    diagnostic = calibration._native_runtime_diagnostic(
+        calibration.NativeSnapshot(files={}, manifest=[]),
+        job=cast(Any, job),
+        trial=cast(Any, trial),
+    )
+
+    assert diagnostic == {"status": "malformed"}
+
+
+def test_native_diagnostic_rejects_partial_valid_result_topology(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    output = tmp_path / "output"
+    output.mkdir(mode=0o700)
+    harbor = output / "harbor-job"
+    good_trial = harbor / "good"
+    bad_trial = harbor / "bad"
+    harbor.mkdir()
+    good_trial.mkdir()
+    bad_trial.mkdir()
+    (harbor / "result.json").write_bytes(b"job")
+    (good_trial / "result.json").write_bytes(b"good")
+    (bad_trial / "result.json").write_bytes(b"private malformed result")
+    fake_job = SimpleNamespace(
+        n_total_trials=1,
+        stats=SimpleNamespace(
+            n_cancelled_trials=0,
+            n_completed_trials=1,
+            n_errored_trials=1,
+        ),
+    )
+    fake_trial = SimpleNamespace(
+        agent_result=object(),
+        exception_info=SimpleNamespace(exception_type="NonZeroAgentExitCodeError"),
+        trial_name="good",
+        verifier_result=SimpleNamespace(rewards={"reward": 1}),
+    )
+    monkeypatch.setattr(
+        calibration.JobResult,
+        "model_validate_json",
+        staticmethod(lambda data: fake_job),
+    )
+
+    def parse_trial(data: bytes) -> Any:
+        if data == b"good":
+            return fake_trial
+        raise ValueError("private parser failure")
+
+    monkeypatch.setattr(
+        calibration.TrialResult,
+        "model_validate_json",
+        staticmethod(parse_trial),
+    )
+
+    diagnostic = calibration._native_diagnostic(output)
+
+    assert diagnostic["structure"] == {
+        "exception_classes": ["ValueError"],
+        "parsed_result_count": 2,
+        "result_count": 3,
+        "status": "invalid",
+    }
+    assert diagnostic["runtime"] == {"status": "unavailable"}
+    assert "private" not in json.dumps(diagnostic)
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        (None, None),
+        ("CancelledError", "CancelledError"),
+        ("NonZeroAgentExitCodeError", "NonZeroAgentExitCodeError"),
+        ("PrivateProviderMessage", "other"),
+        ({"private": "value"}, "malformed"),
+    ],
+)
+def test_native_exception_kind_is_a_fixed_bounded_enum(
+    value: Any, expected: str | None
+) -> None:
+    assert calibration._native_exception_kind(value) == expected
+
+
+def test_trajectory_shape_diagnostic_rejects_malformed_shape_without_content() -> None:
+    trial_name = "trial-private"
+    native = calibration.NativeSnapshot(
+        files={
+            f"harbor-job/{trial_name}/agent/trajectory.json": json.dumps(
+                {
+                    "steps": [
+                        {
+                            "message": "private model text",
+                            "source": "agent",
+                            "tool_calls": {"private": "value"},
+                        }
+                    ]
+                }
+            ).encode()
+        },
+        manifest=[],
+    )
+
+    diagnostic = calibration._trajectory_shape_diagnostic(native, trial_name=trial_name)
+
+    assert diagnostic == {"status": "malformed"}
+    assert "private" not in json.dumps(diagnostic)
+
+
+@pytest.mark.parametrize(
+    "data",
+    [
+        b'{"steps":[0]}',
+        json.dumps({"steps": [{"source": "agent"}] * 10_001}).encode(),
+        b"{" + b"x" * (4 << 20),
+    ],
+)
+def test_trajectory_shape_diagnostic_bounds_input(data: bytes) -> None:
+    trial_name = "private-trial"
+    native = calibration.NativeSnapshot(
+        files={f"harbor-job/{trial_name}/agent/trajectory.json": data},
+        manifest=[],
+    )
+
+    diagnostic = calibration._trajectory_shape_diagnostic(native, trial_name=trial_name)
+
+    assert diagnostic == {"status": "malformed"}
+
+
+@pytest.mark.parametrize(
+    "data",
+    [
+        b"{}\n" * 10_001,
+        b'{"type":"error","private":"' + b"x" * (1 << 20) + b'"}\n',
+    ],
+)
+def test_opencode_event_diagnostic_bounds_jsonl_work(data: bytes) -> None:
+    trial_name = "private-trial"
+    native = calibration.NativeSnapshot(
+        files={f"harbor-job/{trial_name}/agent/opencode.txt": data},
+        manifest=[],
+    )
+
+    diagnostic = calibration._opencode_event_diagnostic(native, trial_name=trial_name)
+
+    assert diagnostic == {"status": "malformed"}
+    assert "private" not in json.dumps(diagnostic)
 
 
 @pytest.mark.parametrize(
