@@ -1328,3 +1328,9 @@ Retry 7's `$0.96086` reservation is superseded by `$0.0163785` known actual cost
 Provenance: 393 focused calibration tests; 1,132 non-Docker tests; ten required real-Docker tests; Ruff, format, ty, Bandit, lock, package, and diff checks. No provider call occurred.
 
 The preceding E-106 entry is superseded where it says full local validation is pending. All local release and Docker gates pass. PR, review, and hosted parity remain pending; no paid retry is permitted before they pass.
+
+## 2026-09-01T17:28:50-07:00: E-106 hosted validation correction
+
+Provenance: PR 11 at implementation commit `31c286c`; GitHub Actions run `33574737811`; GitHub PR checks, review, comments, and mergeability inspection. No provider call occurred.
+
+The preceding E-106 entries are superseded where they say hosted validation is pending. Python 3.12 release parity and the independent full-history secret scan passed. GitHub reports no configured, requested, or posted automatic review and a cleanly mergeable PR. Merge and post-merge CI remain pending; no paid retry is permitted before both pass.
