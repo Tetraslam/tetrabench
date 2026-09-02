@@ -1420,3 +1420,9 @@ OpenCode's v1.18.26 noninteractive runner sets exit code 1 on any session error.
 Provenance: 428 focused calibration tests; 1,168 non-Docker tests; ten real-Docker tests; Ruff, format, ty, Bandit, lock, build, all-groups audit, diff checks, and independent code review. No provider call occurred.
 
 The preceding E-110 entry is superseded where it says local parity is pending. Tests independently pin all eight OpenCode v1.18.26 error names and exercise each through JSONL parsing; unknown names, malformed error shapes, and private nested values collapse without content retention. Independent review reports no remaining finding. The Docker matrix initially passed eight tests while two fixture builds hit transient Docker Hub DNS failure; both exact tests passed after `debian:bookworm-slim` resolved. PR, hosted review, merge, and post-merge parity remain pending; no paid retry is permitted before they pass.
+
+## 2026-09-02T00:31:33-07:00: E-110 hosted validation
+
+Provenance: PR 15 head `3d830db7888544b6b1d14d93b75c7013d76419ba`; GitHub Actions run `33602582868`; GitHub review, comments, threads, and mergeability inspection. No provider call occurred.
+
+Python 3.12 release parity and full-history secret scanning passed. No automatic or human review feedback appeared, there are no review threads, and GitHub reports clean merge state. This supersedes the preceding E-110 entry where hosted parity was pending. Final evidence commit, merge, and post-merge parity remain pending; no paid retry is permitted before they pass.
