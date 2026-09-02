@@ -149,11 +149,12 @@ resource remains. A dead parent may leave an inert network; the next startup's
 exact-label sweep removes it. No host port is published. The shared `$25` cap can
 be seeded with explicit prior known cost and prior unknown exposure. They remain
 separate in evidence and both reduce available budget. Provider evidence
-reconciled seven failed OpenRouter generations at `$0.0166085`, `$0.0165085`,
-`$0.0163585`, `$0.0165185`, `$0.0163385`, `$0.0163785`, and `$0.0163285`;
-the earlier LiteLLM reservation remains `$0.96086` unknown. The next clean proof
-must pass `--prior-known-cost-usd 0.1150395 --prior-unknown-exposure-usd 0.96086`.
-Combined prior cap consumption is `$1.0758995`, leaving `$5.981025125` per
+reconciled nine OpenRouter generations at `$0.0166085`, `$0.0165085`,
+`$0.0163585`, `$0.0165185`, `$0.0163385`, `$0.0163785`, `$0.0163285`,
+`$0.0163685`, and `$0.016681`; the earlier LiteLLM reservation remains
+`$0.96086` unknown. The next clean proof must pass
+`--prior-known-cost-usd 0.1480890 --prior-unknown-exposure-usd 0.96086`.
+Combined prior cap consumption is `$1.1089490`, leaving `$5.97276275` per
 attempt against the `$5.90248` worst-case reservation.
 Debug mode defaults prior exposure to zero and also supports
 `--debug-deny-upstream`. It requires one attempt per profile and forbids proof

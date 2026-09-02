@@ -1364,3 +1364,13 @@ Codex correctly found that checking untrusted `/generation.data.model` directly 
 Provenance: PR 12 head `dcd0dc15d0610bf770f185ef9b98216db2ba9a20`; GitHub Actions run `33585397595`; Python 3.12 job `100108381893`; full-history secret-scan job `100108382067`; Codex thread `PRRT_kwDOUGmv486eWHfx`.
 
 Both hosted jobs pass on the correction commit. No new review comments or actionable feedback appeared, the Codex thread is explicitly resolved, and GitHub reports the PR mergeable with clean merge state. This supersedes the preceding E-107 correction entry where hosted parity and thread resolution were pending. Final evidence-note parity, merge, and post-merge parity remain pending; no paid retry is permitted before they pass.
+
+## 2026-09-01T21:01:38-07:00: E-108 exact-four retry 9 model failure
+
+Provenance: merged revision `1d73fd4`; PR 12 and post-merge GitHub Actions runs `33586984722` and `33587971538`; exact-four retry 9 bounded private report; exact broker settlement evidence; native structural evidence; Docker residue inspection.
+
+Retry 9 used cumulative priors `$0.1150395` known and `$0.96086` unknown and admitted `$5.981025125` per attempt. Target attempt 1 made two `/v1/responses` requests. Both used `openai/gpt-5.6-sol`, returned HTTP 200, matched the signed alias/canonical model set, and settled exactly at `$0.0163685` and `$0.016681`. Current known cost is `$0.0330495`; no current unknown exposure was retained.
+
+Harbor returned canonical `outcome=failed`, `reward=0`, and exit 1 after the two requests. Native evidence contains 47 files and 83 entries, two structurally valid results, no exception classes, and no surviving descendants. This is an unsuccessful model attempt rather than a provider settlement or harness invariant failure. The runner stopped later attempts, completed cleanup, left no labeled Docker container or network, and wrote no proof.
+
+Private report `authority-fencing-calibration-4-r9.stdout.json` is mode `0600`, 5,512 bytes, SHA-256 `e943b367cf376b91c301dd133799817adfe0b839d79172c93482c3e0666f54b8`. Cumulative accounting is `$0.1480890` known OpenRouter cost plus `$0.96086` unknown LiteLLM exposure, total `$1.1089490`; four retry allocations are `$5.97276275`, above the `$5.90248` worst-case request. Evidence PR, review, merge, and post-merge parity remain pending; no paid retry is permitted before they pass.
