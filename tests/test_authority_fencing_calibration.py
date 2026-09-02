@@ -1528,7 +1528,7 @@ def test_openrouter_generation_compares_terminal_usage_to_native_tokens() -> Non
 
 
 @pytest.mark.parametrize("stream", [False, True])
-def test_openrouter_generation_rejects_mismatched_upstream_identifier(
+def test_openrouter_generation_upstream_identifier_is_not_response_identity(
     stream: bool,
 ) -> None:
     body = (
@@ -1568,10 +1568,7 @@ def test_openrouter_generation_rejects_mismatched_upstream_identifier(
             )
         ],
     ) as upstream:
-        ledger = calibration.SpendLedger()
-        with running_broker(
-            upstream, ledger=ledger, backend=calibration.OPENROUTER_BACKEND
-        ) as broker:
+        with running_broker(upstream, backend=calibration.OPENROUTER_BACKEND) as broker:
             assert (
                 request(
                     broker,
@@ -1581,21 +1578,17 @@ def test_openrouter_generation_rejects_mismatched_upstream_identifier(
                         "stream": stream,
                     },
                 )[0]
-                == HTTPStatus.BAD_GATEWAY
+                == HTTPStatus.OK
             )
             deadline = time.monotonic() + 2
             while not broker.state.records and time.monotonic() < deadline:
                 time.sleep(0.01)
             record = broker.state.records[0]
             assert record.request_id == "gen-header"
-            assert record.settlement == "retained_unknown"
-            assert record.settlement_failure == "generation_upstream_id_mismatch"
-            assert record.cost is None
-            assert record.retained_unknown_reservation_usd == (
-                record.worst_case_reservation_usd
-            )
-            assert ledger.cost == 0
-            assert ledger.reserved > 0
+            assert record.settlement == "settled"
+            assert record.settlement_failure is None
+            assert record.cost == "0.00007"
+            assert record.retained_unknown_reservation_usd == "0"
     assert [item["path"] for item in upstream.requests] == [
         "/api/v1/responses",
         "/api/v1/generation?id=gen-header",

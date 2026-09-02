@@ -1310,3 +1310,27 @@ The preceding E-105 entry is superseded where it says full local validation is p
 Provenance: PR 10 at implementation commit `f2918d7`; GitHub Actions run `33570222404`; GitHub PR checks, review, comments, and mergeability inspection. No provider call occurred.
 
 The preceding E-105 entries are superseded where they say hosted validation is pending. Python 3.12 release parity and the independent full-history secret scan passed. GitHub reports no configured, requested, or posted automatic review and a cleanly mergeable PR. Merge and post-merge CI remain pending; no paid retry is permitted before both pass.
+
+## 2026-09-01T17:03:27-07:00: E-106 OpenRouter upstream response identity correction
+
+Provenance: merged revision `8675149`; PR 10 and post-merge GitHub Actions runs `33571315815` and `33572262640`; exact-four retry 7 bounded private report with typed settlement failure; authenticated OpenRouter `/generation`; current OpenRouter generation and Responses documentation; private raw and canonical reconciliation evidence; fake-provider regressions. No additional provider completion occurred during implementation or validation.
+
+Retry 7 used cumulative priors `$0.0823325` known and `$0.96086` unknown, admitted `$5.989201875` per attempt, and made one target `/v1/responses` request. Its broker record retained exact safe failure `generation_upstream_id_mismatch`, stopped remaining attempts, completed cleanup, and wrote no proof. Authenticated `/generation` records normalized counts 7,415 prompt and 92 completion, native counts 6,028 prompt and 131 completion, canonical model `openai/gpt-5.6-sol-20260709`, streamed tool-call completion, and exact cost `$0.0163785`.
+
+OpenRouter's generation header and transformed terminal body arrive in one authenticated HTTP response. The header selects the historical generation and must equal `/generation.data.id`. `/generation.upstream_id` names the provider's upstream response; OpenRouter does not define it as the transformed Responses terminal ID. D-111 removes only that false equality. The terminal retains strict bounded ID shape, status, canonical model, usage, event ordering, and framing checks, while generation model, stream, cost, normalized-token shape, and native-token equality remain exact. Stream and nonstream fakes prove that a differing upstream ID settles while generation-ID, model, stream, cost, and token mismatches continue retaining reservations.
+
+Private reconciliation `authority-fencing-openrouter-reconciliation-20260901-r7.json` is mode `0600`, 680 bytes, SHA-256 `2ad0643517d2b83338199754c4251712f461fa460ad34ee56b1fef6959ffdf04`. The bounded retry report is mode `0600`, 5,002 bytes, SHA-256 `79528b6ea59401972a1d73fe55af9fa3cf47100fc14424cfa21bd4b4e23e9618`; the private generation response is mode `0600`, 1,583 bytes, SHA-256 `16cb9a677c2d15969dd410e77c1b625526728d7b85e3f32c1fb9e88273f52f0e`.
+
+Retry 7's `$0.96086` reservation is superseded by `$0.0163785` known actual cost. Cumulative prior accounting is `$0.098711` known OpenRouter cost plus `$0.96086` unknown LiteLLM exposure, total `$1.059571`; four allocations are `$5.98510725`, above the `$5.90248` worst-case request. Focused identity regressions, Ruff format/check, and ty pass. Full local, PR, review, and hosted parity remain pending; no paid retry is permitted before they pass.
+
+## 2026-09-01T17:15:36-07:00: E-106 local validation correction
+
+Provenance: 393 focused calibration tests; 1,132 non-Docker tests; ten required real-Docker tests; Ruff, format, ty, Bandit, lock, package, and diff checks. No provider call occurred.
+
+The preceding E-106 entry is superseded where it says full local validation is pending. All local release and Docker gates pass. PR, review, and hosted parity remain pending; no paid retry is permitted before they pass.
+
+## 2026-09-01T17:28:50-07:00: E-106 hosted validation correction
+
+Provenance: PR 11 at implementation commit `31c286c`; GitHub Actions run `33574737811`; GitHub PR checks, review, comments, and mergeability inspection. No provider call occurred.
+
+The preceding E-106 entries are superseded where they say hosted validation is pending. Python 3.12 release parity and the independent full-history secret scan passed. GitHub reports no configured, requested, or posted automatic review and a cleanly mergeable PR. Merge and post-merge CI remain pending; no paid retry is permitted before both pass.

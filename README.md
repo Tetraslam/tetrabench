@@ -149,11 +149,11 @@ resource remains. A dead parent may leave an inert network; the next startup's
 exact-label sweep removes it. No host port is published. The shared `$25` cap can
 be seeded with explicit prior known cost and prior unknown exposure. They remain
 separate in evidence and both reduce available budget. Provider evidence
-reconciled five failed OpenRouter generations at `$0.0166085`, `$0.0165085`,
-`$0.0163585`, `$0.0165185`, and `$0.0163385`;
+reconciled six failed OpenRouter generations at `$0.0166085`, `$0.0165085`,
+`$0.0163585`, `$0.0165185`, `$0.0163385`, and `$0.0163785`;
 the earlier LiteLLM reservation remains `$0.96086` unknown. The next clean proof
-must pass `--prior-known-cost-usd 0.0823325 --prior-unknown-exposure-usd 0.96086`.
-Combined prior cap consumption is `$1.0431925`, leaving `$5.989201875` per
+must pass `--prior-known-cost-usd 0.098711 --prior-unknown-exposure-usd 0.96086`.
+Combined prior cap consumption is `$1.059571`, leaving `$5.98510725` per
 attempt against the `$5.90248` worst-case reservation.
 Debug mode defaults prior exposure to zero and also supports
 `--debug-deny-upstream`. It requires one attempt per profile and forbids proof
@@ -167,7 +167,7 @@ zero-cost route diagnostic remains non-admissible. Direct OpenAI- or
 Anthropic-compatible endpoints need explicit pricing and settlement adapters;
 protocol compatibility does not grant spend authority. A direct OpenRouter
 contract probe cost `$0.00007`; it is separate from benchmark calibration and
-does not reduce the retained `$1.0431925` calibration cap consumption.
+does not reduce the retained `$1.059571` calibration cap consumption.
 
 Catalog tasks now bind `reward_policy = "numeric" | "binary"` into resolved-plan
 identity. Existing catalogs default to numeric, and retained plans without the
