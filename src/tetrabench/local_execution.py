@@ -58,7 +58,7 @@ def _validate_task_paths(root: Path, request: RequestRecord) -> None:
 def run_local(
     root: Path,
     section: SectionName,
-    profile: str,
+    profile: str | None,
     output_directory: Path,
 ) -> LocalExecutionResult:
     """Resolve one local profile and run its selected checked-in tasks attached."""

@@ -1,658 +1,123 @@
 # tetrabench
 
-tetrabench is in early implementation. Its verified local surface includes
-strict RFC 8785 records, immutable S3 transport, a fixed-key CAS admission
-record, atomic submission receipts, a profile-specific Modal App builder, and a
-decorator-independent controller runtime. A real Harbor 0.22 runner now compiles
-strict plans through Harbor's supported configuration models and executes with
-`Job.create` and `job.run`. Its integration fixture passes through attached local
-Docker with the oracle agent and a verifier reward of `1.0`, with no model call.
-The real Docker fixture also passes through `ControllerRuntime` with in-memory
-S3 and Volume implementations, producing a validated immutable terminal after
-secure artifact collection. The runtime locally proves admission, attempt
-isolation, Volume boundaries, context verification, terminal-last publication,
-no-follow bounded artifact collection, bounded failure evidence, and real
-child-observer orchestration with fakes. Modal 1.5.4 App construction and the
-installed distribution metadata are exercised against the real local SDK.
-A Tigris Single-region `iad` bucket is the authoritative coordination baseline.
-Retained E-046 evidence records it as private at cutover. Live evidence covers
-location admission, immediate GET/HEAD/LIST,
-conditional create and concurrent single-winner update, verified probe cleanup,
-and a fresh-process detached Harbor oracle smoke with reward `1.0`. The retained
-Global bucket is legacy immutable evidence only; tetrabench rejects it for
-mutable admission coordination.
-A deployed Modal controller has completed detached execution, cancellation, and
-forced-interruption recovery smokes against a private Tigris prefix. The recovery
-smoke terminated a running owner without publishing cancellation intent, observed
-its stale Harbor child, and recovered from a fresh empty-state process. The
-successor retained distinct old and new named-Volume attempts, published a
-14-artifact terminal with reward `1.0`, and left no tagged child or controller
-call running. The Single-region cutover smoke likewise published 14 artifacts
-terminal-last, retained its named-Volume attempt, and left no active controller
-or nested Harbor child. AWS and true provider preemption remain unproven. The
-checked-in benchmark sections still contain no tasks, so `submit` refuses
-them. A second source-only fixture proves Harbor 0.22 separate verification
-locally: the final forge API call seals its database before the agent exits;
-Harbor then collects the real Git worktree, stops `main`, exports the already-
-sealed forge sidecar, and runs a no-network verifier with hidden source baked
-from `tests/`. The verifier validates native artifact placement, forge hashes
-and transitions, Git objects, a clean clone, and product behavior before writing
-exact binary reward bytes. Its runtime evidence records whether DNS resolved and
-the returned addresses; Harbor's Docker egress control may permit that lookup.
-Direct-IP and hostname TCP connection attempts must both fail, and either
-connection succeeding forces reward `0`. The candidate-specific detached Modal
-sequence passes two gold runs and one reward-forgery audit.
-The unlisted candidate also has a source-only local calibration runner with two
-fixed OpenCode model groups. Every attempt creates a fresh labeled Docker bridge
-with an explicit deterministic `/28` from a dedicated 10/8 pool. Allocation
-excludes every non-default IPv4 route across all host policy tables and every
-existing Docker IPAM range; atomic Docker creation arbitrates concurrent runners.
-Evidence retains only the selected subnet, gateway, and bounded collision counts.
-The network carries one broker sidecar with a unique alias. The broker image is pinned,
-mounts the source snapshot read-only, and receives the selected backend key through
-anonymous stdin after start. The key is absent from Docker env, argv, labels,
-mounts, config, and logs. Generated Harbor `main` uses the exact public DNS list
-`1.1.1.1`, `9.9.9.9`. The default personal OpenRouter broker uses the same
-public resolvers. The optional LiteLLM work backend uses exact Tailscale MagicDNS
-`100.100.100.100` for its tailnet-only upstream. Immutable preactivation
-inspection requires the selected backend's exact ordered list. A disposable container completes
-a one-shot probe through Docker's embedded alias resolution without an external
-DNS override. The
-attempt token remains inactive until the runner discovers the uniquely labeled
-Harbor `main`, validates its immutable Docker config, records one config digest,
-and activates the token through that same private pipe. A `main` healthcheck
-holds Harbor's native `compose up --wait` boundary until activation, before
-OpenCode installation or execution. OpenRouter is the default calibration backend
-at `https://openrouter.ai/api/v1`; LiteLLM remains available with `--backend
-litellm`. OpenRouter reads authenticated `/models` pricing, while LiteLLM reads
-`/model/info`. Both retain only an exact redacted normalized snapshot, source,
-backend, and digest.
-The CLI reads only the selected backend credential:
-`TETRABENCH_OPENROUTER_API_KEY` for OpenRouter or
-`TETRABENCH_LITELLM_API_KEY` for LiteLLM. LiteLLM alone accepts the deprecated
-`TETRABENCH_CALIBRATION_GATEWAY_KEY` fallback when the new variable is absent;
-setting both LiteLLM variables is ambiguous and fails closed. Credential values
-are never serialized.
-It then starts each attempt with bounded failure evidence before model work.
-Each attempt records ordered started/completed/failed booleans for sidecar start,
-topology probe, CLI spawn, main discovery/config validation, broker activation,
-heartbeat start, CLI wait, ledger read, native validation, and cleanup. A stage
-failure retains only its phase and cause class. If the production CLI future
-finishes before activation, the runner immediately retains any returned result:
-return code, stream byte counts and SHA-256 digests, safe canonical
-schema/outcome/reward fields, containment, and no-follow native structural
-counts/digests. Failed native diagnostics retain only fixed Harbor exception and
-pipeline-status classes, fixed OpenCode event/error/tool-state histograms and
-final event kind, and bounded ATIF shape. A future exception retains only its
-class and bounded native structure. Positive request-count checks cannot mask this evidence. Raw streams,
-paths, exception messages, prompts, model content, logs, and tool output are
-excluded.
-Before any attempt, the runner divides `$50` minus prior known cost and prior
-unknown exposure into four deterministic clean-run allocations, or two in debug
-mode. The allocations
-sum exactly to the available budget, each must cover one complete worst-case
-request for its profile, and each broker receives only its own allocation.
-Unused allocation is not spend and cannot be consumed by another attempt. Each
-attempt locks to its first valid OpenCode endpoint only after successful budget
-reservation. The broker caps canonical request bodies at 192 KiB and output at
-65,536 tokens, then reserves each request's worst-case cost within that
-allocation before forwarding. LiteLLM preserves exact
-cost-header settlement for nonstreaming responses and terminal usage settlement
-for Responses streams. OpenRouter accepts documented data-only Responses frames
-and optional matching `event:` lines, ignores valid comments and blank separators,
-and accepts the documented `response.completed` and `response.done` successful
-terminals followed only by `[DONE]`. Terminal
-`usage.cost` is optional; when present it must equal the finite nonnegative
-authoritative generation `total_cost`. Responses normalizes
-`input_tokens`/`output_tokens`, while chat normalizes
-`prompt_tokens`/`completion_tokens`, and both must match the bounded historical
-`/generation?id=...` record before forwarding. A present `X-Generation-Id`
-header must match the terminal and remains bounded failure evidence if body
-validation fails. Streaming chat rejects before
-reservation. Missing, delayed, ambiguous, or mismatched settlement makes the
-ledger fatal, retains the full reservation as unknown exposure, and prevents
-later forwarding. The 30-second generation settlement window independently caps
-connect, response-header, and body-read I/O, and its remaining bound shrinks
-across retries. If broker activation has started, a failed attempt trusts ledger
-spend only when the ledger proves activation by the current attempt token's
-digest. Stale preactivation, missing, malformed, or unreadable evidence retains
-the complete attempt allocation as conservative unknown exposure. Preactivation
-zero exposure requires phase proof that activation never started. The 30-second
-client backpressure timeout applies only to the buffered downstream write.
-Fake-upstream tests cover both backends without a model call.
-OpenRouter subtracts the complete output allowance from authenticated
-`context_length` before it signs and enforces the effective input limit.
-Chat requests are normalized to exactly one completion and both supported
-endpoints reject multiplicity, background generation, non-text modalities,
-remote media, file references, plugins, web-search options, model fallback
-arrays, routing/provider controls, transforms, and server-side tool types.
-Ordinary client-defined function tools, tool calls, and tool results remain
-supported. Responses also accepts only OpenCode's pinned stateless encrypted
-reasoning replay shape; arbitrary reasoning fields and item IDs remain rejected.
-Endpoint-specific output limits remain capped at 65,536, and every
-reservation covers that complete permitted output.
+Run Harbor evaluations locally, then move the same sealed task set to detached
+Modal execution with durable S3 or Tigris results.
 
-The clean task is copied into a temporary overlay whose only added or replaced
-path is `environment/docker-compose.yaml`. It builds the committed main
-Dockerfile and seed and attaches `main` to the exact external attempt network.
-Candidate and overlay manifests are retained separately; Harbor's native task
-digest includes the overlay. Inspection rejects host namespaces, privilege,
-added capabilities, devices, weakened security options, runtime sockets, exposed
-or published ports, and mounts outside Harbor's explicit log/artifact binds. The
-Docker daemon and its root-equivalent operator remain trusted; unrelated host
-containers are not security evidence. After activation, a host heartbeat updates
-the anonymous pipe at least twice per second. Authorization treats the exact
-two-second lease boundary as expired under the token lock, immediately revokes
-tokens and parent-key authority, and signals listener shutdown. The `--rm` broker
-is absent within five seconds. Forwarding first establishes TCP/TLS without
-credentials. Under the authority lock, the broker registers that connected
-socket, disables automatic reconnect, rechecks the active child bearer and
-lease, and begins the parent-authorized request. Expiry closes registered
-sockets. Requests whose credential send already began remain reserved in-flight
-work; later handlers cannot open or reopen upstream transport or send
-Authorization.
-Cleanup reconciles exact random names and labels regardless of create-call
-outcomes, reaps the attach client, and proves no active authority or owned
-resource remains. A dead parent may leave an inert network; the next startup's
-exact-label sweep removes it. No host port is published. The shared `$50` cap can
-be seeded with explicit prior known cost and prior unknown exposure. They remain
-separate in evidence and both reduce available budget. Provider evidence
-reconciled seventeen earlier OpenRouter generations at `$0.0166085`, `$0.0165085`,
-`$0.0163585`, `$0.0165185`, `$0.0163385`, `$0.0163785`, `$0.0163285`,
-`$0.0163685`, `$0.016681`, `$0.0163685`, `$0.041831`, `$0.0163685`, and
-`$0.030781`, `$0.0163685`, `$0.038771`, `$0.0163985`, and `$0.0390585`.
-Nineteen retry 15 generations add `$0.40787`, twenty-five retry 16 generations
-add `$0.5479435`, sixteen retry 17 generations add `$0.2259166`, and two retry
-18 generations add `$0.0551320`. Twenty-five settled retry 19 generations add
-`$0.336685`; its incomplete generation retains `$4.05369` as unknown because no
-finish reason establishes final billing. The earlier LiteLLM reservation also
-remains `$0.96086` unknown. Retry 20 added `$2.8176219` settled cost and no new
-unknown exposure before an undifferentiated native-validation failure. Combined
-cap consumption is `$4.7552035` known plus `$5.01455` conservatively retained,
-or `$9.7697535` total. Under the user-authorized `$50` cap, four-way allocation
-is `$10.057561625`, above the `$5.49288` worst-case reservation.
-Debug mode defaults prior exposure to zero and also supports
-`--debug-deny-upstream`. It requires one attempt per profile and forbids proof
-output. After normal authenticated pricing, each broker accepts exactly six
-OpenCode retry requests, records their endpoint and reservation shape, releases
-every reservation, and returns a fixed local 503 without opening a completion
-upstream connection or sending parent authorization. The runner requires the
-resulting failed native Harbor trial, zero native usage, zero spend exposure, and
-complete cleanup for both profiles before reporting diagnostic success. This
-zero-cost route diagnostic remains non-admissible. Direct OpenAI- or
-Anthropic-compatible endpoints need explicit pricing and settlement adapters;
-protocol compatibility does not grant spend authority. A direct OpenRouter
-contract probe cost `$0.00007`; it is separate from benchmark calibration and
-does not reduce the retained `$6.9521316` calibration cap consumption.
+[![CI](https://github.com/Tetraslam/tetrabench/actions/workflows/ci.yml/badge.svg)](https://github.com/Tetraslam/tetrabench/actions/workflows/ci.yml)
 
-Catalog tasks now bind `reward_policy = "numeric" | "binary"` into resolved-plan
-identity. Existing catalogs default to numeric, and retained plans without the
-field preserve their old canonical identity. After Harbor validates native job
-artifacts, tetrabench maps every attempt to one resolved task by its persisted
-materialized task path and validates every primary and diagnostic reward as an
-exact finite integer or float, never a boolean. Binary tasks require primary
-integer `0` or `1` on every attempt; `reward.txt` produces a float and therefore
-cannot satisfy that policy. Binary summaries independently require exact string
-`"0"` or `"1"` trial values and derive every task and section count and pass rate
-from those samples. Numeric summaries use canonical finite decimal strings. The
-clean-verifier fixture now writes `reward.json`.
+Tetrabench gives eval authors one CLI for project setup, task validation, local
+Docker runs, remote submission, recovery, and artifact retrieval. It keeps
+Harbor's native task, trial, verifier, and trajectory outputs intact rather than
+inventing a second evaluation format.
 
-Detached submission now derives every regular file under each selected
-catalog task directory and seals that complete fixture into the immutable
-context before it constructs an S3 or Modal service. The source-only fixture
-helper remains the only exercised live cloud submission path.
+## Quick start
 
-Digest-addressed content blobs use canonical `application/octet-stream` S3
-transport metadata because one byte digest may back context and artifact
-descriptors with different logical media types. Logical media remains bound in
-those descriptors; blob integrity remains bound by digest, size, SHA-256
-metadata, and service checksum where applicable. Retained blobs with earlier
-transport types remain readable under the same byte-level verification.
-
-The source-only `authority-fencing` detached-admission driver requires explicit
-`--yes` and a clean, stable checkout, derives three fresh temporary one-task
-binary projects from one private candidate snapshot, and runs two unchanged
-Oracle copies before one solution-only reward-forgery audit. Local
-fake-backed tests cover its terminal, artifact, controller, cleanup,
-cancellation, redaction, private-output, and stop-on-failure gates. The complete
-live sequence passed with rewards `1`, `1`, and `0`, terminal authority, native
-inventories, and child cleanup. The real catalog stays empty because exact-four
-model calibration remains pending.
-
-Explicit detached-controller recovery is locally and live verified. It refuses
-running or inspection-unknown owners and cancellation admission states.
-After Modal proves the old owner stopped, recovery CASes admission to
-`recovering`, repeatedly sweeps stale children to quiescence, clears only the
-current owner by returning to `prepared`, and may spawn a successor call. Rare
-concurrent recoveries can spawn multiple calls after that handoff; only the fresh
-`prepared→running` CAS winner may run Harbor. The complete revision history
-retains old and new owners. Cleanup failure remains resumable without spawning.
-Immutable terminal proof appearing at any boundary stops successor work but
-still requires bounded child quiescence; recovery on an already terminal run is
-cleanup-only and succeeds only after cleanup completes. The live forced-
-interruption run exercised this path on Modal. Terminal owner proof gates
-recovery. A bounded 30-second settling window succeeded in that smoke; the
-window is empirical, not a safety proof. Repeated child sweeps establish
-quiescence, and interrupted cleanup remains recoverable. The successor commits
-the mounted Volume before attempt setup, preserving interrupted-owner files
-without a reload that Modal rejects while old file descriptors remain open.
-Child cleanup polls listed and persisted sandboxes so terminal handles are not
-treated as running or terminated twice.
-
-Python 3.12 is required. Package metadata rejects Python 3.13 and newer.
-
-## Continuous integration
-
-GitHub Actions runs on pushes to `master` and pull requests with read-only
-repository access. The Python 3.12 job checks the lockfile, installs locked
-dependencies, runs Ruff and ty, requires the Docker daemon and every required
-marked Docker test exactly once, runs the remaining non-Docker suite, scans
-production source and tools with
-Bandit, builds both distributions, smoke-tests an isolated wheel installation,
-and audits all locked dependency groups. A
-separate job scans the full Git history with a digest-pinned Gitleaks image and
-redacts findings.
-
-S3 reads and publications use bounded visibility checks. They detect every
-request, event-sequence, terminal, and dependency conflict visible during that
-window, but a lagged conflicting record can make a later read conflict. Zero
-visible terminals remains unknown or nonterminal.
-
-One explicit exception to content-addressed publication is the mutable
-coordination record at `runs/<run-id>/admission.json`. It is created with
-`If-None-Match: *` and advanced one canonical revision at a time with
-`If-Match: <etag>`. Its complete history retains one owner FunctionCall ID.
-Immutable terminal objects remain terminal authority; admission never replaces
-terminal proof.
-
-## Reviewed design scope
-
-[`benchmarks/README.md`](benchmarks/README.md) is the v1 task-family and admission
-contract. It is not a substitute for the deterministic manifests that each
-fixture must eventually own. Its two catalog task lists remain empty; fixture
-work is blocked on detached separate-verifier and forge-sidecar proof plus native
-binary-reward admission. The separate-verifier prototype and automatic
-selected-fixture sealing are locally complete; their live Modal catalog path
-remains unproven.
-
-The accepted v1 design targets Harbor v0.22.0 evaluations through:
-
-- a deployed Modal Function for detached cloud execution;
-- Docker for explicit attached local development and execution;
-- durable publication through standard AWS S3 endpoints or Tigris's fixed
-  endpoint;
-- Harbor-native ATIF, results, and job artifacts.
-
-The design assigns active execution to Modal FunctionCall, in-progress cloud
-files to a named Modal Volume, durable records to S3, and trace and result
-meaning to Harbor job files. Local state is a submission receipt and cache, not
-a run database.
-
-These statements describe reviewed scope, not working software. The
-implementation plan tracks deferred capabilities and the live-smoke evidence
-still required before execution or provider behavior can be claimed.
-
-## Install and inspect
+You need Linux, Python 3.12, [uv](https://docs.astral.sh/uv/), and a running
+Docker daemon.
 
 ```console
-uv sync
-uv run tetrabench --version
-uv run tetrabench sections
-uv run tetrabench plan systems-design
-uv run tetrabench plan systems-design --json
-uv run tetrabench run systems-design --profile local --output ./runs/systems-design
-uv run tetrabench doctor
-uv run tetrabench doctor --json
-uv run tetrabench doctor --profile local --online
-uv run tetrabench controller info
-uv run tetrabench controller info --profile PROFILE --json
-uv run tetrabench controller deploy --profile PROFILE
-uv run tetrabench controller deploy --profile PROFILE --yes --json
-uv run tetrabench submit systems-design
-uv run tetrabench recover RUN_ID
-uv run tetrabench recover RUN_ID --yes --json
-uv run tetrabench status RUN_ID
-uv run tetrabench status RUN_ID --json
-uv run tetrabench cancel RUN_ID
-uv run tetrabench cancel RUN_ID --yes --json
-uv run tetrabench result RUN_ID --profile PROFILE
-uv run tetrabench result RUN_ID --profile PROFILE --json
-uv run tetrabench runs
-uv run tetrabench runs --json
-uv run tetrabench runs --remote --profile PROFILE
-uv run tetrabench artifacts pull RUN_ID OUTPUT_DIR --profile PROFILE
+git clone https://github.com/Tetraslam/tetrabench.git
+cd tetrabench
+uv tool install --python 3.12 .
+
+tetrabench init ../my-evals
+cd ../my-evals
+tetrabench doctor
+tetrabench task validate benchmarks/tasks/systems-design/hello-tetrabench
+tetrabench plan systems-design
+tetrabench run systems-design --output ./runs/hello
 ```
 
-Human output uses Rich. `--json` writes one RFC 8785 canonical JSON document,
-followed by a newline, to stdout. Errors go to stderr; doctor errors are
-canonical JSON on stderr when `--json` is set. Cloud commands reduce caught
-Botocore and Modal provider exceptions to `provider_error` and `provider request
-failed`; locally generated configuration and integrity errors retain their
-specific messages.
+The generated starter runs through Harbor with its Oracle solution and a
+separate no-network verifier. A successful run ends with:
 
-`run` accepts only a profile that resolves to an explicit local controller and
-Docker execution. It resolves the selected checked-in catalog tasks and runs
-them attached through Harbor. Harbor 0.22's public `Task` model validates every
-selected fixture before `--output` is created. `--output` must name a path that
-does not exist; tetrabench creates it with mode `0700` and leaves the native
-`harbor-job` directory there. Once that private reservation succeeds,
-tetrabench never removes it on failure or interruption. Empty, partial, or
-concurrently changed output remains owned evidence.
-The final report contains Harbor's outcome, a canonical task/trial section
-summary, and native job path. Numeric sections label their aggregate `Reward`;
-binary sections label it `Pass rate` and show passed/sample counts. JSON includes
-the complete ordered summary with exact decimal strings. Failed or cancelled
-outcomes exit nonzero. Ctrl-C
-exits 130 and retains the output directory as partial native evidence. The
-checked-in catalogs are empty, so they continue to refuse execution until tasks
-are deliberately added.
+```text
+Outcome: succeeded
+Pass rate: 1 (1/1)
+```
 
-`doctor` validates the project config, catalog, selected profile's task
-selection, section READMEs, and selected context files. This default mode is
-offline: it does not construct a provider client, read credentials, or call
-Modal or storage APIs. `doctor --online` additionally constructs the selected
-storage provider client, calls `HeadBucket` and `GetBucketLocation`, and lists
-at most one key under the configured prefix. It reports the bucket location and
-whether mutable admission coordination is safe. It never calls a mutation API.
+`init` creates a standalone project:
 
-## Local detached control
+```text
+my-evals/
+├── tetrabench.toml
+└── benchmarks/
+    ├── catalog.toml
+    ├── systems-design/README.md
+    ├── github-workflow/README.md
+    └── tasks/systems-design/hello-tetrabench/
+        ├── instruction.md
+        ├── task.toml
+        ├── environment/Dockerfile
+        ├── solution/solve.sh
+        ├── tests/Dockerfile
+        └── tests/test.sh
+```
 
-Receipts live under the platformdirs `tetrabench` state directory. Each
-canonical receipt appends physical spawn attempts and returned Modal call IDs
-using atomic replacement plus receipt-root-parent, file, and receipt-root
-`fsync`. Receipts are recovery caches, not a run database or owner record.
+## Author an eval
 
-For a runnable Modal plan, submission anchors the project root before reading
-the project configuration or catalog. It reads both through retained
-root-relative no-follow descriptors, then traverses each `harbor_task` directory
-from that same root authority. It seals every regular file at its
-project-relative path and composes those files with explicit context whose
-destinations do not overlap. File content,
-normalized execution mode, size, digest, and destination bind the plan and
-request. Discovery uses incremental descriptor-based `scandir`, retaining at
-most 10,000 discovered entries and 10,000 directories at depth 64 by default;
-configuration may lower those bounds but cannot set the entry bound below the
-file bound. Every opened fixture descriptor must remain on the anchored Linux
-mount and device, and regular files must have one link. A second complete
-descriptor-anchored traversal compares names, types, identity, mode, mount,
-size, and every file digest against the staged bytes. Missing or replaced
-directories, links, special files, mutation, unavailable mount evidence,
-portable path ambiguity, collisions, and context limits stop submission before
-it constructs an S3 or Modal service. Preparation also resolves the exact Modal
-App, Function, and environment into its in-memory result. Provider construction
-uses only that result and immutable resolved storage; it does not reread project
-configuration or the catalog. This launch selector is absent from plans,
-requests, receipts, and other durable records. Submission then uploads the
-staged context,
-publishes the immutable request, creates or observes the prepared admission,
-calls the deployed `Function.from_name(...).spawn()`, and persists its
-FunctionCall ID as local evidence. The controller resolves task paths only
-beneath its materialized context; it never falls back to the submitter's
-checkout. The CLI never claims admission ownership.
-Every spawned controller must CAS prepared to running with its actual call ID;
-before that CAS it must validate the full run/request/plan invocation against
-the immutable request and admission. Only the winner may enter Harbor. `recover`
-is an explicit operator action. It asks for confirmation before cloud mutation;
-`--yes` skips the prompt, and JSON recovery requires `--yes`. A prepared orphan
-spawns directly. An owned running or failed admission first requires terminal
-Modal call inspection, advances to `recovering`, and reaches `prepared` only
-after two consecutive child sweeps are empty. A cleanup error leaves recovery
-resumable without spawning. Concurrent callers may spawn more than one
-FunctionCall while admission is prepared, but only the fresh
-`prepared→running` CAS claimant may run Harbor; losing calls exit before work.
-A terminal observed before claim also makes the call exit before work. A new
-owner cannot claim `recovering`. A new physical attempt with the pre-existing
-owner ID exits before Harbor; explicit recovery must prove that owner terminal
-and clean its children before preparing a successor. Actual Modal preemption
-behavior remains unproven.
-
-Recovery receipts append `recovery-intended` before spawn and `spawn-returned`
-after Modal returns the call ID. Missing or corrupt receipts do not grant or
-remove authority. `status` reports `recovering` as attention and tells the
-operator to rerun recovery if cleanup stopped. S3 conflicts dominate, and an
-immutable terminal object dominates admission, receipts, and Modal output.
-
-Cancellation uses admission CAS and needs no event-write permission. Prepared
-runs advance directly to cancelled. Running runs advance to cancelling while
-preserving the owner call ID; the service then cancels and polls that call,
-sweeps children, and advances to cancelled only after the call is terminal and
-two consecutive sweeps are empty. The profile-scoped observer combines child
-IDs from immutable attempt events with run-tagged `Sandbox.list` results under
-Harbor's `__harbor__` App, terminates with wait, and repeats bounded sweeps.
-The controller preserves a cancelling admission instead of replacing it with
-failed when provider shutdown interrupts its exception path. Cancellation polls
-the owner for up to ten seconds and can be resumed safely if provider shutdown
-takes longer.
-`cancel` asks for confirmation before constructing an S3 or Modal client.
-`--yes` skips the prompt. `cancel --json` requires `--yes` and otherwise exits
-without provider construction or mutation.
-Modal API, authentication, and other inspection failures do not prove that the
-owner call stopped. Terminal proof can be published only by the exact owner
-while admission is running or cancelling, after revalidating the immutable
-request and all run/request/plan bindings.
-
-## Remote results and artifacts
-
-`result` reads the selected AWS or Tigris profile directly. It requires no
-local receipt and constructs no Modal client. The report distinguishes
-`unknown`, `nonterminal`, `terminal`, and `conflict`, validates terminal,
-admission, request, plan, storage, and controller-summary bindings, and shows
-outcome, the canonical section summary, and the complete terminal
-inventory. Unknown exits 4, conflict exits 3, and failed or cancelled authority
-exits 1. Successful and still-running states exit 0.
-
-New controller-result schema v2 binds run, request, plan, attempt, outcome, and
-summary. Remote reads reject malformed identity or arithmetic before reporting
-success. Retained schema-v1 controller results are accepted only with plans that
-predate reward policies; those use the native numeric fallback and report the
-structured summary as unavailable and legacy. New binary plans never fall back.
-
-`runs` retains local receipt listing by default. `runs --remote --profile
-PROFILE` paginates the configured `runs/` prefix, derives unique run IDs only
-from valid admission, request, event, and terminal keys, then reads each run
-through the same authoritative result path. Malformed keys are reported in
-sorted order and make the command exit 3. There is no remote index or database.
-
-`artifacts pull` accepts one successful bound terminal. Failed and cancelled
-terminals remain inspectable through `result` but are not materialized. Pull
-validates the whole logical inventory and the shared controller/receiver limits
-before reserving an absent destination. The defaults admit at most 10,000 files,
-64 MiB per file, and 1 GiB total. Each content-addressed object streams directly
-from S3 to its exclusive destination descriptor while tetrabench hashes and
-counts it; pull has no whole-object buffering path. Digest and size must verify
-before the file is fsynced and successfully closed. Every acquired S3 response
-body is closed, including when response metadata or streamed bytes are rejected.
-The destination and each nested directory are created at exact `0700`; files
-are exclusively created and immediately set to exact `0600`. Finalization
-reapplies `0600` to every file and `0700` to every directory through held or
-no-follow descriptors, verifies exact type, identity, and mode with `fstat`, then
-fsyncs and closes. Materialization uses no-follow, exclusive,
-directory-FD-relative operations rooted in the opened destination, so pathname
-replacement or a symlink cannot redirect writes outside that tree. Traversal,
-duplicate or prefix conflicts, corruption, and detected replacement or injected
-content abort the pull. Partial evidence receives the same mode restoration and
-fsync on a best-effort basis without masking the original failure. The reserved
-directory is retained on every failure. A process with the same UID remains
-authoritative over these files and can mutate them during or after the pull;
-tetrabench does not claim isolation from that actor or post-return immutability.
-Remote result, listing, and pull paths never call provider delete.
-
-## Verified local Harbor fixture
-
-The integration-only fixture runs attached through local Docker and returns the
-native Harbor job directory and bindings:
+Create an unlisted task, edit its instruction, environment, solution, and
+verifier, then validate and add it to your project catalog:
 
 ```console
-uv run python - <<'PY'
-from pathlib import Path
-from tetrabench.integration import run_local_composition
+tetrabench task new systems-design lease-fencing
 
-result = run_local_composition(
-    Path("tests/fixtures/harbor_task"),
-    Path("/tmp/tetrabench-harbor-fixture"),
-)
-print(result.terminal.outcome, result.controller.terminal_sha256)
-print(result.invocation_root / "jobs/harbor-job")
-PY
+$EDITOR benchmarks/tasks/systems-design/lease-fencing/instruction.md
+$EDITOR benchmarks/tasks/systems-design/lease-fencing/tests/test.sh
+
+tetrabench task validate benchmarks/tasks/systems-design/lease-fencing
+tetrabench task add systems-design lease-fencing \
+  benchmarks/tasks/systems-design/lease-fencing
+tetrabench run systems-design --output ./runs/lease-fencing
 ```
 
-The native directory is retained unchanged. Tetrabench validates job and
-per-trial config, lock, and result files with Harbor 0.22's Pydantic models.
-Each persisted trial task path must still load as a real Harbor task directory,
-and its task-level artifacts compose before trial-level artifacts. Native
-artifact manifests require strict JSON and the exact bytes written by Harbor
-0.22's indented serializer; tetrabench does not reinterpret them as RFC 8785
-records.
-Persisted files own outcomes, rewards, exceptions, evidence, and artifact
-bindings; the value returned by `job.run` is checked only for agreement. ATIF
-is discovered from the securely collected inventory at normal and multi-step
-agent paths, following continuation references. The oracle fixture does not
-emit ATIF, so the terminal records that absence instead of creating a trace.
+`task validate` is read-only. It seals the complete fixture tree under bounded
+path, file, and byte limits, validates a private copy through Harbor 0.22, then
+checks that the source did not change. It does not call Docker, Modal, or a
+storage provider.
 
-`tests/fixtures/harbor_authority_task` is a separate source-only authority
-prototype. It is not cataloged or installed in wheels. Its Docker composition
-contains `main` and a forge sidecar with no shared forge volume. The Oracle makes
-one real commit and submits one transition through the documented `forge` CLI.
-The final forge API transition validates complete state, appends its terminal
-hash-chained event, revokes the run capability, and seals the database in one
-immediate transaction before the agent exits. Harbor's sidecar collect hook only
-publishes an already-sealed export. Database finalization and fail-closed atomic
-file publication are separate operations. The clean verifier
-recomputes authority from the collected repository and sealed export; agent
-logs, local result files, and claimed hashes never determine reward.
+`task add` is an explicit mutation for user-owned catalogs. It validates twice,
+rejects duplicate IDs and fixture paths, preserves existing catalog bytes, and
+atomically appends a binary task entry. Tetrabench writers serialize through a
+sibling lock file; arbitrary programs editing the catalog concurrently are
+outside that cooperative lock.
 
-The controller constructs its S3 client before removing every environment key in
-the case-insensitive `AWS_` and `TIGRIS_` namespaces, plus Botocore's
-non-prefixed `BOTO_CONFIG` and `BOTOCORE_TCP_KEEPALIVE` selectors, for the
-entire Harbor run. This includes `AWS_ACCOUNT_ID`. Attached local execution
-applies the same boundary while
-Harbor validates and runs. Harbor child configuration receives only an
-invocation-scoped registry key; the trusted controller process publishes
-lifecycle events through the already-created store. The Docker fixture asks
-Harbor to interpolate uppercase, lowercase, mixed-case, and alternate namespace
-members and verifies that the child receives only its explicit unavailable
-defaults while terminal publication still succeeds. Arbitrary nonstandard
-provider variables outside these namespaces and reviewed Botocore names are not
-removed.
+The generated task is deliberately small. Replace its exact-answer verifier
+with assertions for your domain. A verifier writes Harbor's native
+`/logs/verifier/reward.json`; binary tasks must produce exactly integer `0` or
+`1`. See [benchmark authoring and admission](benchmarks/README.md) for the
+stricter rules used by tetrabench's own benchmark catalog.
 
-## Controller deployment
+## Commands
 
-`controller info` is local and read-only. It prints the exact App, Function,
-Modal environment, Volume, Secret, timeout, and fixed controller-root names for
-the selected profile. `controller deploy` prints the same contract and asks for
-confirmation before calling Modal; `--yes` skips the prompt, and JSON deployment
-requires `--yes`. Secret values are never read or printed.
+| Command | Purpose | Side effects |
+| --- | --- | --- |
+| `init` | Create a runnable local project | New directory |
+| `task new` | Create an unlisted Harbor task | New task directory |
+| `task validate` | Seal and validate one fixture | None |
+| `task add` | Add a validated task to the project catalog | Atomic catalog update |
+| `doctor` | Validate config, catalog, context, and optional storage reads | None |
+| `plan` | Resolve a canonical secret-free execution plan | None |
+| `run` | Run selected tasks through local Docker | New private output directory |
+| `controller deploy` | Deploy the configured Modal controller | Cloud mutation, confirmation required |
+| `submit` | Publish a request and spawn detached execution | Cloud mutation |
+| `status` | Combine durable and provider execution evidence | Provider reads |
+| `result` | Read authoritative remote state without a local receipt | Storage reads |
+| `cancel` | Record cancellation intent and clean owned children | Cloud mutation, confirmation required |
+| `recover` | Clean a stopped owner and prepare a successor | Cloud mutation, confirmation required |
+| `artifacts pull` | Materialize one successful terminal inventory | New private output directory |
 
-The image copies the local project into a build layer and installs it with pip
-as the `tetrabench` distribution, including its metadata and exact Harbor and
-Modal pins. Deployment creates or resolves the profile-specific Modal
-Environment before deploying. The serialized Function has zero retries, a
-24-hour timeout, the named Volume at `/tetrabench/controller`, and the named S3
-credential Secret. Submission invokes it through
-`Function.from_name(...).spawn()` with canonical invocation bytes and their
-digest. A paid smoke has verified package/API behavior, named-Volume retention,
-nested Harbor Modal execution, terminal publication, and post-run child cleanup.
-Artifact publication accepts only regular files reached through no-follow
-directory descriptors beneath the attempt root; links, special files, mutation,
-and escaped bindings fail closed.
+Add `--json` for canonical machine-readable output. The `--json` forms of
+`controller deploy`, `cancel`, and `recover` require `--yes`.
 
 ## Project configuration
 
-The checked-in [`tetrabench.toml`](tetrabench.toml) is a working example. It
-selects the default Modal controller and Modal execution, points to the local
-catalog, and contains only a storage bucket placeholder and a Modal Secret name
-reference. Secret values are not valid configuration fields.
-
-AWS storage requires an explicit region and always uses standard AWS endpoints;
-`endpoint_url` is rejected:
+The starter uses local Docker without a user profile:
 
 ```toml
-[storage]
-provider = "aws"
-bucket = "private-benchmark-artifacts"
-region = "us-west-2"
-```
+schema_version = 1
+catalog_path = "benchmarks/catalog.toml"
 
-Tigris fixes its endpoint to `https://t3.storage.dev` and its region to `auto`:
-
-```toml
-[storage]
-provider = "tigris"
-bucket = "private-benchmark-artifacts"
-```
-
-Before admission create/update and before a higher-level `submit`, `recover`,
-`cancel`, or controller mutation sequence can publish a new run object,
-tetrabench reads the bucket location. AWS accepts the documented null
-`us-east-1` response, legacy `EU`, and regions known to the pinned SDK; an empty
-string is invalid. Tigris Single-region (`iad`, for example) and Multi-region
-(`usa` or `eur`) buckets are accepted. Tigris Global and Dual-region buckets are
-rejected for mutable coordination because their cross-region consistency is
-eventual. Missing or unknown locations also fail closed.
-
-The gate does not prohibit generic immutable content publication. A retained
-Global Tigris bucket may continue storing and serving content-addressed objects
-and legacy run evidence under bounded eventual-read semantics. Status and
-result reads remain available there. Moving mutable coordination to a safe
-topology requires provisioning a new Single-region bucket, copying retained
-objects as needed, and cutting clients over. It is not an in-place bucket
-location migration.
-
-The retained Global baseline was inspected live and is correctly classified as
-unsafe for admission mutation. A separate private Single-region `iad` bucket is
-now authoritative for coordination; no legacy object was copied or changed.
-The source-only probe passed there with immediate GET, HEAD, and LIST after
-conditional create, a synchronized two-client one-winner update race, and
-verified HEAD/LIST absence after deletion. It performs those mutations only when
-explicitly enabled:
-
-```console
-uv run python tools/provider_consistency_probe.py \
-  --provider tigris --bucket BUCKET --allow-mutation
-```
-
-### Storage roles and actions
-
-The local contract and E-046 retained policy evidence define this bounded
-matrix. Current live enforcement remains `unproven` until the future probes
-below run with renewed credentials.
-
-| Role | Bucket actions | Object reads | Object writes | Delete |
-| --- | --- | --- | --- | --- |
-| Submitter | `s3:GetBucketLocation`, `s3:ListBucket` | Configured prefix, for conflict and status reads | Context objects, requests, and admission beneath the configured prefix | None |
-| Controller | `s3:GetBucketLocation`, `s3:ListBucket` | Configured prefix, for request, reconciliation, and cleanup reads | Admission, events, artifacts, and terminals beneath the configured prefix | None |
-| Harbor child (agent and verifier) | None | None | None | None |
-
-All durable key constructors validate the configured prefix, run and attempt
-IDs, digests, and logical paths before a provider call. Normal runtime clients
-have no delete method in their used provider interface; only the opt-in
-consistency probe calls `DeleteObject`.
-
-Tigris currently accepts but does not enforce an `s3:prefix` condition on
-`ListBucket`. Submitter and controller listing is therefore bucket-wide even
-when object read and write actions are prefix-scoped. Use a dedicated bucket
-when exposing bucket key names to either role is unacceptable.
-
-The opt-in consistency probe is separate operational evidence. Use a temporary,
-probe-prefix-scoped credential with `s3:GetBucketLocation`, `s3:ListBucket`,
-`s3:PutObject`, `s3:GetObject`, and `s3:DeleteObject`, then remove the credential
-and policy. No live IAM resource is changed by tetrabench's tests or
-configuration.
-
-The next live IAM probe must use fresh submitter, controller, and deliberately
-unprivileged child credentials. For each identity it must exercise every allowed
-action above, a cross-prefix `GetObject` and `PutObject`, and `DeleteObject`; the
-expected denials and allowed calls must be retained with credential material
-redacted. The privacy and encryption probe must record `GetBucketPolicy`,
-`GetBucketAcl`, `GetPublicAccessBlock`, and `GetBucketEncryption` where the
-provider supports them, then write and `HeadObject` one probe object to inspect
-its effective encryption metadata before verified cleanup. Unsupported provider
-inspection APIs remain `unproven`; a default or documentation claim is not
-evidence of the live bucket state.
-
-Docker planning requires both explicit local controller and Docker execution:
-
-```toml
 [controller]
 kind = "local"
 
@@ -665,58 +130,90 @@ attempts = 1
 concurrency = 1
 ```
 
-Plans admit at most 256 tasks, 32 attempts per task, and concurrency 64.
-Context fixture discovery defaults to 10,000 total entries, 10,000 directories
-(including selected roots), and depth 64. These are fail-closed Linux limits;
-filesystems without `/proc` fd mount evidence are unsupported.
-Controller artifact collection defaults to at most 10,000 regular files, 64
-MiB per file, and 1 GiB total. It preflights these limits before publishing any
-artifact from an attempt.
+Set `harbor.agent_name = "opencode"` and a Harbor-compatible `model_name` to run
+an agent instead of the checked-in Oracle solution. Tetrabench passes these
+identifiers to Harbor unchanged.
 
-Fixture sealing detects mutation across two complete reads under a trusted
-same-UID checkout; it does not claim an atomic single-instant filesystem
-snapshot. A malicious same-UID process that changes and restores state between
-observations is outside this boundary. Inode identity detects replacement, while
-the second digest comparison owns file-byte equality; inode reuse is not treated
-as cryptographic proof.
+User-specific overrides live at `~/.config/tetrabench/config.toml` on Linux.
+They can select models and credentials without committing personal settings to
+an eval repository. Configuration is strict: unknown fields, malformed paths,
+and invalid controller/execution combinations fail before provider work.
 
-`harbor.agent_name` and optional `harbor.model_name` pass through to Harbor as
-opaque strings. Tetrabench does not interpret or validate them and does not
-guarantee that Harbor, an agent, or a model provider will accept them.
+## Detached Modal runs
 
-## User profiles
-
-An optional `config.toml` under the platformdirs `tetrabench` user-config
-directory may define profiles. This safe example contains no credentials:
+Keep the project local by default and add a user profile for cloud execution:
 
 ```toml
 schema_version = 1
 
-[profiles.local.controller]
-kind = "local"
+[profiles.cloud.controller]
+kind = "modal"
+app_name = "tetrabench"
+function_name = "controller"
+secret_name = "tetrabench-controller"
 
-[profiles.local.execution]
-kind = "docker"
+[profiles.cloud.execution]
+kind = "modal"
 
-[profiles.local.storage]
-provider = "aws"
-bucket = "private-benchmark-artifacts"
-region = "us-west-2"
+[profiles.cloud.storage]
+provider = "tigris"
+bucket = "your-private-bucket"
+region = "auto"
+prefix = "tetrabench"
 ```
 
-Select it with `tetrabench plan systems-design --profile local` or
-`tetrabench doctor --profile local`. The selected profile is applied over the
-checked-in project config. Supported fields merge explicitly by precedence;
-changing a `kind` or `provider` starts that variant from its own defaults.
-Unknown keys and arbitrary recursive dictionary merges are rejected.
+The local submitter uses boto3's standard credential chain. The configured Modal
+Secret must expose the corresponding `AWS_ACCESS_KEY_ID` and
+`AWS_SECRET_ACCESS_KEY` to the controller. Harbor children receive neither the
+controller's storage credentials nor its publication authority.
 
-## Project records
+Tigris uses `https://t3.storage.dev`. Mutable coordination accepts known
+Single-region buckets and Multi-region `usa` or `eur` buckets. Tetrabench keeps
+Global and Dual-region buckets readable for legacy results, but rejects them
+before new run mutation because their cross-region consistency is insufficient
+for admission compare-and-swap.
 
-- [AGENTS.md](AGENTS.md) defines the repository workflow and documentation
-  rules.
-- [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md) is the canonical scope,
-  decision, progress, blocker, and evidence record.
-- [NOTES.md](NOTES.md) is the append-only research and clarification log.
+```console
+tetrabench doctor --profile cloud --online
+tetrabench controller info --profile cloud
+tetrabench controller deploy --profile cloud
 
-The notes retain the provenance behind durable plan decisions. This README
-contains only verified user-facing status and behavior.
+tetrabench submit systems-design --profile cloud --run-id first-run
+tetrabench status first-run --profile cloud
+tetrabench result first-run --profile cloud
+tetrabench artifacts pull first-run ./artifacts/first-run --profile cloud
+```
+
+Submission seals selected task fixtures and explicit context before publishing
+an immutable request. S3 admission records own controller claims and
+cancellation intent. Immutable terminal objects own final truth. Local receipts
+are recovery hints, not run authority.
+
+## Repository benchmarks
+
+The checked-in production catalog remains empty. `systems-design/authority-fencing`
+is a source candidate with completed local, detached, and reward-forgery proofs,
+but it stays unlisted until its exact four-run model calibration passes. This
+does not affect projects created by `tetrabench init` or tasks added to a user's
+own catalog.
+
+Read [the benchmark contract](benchmarks/README.md) for task design and
+admission, and [the project record](IMPLEMENTATION_PLAN.md) for authority
+boundaries, decisions, live evidence, and remaining unproven claims.
+
+## Development
+
+```console
+uv sync --locked --all-groups
+uv run ruff check .
+uv run ruff format --check .
+uv run ty check
+uv run pytest --strict-markers -m "not docker"
+TETRABENCH_EXPECT_DOCKER_TESTS=11 uv run pytest --strict-markers -m docker
+uv build
+```
+
+CI adds checks from Bandit, pip-audit, actionlint, and Gitleaks. Its installed-
+wheel smoke exercises the authoring commands. The project is not currently
+published to a package registry and does not currently declare an open-source
+license.

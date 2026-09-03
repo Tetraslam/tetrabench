@@ -59,7 +59,7 @@ jobs:
         run: docker info
 
       - name: Run required Docker tests
-        run: TETRABENCH_EXPECT_DOCKER_TESTS=10 uv run pytest --strict-markers -m docker
+        run: TETRABENCH_EXPECT_DOCKER_TESTS=11 uv run pytest --strict-markers -m docker
 
       - name: Run non-Docker test suite
         run: uv run pytest --strict-markers -m "not docker"
@@ -102,6 +102,48 @@ jobs:
           } <= files
           assert not any(path.startswith("tests/") for path in files)
           assert not any(path.startswith("tools/") for path in files)
+          PY
+          "$smoke_dir/venv/bin/python" - "$smoke_dir" <<'PY'
+          import json
+          import pathlib
+          import subprocess
+          import sys
+
+          smoke = pathlib.Path(sys.argv[1])
+          cli = smoke / "venv/bin/tetrabench"
+          project = smoke / "project"
+
+          def run(*arguments: str, cwd: pathlib.Path | None = None) -> dict:
+              completed = subprocess.run(
+                  [cli, *arguments],
+                  cwd=cwd,
+                  check=True,
+                  capture_output=True,
+                  text=True,
+              )
+              assert completed.stderr == ""
+              return json.loads(completed.stdout)
+
+          initialized = run("init", str(project), "--json")
+          doctor = run("doctor", "--json", cwd=project)
+          validated = run(
+              "task",
+              "validate",
+              "benchmarks/tasks/systems-design/hello-tetrabench",
+              "--json",
+              cwd=project,
+          )
+          plan = run("plan", "systems-design", "--json", cwd=project)
+
+          assert initialized["status"] == "created"
+          assert doctor["checks"][:2] == [
+              {"name": "project_configuration", "status": "ok"},
+              {"name": "catalog_and_local_context", "status": "ok"},
+          ]
+          assert validated["status"] == "ok"
+          assert validated["file_count"] == 6
+          assert plan["runnable"] is True
+          assert len(plan["trials"]) == 1
           PY
 
       - name: Audit all locked dependencies
