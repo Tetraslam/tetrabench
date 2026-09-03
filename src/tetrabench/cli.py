@@ -20,6 +20,12 @@ from tetrabench.artifacts import (
     ArtifactPullRefusedError,
     ArtifactPullService,
 )
+from tetrabench.authoring import (
+    add_task,
+    create_task,
+    initialize_project,
+    validate_fixture,
+)
 from tetrabench.canonical_json import dumps_canonical_json
 from tetrabench.catalog import SectionName, get_section, load_catalog, select_tasks
 from tetrabench.config import load_project_config
@@ -66,8 +72,10 @@ app = typer.Typer(
 )
 controller_app = typer.Typer(no_args_is_help=True)
 artifacts_app = typer.Typer(no_args_is_help=True)
+task_app = typer.Typer(no_args_is_help=True)
 app.add_typer(controller_app, name="controller")
 app.add_typer(artifacts_app, name="artifacts")
+app.add_typer(task_app, name="task")
 out = Console()
 err = Console(stderr=True)
 
@@ -158,6 +166,109 @@ def callback(
         raise typer.Exit()
 
 
+@app.command("init")
+def initialize(
+    directory: Path,
+    json_output: Annotated[
+        bool,
+        typer.Option("--json", help="Emit canonical JSON to stdout."),
+    ] = False,
+) -> None:
+    """Create a runnable local tetrabench project in a new directory."""
+    try:
+        created = initialize_project(directory)
+    except (OSError, RuntimeError, ValueError, ValidationError) as error:
+        _fail_command(error, json_output=json_output)
+    report = {
+        "directory": str(created),
+        "schema_version": 1,
+        "status": "created",
+    }
+    if json_output:
+        _canonical_echo(report)
+    else:
+        out.print(f"[green]created[/green] {created}")
+
+
+@task_app.command("new")
+def task_new(
+    section: str,
+    task_id: str,
+    project: Annotated[Path, typer.Option(help="Tetrabench project directory.")] = Path(
+        "."
+    ),
+    json_output: Annotated[
+        bool,
+        typer.Option("--json", help="Emit canonical JSON to stdout."),
+    ] = False,
+) -> None:
+    """Create an unlisted runnable Harbor task skeleton."""
+    try:
+        created, fixture = create_task(project, section, task_id)
+    except (OSError, RuntimeError, ValueError, ValidationError) as error:
+        _fail_command(error, json_output=json_output)
+    report = {
+        "directory": str(created),
+        "fixture": fixture,
+        "schema_version": 1,
+        "status": "created",
+    }
+    if json_output:
+        _canonical_echo(report)
+    else:
+        out.print(f"[green]created[/green] {fixture}")
+
+
+@task_app.command("validate")
+def task_validate(
+    fixture: str,
+    json_output: Annotated[
+        bool,
+        typer.Option("--json", help="Emit canonical JSON to stdout."),
+    ] = False,
+) -> None:
+    """Validate one complete project-relative Harbor task fixture."""
+    try:
+        report = validate_fixture(Path.cwd(), fixture)
+    except (OSError, RuntimeError, ValueError, ValidationError) as error:
+        _fail_command(error, json_output=json_output)
+    if json_output:
+        _canonical_echo(report.as_dict())
+    else:
+        out.print(
+            f"[green]ok[/green] {report.fixture} "
+            f"({report.file_count} files, {report.total_bytes} bytes)"
+        )
+
+
+@task_app.command("add")
+def task_add(
+    section: str,
+    task_id: str,
+    fixture: str,
+    json_output: Annotated[
+        bool,
+        typer.Option("--json", help="Emit canonical JSON to stdout."),
+    ] = False,
+) -> None:
+    """Validate and append a local task to the configured catalog."""
+    try:
+        validation = add_task(Path.cwd(), section, task_id, fixture)
+    except (OSError, RuntimeError, ValueError, ValidationError) as error:
+        _fail_command(error, json_output=json_output)
+    report = {
+        "fixture": validation.fixture,
+        "schema_version": 1,
+        "section": section,
+        "status": "added",
+        "task_id": task_id,
+    }
+    if json_output:
+        _canonical_echo(report)
+    else:
+        out.print(f"[green]added[/green] {task_id} to {section}")
+
+
 @app.command()
 def sections() -> None:
     """List local catalog sections and task counts."""
@@ -201,8 +312,10 @@ def plan(
 @app.command()
 def run(
     section: SectionName,
-    profile: Annotated[str, typer.Option(help="Local Docker profile name.")],
     output: Annotated[Path, typer.Option(help="New output directory.")],
+    profile: Annotated[
+        str | None, typer.Option(help="Optional local Docker profile name.")
+    ] = None,
     json_output: Annotated[
         bool,
         typer.Option("--json", help="Emit canonical JSON to stdout."),

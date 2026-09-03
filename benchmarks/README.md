@@ -384,11 +384,10 @@ peers and unrelated host containers are not containment evidence. Docker's
 reported IPAM gateway and `Internal` value are recorded as topology only;
 authenticated pricing and later forwarding prove actual egress. This transport
 requires no host reachability or firewall change. No real calibration has
-completed, so difficulty calibration remains unproven. Current accounting is
-`$1.9375816` known cost plus `$5.01455` unknown exposure against the shared `$25`
-cap. Four-way allocation would be `$4.5119671`, below the `$5.49288` worst-case
-request, so another clean proof cannot run without final provider billing
-evidence or a new bounded contract. A
+completed, so difficulty calibration remains unproven. Current accounting after
+retry 24c is `$6.0126436` known cost plus `$17.807213975` conservatively retained
+against the user-authorized `$50` cap. Four-way allocation is `$6.54503560625`,
+above the `$5.49288` worst-case request reservation. A
 separate direct OpenRouter contract probe cost `$0.00007`; it is not benchmark
 calibration. `--debug-deny-upstream` is
 a non-admissible one-attempt-per-profile diagnostic with no proof output. It
@@ -655,7 +654,7 @@ most 8 distinct fault schedules.
    most 32 MiB; the complete native job remains within the existing 10,000 file,
    64 MiB per-file, and 1 GiB collector limits. A normal hidden suite finishes
    under 2 minutes and the verifier hard-stops at 4 minutes.
-10. Budget: total model spend for admission is at most `$25` per task, and total
+10. Budget: total model spend for admission is at most `$50` per task, and total
     admission wall time is at most 8 hours. A task that exceeds either limit
     stays out of the catalog.
 

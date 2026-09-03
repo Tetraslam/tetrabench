@@ -1624,3 +1624,63 @@ Detached candidate execution, separate verification, binary reward authority, re
 Provenance: valid Codex review finding on PR 25 and a current-state search across the plan and benchmark documentation.
 
 The candidate working record and benchmark implementation table still repeated pre-E-124 claims that detached execution, both repetitions, and the audit were unproven. They now mark those gates complete and name exact-four calibration plus budget completion as the remaining catalog blockers. P7-01 through P7-04 and the final task-catalog summary now agree with resolved U-012/U-013 and E-124. Historical notes and evidence rows retain the state they recorded at their creation.
+
+## 2026-09-02T21:12:50-07:00: User-authorized calibration cap raised to `$50`
+
+Provenance: explicit user instruction after reviewing the prior internal `$25` policy; local source and arithmetic inspection. No model or provider call occurred.
+
+D-125 changes only the total calibration authorization from `$25` to `$50`. The exact four-run shape, two fixed profiles, 35-minute attempt limit, request/body/output bounds, pricing ceilings, `$5.49288` worst-case request reservation, authoritative settlement, and cleanup requirements remain unchanged. Current prior accounting of `$1.9375816` known cost plus `$5.01455` conservatively retained leaves `$43.0478684`, divided into four exact `$10.7619671` allocations. Historical `$25` decisions and evidence remain unchanged as records of the policy in force when those runs occurred.
+
+## 2026-09-02T22:30:06-07:00: Retry 20 native-validation failure and closed classifier
+
+Provenance: clean commit `171395e`; exact-four OpenRouter runner; bounded private report; Docker residue inspection; focused classifier tests. Full request, generation, and native artifact identifiers remain private.
+
+E-125 retry 20 completed two target attempts with rewards `0` and 54 total settled requests across all completed work. The targets cost `$0.1645690` and `$0.1419169`. Alternate attempt one returned successful native reward `1` after 29 settled requests costing `$2.511136`, but native validation retained only generic `ValueError`, so the fourth attempt did not run and no proof was created. Current known spend is `$2.8176219`; no new unknown exposure was retained. Cumulative accounting is `$4.7552035` known plus `$5.01455` retained unknown, totaling `$9.7697535`; four subsequent allocations are `$10.057561625` each. Cleanup left no owned Docker resource. The private report is mode `0600`, 60,613 bytes, SHA-256 `fe72d5eb209893c0aebcf2c7e4a93b564718f24752f48c888474faa465951a56`; stderr is empty and mode `0600`.
+
+D-126 classifies native-validation failures into closed source-owned cause classes while retaining no arbitrary exception text. Exact known native-record messages map to snapshot, config, outcome, trial, agent, artifact, reward, or trajectory classes; ATIF and Harbor metric boundaries have distinct classes. Unknown text maps to snapshot validation. All 476 focused calibration tests, Ruff, format, and ty pass. No paid call occurred while implementing the classifier.
+
+## 2026-09-03T01:01:58-07:00: Local authoring UX contract
+
+Provenance: explicit user contract; local Python 3.12 implementation; Harbor 0.22 public task validation; focused CLI/filesystem regressions; one real attached-Docker Oracle run. No cloud provider was called.
+
+D-127 adds wheel-contained Python templates for an independent local-controller/Docker project, an unlisted task skeleton, complete read-only fixture sealing and Harbor validation, and validated user-catalog addition. New directory trees stage beside their destination and commit with Linux no-replace rename. Catalog addition preserves the original byte prefix and uses same-directory replacement only after duplicate and prospective-model validation. The generated separate no-network verifier writes exact `{"reward":0|1}` bytes and the starter's public local run returned binary reward `1`. The repository catalog and the unlisted `authority-fencing` candidate were not changed.
+
+Current focused evidence is 16 non-Docker authoring tests, one real-Docker authoring test, 97 existing non-Docker CLI tests, Ruff, format, and ty. Full-suite and installed-wheel evidence remain pending.
+
+## 2026-09-03T01:17:20-07:00: Authoring UX full local evidence
+
+Provenance: final local Python 3.12 validation after the preceding authoring implementation note. No cloud provider was called.
+
+E-126 passes with 1,247 non-Docker tests and all 11 required Docker tests. The Docker set includes the initialized starter's public CLI run with Oracle and binary reward `1`. Ruff check, Ruff format check, ty, Bandit, `uv lock --check`, wheel/sdist build, package-fixture tests, direct wheel inspection for `tetrabench/authoring.py` and embedded templates, and `git diff --check` pass. The repository catalog and `authority-fencing` candidate remain unchanged.
+
+## 2026-09-03T01:39:06-07:00: Authoring validation and catalog-authority correction
+
+Provenance: user-provided review findings; local Python 3.12 implementation; deterministic fixture and catalog race regressions; isolated installed-wheel authoring smoke; complete non-Docker suite; all marked Docker tests. No provider call, catalog admission, commit, or push occurred.
+
+Fixture validation now gives Harbor only a private materialization of the first sealed bytes and normalized modes, then reseals the source and requires exact `SealedContext` equality. Catalog addition repeats that complete validation under its catalog-writer lock immediately before replacement and requires equality with the initial snapshot. Same-inode mutation, replacement-inode swap, invalid-to-valid source swap, and valid or invalid pre-add changes all fail without reporting or cataloging changed bytes as the validated snapshot.
+
+Catalog authority is explicitly cooperative. Every tetrabench writer locks the persistent private sibling `.catalog.toml.lock`; it then retains prospective TOML validation, the source inode/byte recheck, same-directory replacement, and parent `fsync`. An observed uncooperative write is preserved and causes the append to fail without rollback, but arbitrary filesystem writers are not excluded. A synchronized concurrent-add regression proves two cooperative writers retain both blocks exactly once.
+
+Twenty-three focused non-Docker authoring tests, the complete 1,254-test non-Docker suite, and all 11 Docker tests pass. Lock checking, Ruff check/format, ty, Bandit, actionlint, wheel/sdist build, `pip check`, `git diff --check`, and the isolated installed-wheel `init`, offline `doctor --json`, `task validate --json`, and runnable one-trial `plan systems-design --json` smoke pass. The public README was not edited.
+
+## 2026-09-03T01:45:42-07:00: Retries 21 through 24c preserve the calibration gate
+
+Provenance: clean commit `3a1a90f`; retained private reports; retained systemd exit status for retry 24 onward; process-local OpenRouter credential; read-only pricing preflight; Docker residue inspection. Full request and generation identifiers remain private.
+
+Retry 21 added `$0.1678033` known spend and no unknown exposure before target attempt two exited with status 137. Retry 22 completed both targets, then the first alternate failed after six requests; `$1.0360273` is known and `$4.04808` remains unknown because its final successful response did not settle. Retry 23 emitted no report or phase evidence, so its full `$8.744583975` allocation remains conservatively unknown even though its private stdout/stderr were empty and no owned Docker resource remained. Retries 24 and 24b produced identical bounded zero-attempt reports before pricing and added no exposure; a direct authenticated read-only pricing preflight then passed with both fixed models. Retry 24c made two settled target requests costing `$0.0536095`, failed within the harness before native evidence became available, and cleaned every owned Docker resource.
+
+Cumulative calibration accounting is `$6.0126436` known plus `$17.807213975` conservatively retained unknown exposure, totaling `$23.819857575` under the `$50` cap. Four subsequent allocations would be `$6.54503560625`, still above the `$5.49288` maximum reservation. Exact-four proof remains absent and `authority-fencing` remains outside the production catalog. Paid retries are paused while the independently usable local authoring path ships.
+
+## 2026-09-03T02:18:37-07:00: Authoring release candidate passes local parity
+
+Provenance: final source review; full local Python 3.12 and real-Docker suites; isolated wheel installation; canonical init/doctor/validate/plan outputs; package build; dependency and security checks; external link checks; pinned Vale AI-tells pass over the public README.
+
+The release candidate passes 1,254 non-Docker tests and all 11 required Docker tests. A separately installed wheel creates a starter project, passes offline doctor, validates the sealed starter fixture, and resolves a runnable one-trial plan. Ruff, formatting, ty, Bandit, actionlint, `uv lock --check`, wheel/sdist build, pip-audit, `git diff --check`, and the full-history Gitleaks scan pass. The README links resolve, and Vale reports zero errors; its three warnings are rejected as false positives for the lowercase project name, the proper noun Modal, and a nonrepetitive imperative section. Final independent review found no actionable issue.
+
+## 2026-09-03T02:42:39-07:00: PR 26 review corrections
+
+Provenance: two valid Codex findings on PR 26; focused and complete non-Docker tests; Ruff, formatting, ty, Bandit, diff checks, and the pinned Vale ruleset.
+
+`task add` now rejects any configured catalog or sibling writer lock located inside the fixture being added. This check runs before initial fixture validation or lock creation, so catalog replacement cannot mutate bytes inside the just-validated task tree. A regression places the catalog beneath the starter fixture and proves rejection without creating the lock or changing the catalog. Twenty-four focused authoring tests and all 1,255 non-Docker tests pass.
+
+The concise README now lists `sections`, `controller info`, and `runs` and links `docs/cli-reference.md`. The reference restores current exit codes, error redaction, provider-read boundaries, local evidence retention, detached authority, cancellation/recovery behavior, and artifact limits without moving those details ahead of the quickstart. Vale reports zero errors; remaining experimental warnings do not identify a factual or structural problem.

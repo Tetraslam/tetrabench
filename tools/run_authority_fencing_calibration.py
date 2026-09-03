@@ -32,7 +32,7 @@ from decimal import Decimal, InvalidOperation
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import Any
+from typing import Any, NoReturn
 
 REPOSITORY_ROOT = Path(__file__).parents[1]
 if str(REPOSITORY_ROOT) not in sys.path:
@@ -137,7 +137,7 @@ LEGACY_LITELLM_KEY_ENV = "TETRABENCH_CALIBRATION_GATEWAY_KEY"
 PARENT_KEY_ENV = LEGACY_LITELLM_KEY_ENV
 TASK_ID = "systems-design/authority-fencing"
 MAX_ATTEMPT_SECONDS = 35 * 60
-MAX_TOTAL_COST = Decimal("25")
+MAX_TOTAL_COST = Decimal("50")
 MAX_INPUT_OR_CACHE_COST_PER_TOKEN = Decimal("10") / Decimal(1_000_000)
 MAX_OUTPUT_COST_PER_TOKEN = Decimal("50") / Decimal(1_000_000)
 RESERVATION_SAFETY_MARGIN = Decimal("0.25")
@@ -501,6 +501,71 @@ class OpenRouterSettlementError(ValueError):
     def __init__(self, code: str) -> None:
         super().__init__(code)
         self.code = code
+
+
+class NativeSnapshotValidationError(ValueError):
+    pass
+
+
+class NativeProductionConfigMismatch(ValueError):
+    pass
+
+
+class NativeJobOutcomeMismatch(ValueError):
+    pass
+
+
+class NativeTrialDirectoryMismatch(ValueError):
+    pass
+
+
+class NativeTrialEvidenceMismatch(ValueError):
+    pass
+
+
+class NativeAgentIdentityMismatch(ValueError):
+    pass
+
+
+class NativeArtifactManifestMismatch(ValueError):
+    pass
+
+
+class NativeRewardSummaryMismatch(ValueError):
+    pass
+
+
+class NativeTrajectoryMissing(ValueError):
+    pass
+
+
+class NativeAtifMetricsMismatch(ValueError):
+    pass
+
+
+class NativeHarborMetricsMismatch(ValueError):
+    pass
+
+
+_NATIVE_RECORD_FAILURES: dict[str, type[ValueError]] = {
+    "production output root differs from one native Harbor job": (
+        NativeSnapshotValidationError
+    ),
+    "native Harbor production config mismatch": NativeProductionConfigMismatch,
+    "native Harbor job outcome mismatch": NativeJobOutcomeMismatch,
+    "native Harbor trial directory count mismatch": NativeTrialDirectoryMismatch,
+    "native Harbor trial evidence mismatch": NativeTrialEvidenceMismatch,
+    "native Harbor agent identity mismatch": NativeAgentIdentityMismatch,
+    "native artifact manifest root mismatch": NativeArtifactManifestMismatch,
+    "native artifact manifest provenance mismatch": NativeArtifactManifestMismatch,
+    "production CLI binary reward summary mismatch": NativeRewardSummaryMismatch,
+    "production OpenCode run omitted its ATIF trajectory": NativeTrajectoryMissing,
+}
+
+
+def _raise_classified_native_record_error(error: BaseException) -> NoReturn:
+    failure = _NATIVE_RECORD_FAILURES.get(str(error), NativeSnapshotValidationError)
+    raise failure() from None
 
 
 def _new_phase_evidence() -> dict[str, Any]:
@@ -4817,14 +4882,16 @@ def _validate_native_attempt(
         )
     except BaseException as error:
         failure_type = "snapshot" if snapshot_status == "failed" else "validation"
-        raise AttemptFailure("native_output", failure_type, error) from error
+        if failure_type == "snapshot":
+            raise AttemptFailure("native_output", failure_type, error) from error
+        _raise_classified_native_record_error(error)
     if record["native"]["trial"]["agent"]["name"] != "opencode":
-        raise ValueError("native OpenCode agent identity mismatch")
+        raise NativeAgentIdentityMismatch
     if (
         not debug_deny_upstream
         and record["trajectory"]["agent"]["model_name"] != harbor_model
     ):
-        raise ValueError("OpenCode ATIF model identity mismatch")
+        raise NativeAgentIdentityMismatch
     trial_name = record["native"]["trial"]["trial_name"]
     diagnostics_path = f"harbor-job/{trial_name}/verifier/diagnostics.json"
     diagnostics = strict_json(native.read(diagnostics_path))
@@ -4842,7 +4909,7 @@ def _validate_native_attempt(
         or diagnostics.get("schema_version") != 1
         or diagnostics.get("task_id") != TASK_ID
     ):
-        raise ValueError("trusted verifier gate diagnostics mismatch")
+        raise NativeRewardSummaryMismatch
     if debug_deny_upstream:
         job = JobResult.model_validate_json(native.read("harbor-job/result.json"))
         if record["trajectory"] is not None or any(
@@ -4854,7 +4921,7 @@ def _validate_native_attempt(
                 job.stats.cost_usd,
             )
         ):
-            raise ValueError("diagnostic native usage evidence is nonzero")
+            raise NativeHarborMetricsMismatch
         return (
             native,
             record,
@@ -4869,12 +4936,18 @@ def _validate_native_attempt(
                 },
             },
         )
-    trajectory_metrics = _validate_metrics(record)
-    harbor_metrics = _validate_harbor_metrics(
-        native,
-        trial_name=trial_name,
-        trajectory_metrics=trajectory_metrics,
-    )
+    try:
+        trajectory_metrics = _validate_metrics(record)
+    except ValueError as error:
+        raise NativeAtifMetricsMismatch from error
+    try:
+        harbor_metrics = _validate_harbor_metrics(
+            native,
+            trial_name=trial_name,
+            trajectory_metrics=trajectory_metrics,
+        )
+    except ValueError as error:
+        raise NativeHarborMetricsMismatch from error
     return (
         native,
         record,
@@ -5351,7 +5424,7 @@ def _nonnegative_usd(value: str) -> Decimal:
         ) from error
     if not parsed.is_finite() or parsed < 0 or parsed > MAX_TOTAL_COST:
         raise argparse.ArgumentTypeError(
-            "must be a finite nonnegative decimal at most 25"
+            f"must be a finite nonnegative decimal at most {MAX_TOTAL_COST}"
         )
     return parsed
 
@@ -5375,7 +5448,9 @@ def parse_arguments(argv: list[str]) -> argparse.Namespace:
     )
     args = parser.parse_args(argv)
     if args.prior_known_cost_usd + args.prior_unknown_exposure_usd > MAX_TOTAL_COST:
-        parser.error("combined prior cost and exposure must be at most 25")
+        parser.error(
+            f"combined prior cost and exposure must be at most {MAX_TOTAL_COST}"
+        )
     expected_attempts = 1 if args.debug else 2
     if args.attempts_per_profile is None:
         args.attempts_per_profile = expected_attempts
