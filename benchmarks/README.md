@@ -352,7 +352,10 @@ mode only, while retained proof requires all four attempts from a clean committe
 snapshot. Native ATIF aggregate prompt and completion tokens must both be
 positive, cached tokens may
 be zero, and all three must agree with Harbor's native trial and job metrics.
-After the production CLI returns, command classification precedes the positive
+The `$50` budget applies independently to each exact-four invocation and is
+split into four `$12.50` allocations. Historical known spend and retained
+unknown exposure remain accounting evidence but do not reduce a later
+invocation's budget. After the production CLI returns, command classification precedes the positive
 broker-request gate. Every attempt retains only return code, stream sizes and
 digests, safe canonical schema/outcome/reward fields, and bounded native
 structural status/counts/digests/exception class names. A nonzero or malformed
@@ -384,10 +387,10 @@ peers and unrelated host containers are not containment evidence. Docker's
 reported IPAM gateway and `Internal` value are recorded as topology only;
 authenticated pricing and later forwarding prove actual egress. This transport
 requires no host reachability or firewall change. No real calibration has
-completed, so difficulty calibration remains unproven. Current accounting after
-retry 24c is `$6.0126436` known cost plus `$17.807213975` conservatively retained
-against the user-authorized `$50` cap. Four-way allocation is `$6.54503560625`,
-above the `$5.49288` worst-case request reservation. A
+completed, so difficulty calibration remains unproven. Historical accounting
+after retry 24c is `$6.0126436` known cost plus `$17.807213975` conservatively
+retained unknown exposure; it does not consume the next invocation's `$50` cap.
+A
 separate direct OpenRouter contract probe cost `$0.00007`; it is not benchmark
 calibration. `--debug-deny-upstream` is
 a non-admissible one-attempt-per-profile diagnostic with no proof output. It

@@ -1684,3 +1684,11 @@ Provenance: two valid Codex findings on PR 26; focused and complete non-Docker t
 `task add` now rejects any configured catalog or sibling writer lock located inside the fixture being added. This check runs before initial fixture validation or lock creation, so catalog replacement cannot mutate bytes inside the just-validated task tree. A regression places the catalog beneath the starter fixture and proves rejection without creating the lock or changing the catalog. Twenty-four focused authoring tests and all 1,255 non-Docker tests pass.
 
 The concise README now lists `sections`, `controller info`, and `runs` and links `docs/cli-reference.md`. The reference restores current exit codes, error redaction, provider-read boundaries, local evidence retention, detached authority, cancellation/recovery behavior, and artifact limits without moving those details ahead of the quickstart. Vale reports zero errors; remaining experimental warnings do not identify a factual or structural problem.
+
+## 2026-09-03T12:22:47-07:00: Calibration cap scope correction
+
+Provenance: explicit user clarification; executable budget-boundary review; focused local Python 3.12 validation. No provider or paid model call occurred while making this correction.
+
+D-128 corrects the earlier cumulative-budget interpretation. The user-authorized `$50` cap applies independently to one exact-four calibration invocation. Historical known spend and retained unknown exposure remain accounting evidence, but they do not reduce a later invocation's budget or affect its admissibility. Every clean invocation therefore receives four exact `$12.50` attempt allocations, each above the `$5.49288` worst-case single-request reservation. Once a calibration budget is authorized, paid retries continue without another cost confirmation until success or another recorded hard boundary.
+
+The runner now separates historical accounting from current-run budget authority. Allocation and admissibility use only the current invocation's broker-enforced `$50` cap; failure and success evidence still report historical totals. All 474 focused calibration tests, Ruff check/format, ty, and `git diff --check` pass.

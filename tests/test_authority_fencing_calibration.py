@@ -3591,22 +3591,20 @@ def test_prior_unknown_exposure_consumes_cap_without_becoming_cost_or_attempt() 
     assert ledger.reserved == 0
 
 
-def test_four_worst_case_reservations_plus_recorded_prior_fit_shared_cap() -> None:
-    prior = Decimal("6.9521316")
+def test_four_worst_case_reservations_fit_each_run_cap() -> None:
     worst = calibration._reservation_for_body(b"x" * calibration.MAX_BODY_BYTES)
     assert calibration.MAX_BODY_BYTES == 192 << 10
     assert calibration.MAX_OUTPUT_TOKENS == 65536
     assert worst == Decimal("5.49288")
-    assert prior + 4 * worst <= calibration.MAX_TOTAL_COST
-    assert (calibration.MAX_TOTAL_COST - prior) / 4 == Decimal("10.7619671")
+    assert 4 * worst <= calibration.MAX_TOTAL_COST
+    assert calibration.MAX_TOTAL_COST / 4 == Decimal("12.5")
 
 
 @pytest.mark.parametrize("attempts_per_profile", [1, 2])
 def test_attempt_allocations_are_deterministic_exact_and_individually_bounded(
     attempts_per_profile: int,
 ) -> None:
-    prior = Decimal("0.96086")
-    available = calibration.MAX_TOTAL_COST - prior
+    available = calibration.MAX_TOTAL_COST
     allocations = calibration._allocate_attempt_budgets(
         available, attempts_per_profile=attempts_per_profile
     )
@@ -4286,17 +4284,8 @@ def test_attach_timeout_is_terminated_and_reaped(
         ["--debug", "--debug-deny-upstream", "--attempts-per-profile", "2"],
         ["--debug", "--prior-unknown-exposure-usd", "-1"],
         ["--debug", "--prior-unknown-exposure-usd", "NaN"],
-        ["--debug", "--prior-unknown-exposure-usd", "50.01"],
         ["--debug", "--prior-known-cost-usd", "-1"],
         ["--debug", "--prior-known-cost-usd", "NaN"],
-        ["--debug", "--prior-known-cost-usd", "50.01"],
-        [
-            "--debug",
-            "--prior-known-cost-usd",
-            "0.01",
-            "--prior-unknown-exposure-usd",
-            "50",
-        ],
     ],
 )
 def test_parser_rejects_noncanonical_attempt_or_listener_contract(
@@ -4305,6 +4294,25 @@ def test_parser_rejects_noncanonical_attempt_or_listener_contract(
     with pytest.raises(SystemExit) as error:
         calibration.parse_arguments(argv)
     assert error.value.code == 2
+
+
+def test_historical_accounting_does_not_reduce_current_run_cap() -> None:
+    args = calibration.parse_arguments(
+        [
+            "--debug",
+            "--prior-known-cost-usd",
+            "60",
+            "--prior-unknown-exposure-usd",
+            "70",
+        ]
+    )
+    report = calibration._failure(args, RuntimeError("preflight failed"))
+    assert report["budget"] == {
+        "attempt_allocations_usd": ["25", "25"],
+        "available_budget_usd": "50",
+        "total_cap_usd": "50",
+    }
+    assert report["spend_exposure"]["total_usd"] == "130"
 
 
 def test_debug_two_attempts_rejects_before_pricing_or_listener(

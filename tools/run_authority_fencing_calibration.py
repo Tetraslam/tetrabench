@@ -5347,10 +5347,9 @@ def _failure(
     )
     prior_known = args.prior_known_cost_usd
     prior_unknown = args.prior_unknown_exposure_usd
-    prior_total = prior_known + prior_unknown
     backend = BACKENDS[args.backend]
     planned_allocations = _deterministic_budget_split(
-        MAX_TOTAL_COST - prior_total,
+        MAX_TOTAL_COST,
         args.attempts_per_profile * len(PROFILE_CONTRACTS),
     )
     return {
@@ -5360,7 +5359,7 @@ def _failure(
         "attempts_per_profile": args.attempts_per_profile,
         "budget": {
             "attempt_allocations_usd": [str(item) for item in planned_allocations],
-            "available_budget_usd": str(MAX_TOTAL_COST - prior_total),
+            "available_budget_usd": str(MAX_TOTAL_COST),
             "total_cap_usd": str(MAX_TOTAL_COST),
         },
         "diagnostic": {
@@ -5378,7 +5377,7 @@ def _failure(
             "current_retained_exposure_usd": str(retained),
             "known_actual_cost_usd": str(prior_known + known),
             "retained_unknown_reservation_usd": str(prior_unknown + retained),
-            "total_usd": str(prior_total + known + retained),
+            "total_usd": str(prior_known + prior_unknown + known + retained),
         },
         "task_id": TASK_ID,
         "total_authoritative_cost_usd": str(prior_known + known),
@@ -5422,10 +5421,8 @@ def _nonnegative_usd(value: str) -> Decimal:
         raise argparse.ArgumentTypeError(
             "must be a finite nonnegative decimal"
         ) from error
-    if not parsed.is_finite() or parsed < 0 or parsed > MAX_TOTAL_COST:
-        raise argparse.ArgumentTypeError(
-            f"must be a finite nonnegative decimal at most {MAX_TOTAL_COST}"
-        )
+    if not parsed.is_finite() or parsed < 0:
+        raise argparse.ArgumentTypeError("must be a finite nonnegative decimal")
     return parsed
 
 
@@ -5447,10 +5444,6 @@ def parse_arguments(argv: list[str]) -> argparse.Namespace:
         default=Decimal(0),
     )
     args = parser.parse_args(argv)
-    if args.prior_known_cost_usd + args.prior_unknown_exposure_usd > MAX_TOTAL_COST:
-        parser.error(
-            f"combined prior cost and exposure must be at most {MAX_TOTAL_COST}"
-        )
     expected_attempts = 1 if args.debug else 2
     if args.attempts_per_profile is None:
         args.attempts_per_profile = expected_attempts
@@ -5482,7 +5475,7 @@ def main(argv: list[str] | None = None) -> int:
             authority = open_proof_output_authority(args.output)
         parent_key = _take_backend_credential(backend, os.environ)
         prior_total = args.prior_known_cost_usd + args.prior_unknown_exposure_usd
-        available_budget = MAX_TOTAL_COST - prior_total
+        available_budget = MAX_TOTAL_COST
         attempt_allocations = _allocate_attempt_budgets(
             available_budget, attempts_per_profile=args.attempts_per_profile
         )
@@ -5575,7 +5568,7 @@ def main(argv: list[str] | None = None) -> int:
                 and snapshot.source_state == "clean"
                 and exact_four
                 and source_unchanged
-                and prior_total + total_cost <= MAX_TOTAL_COST
+                and total_cost <= MAX_TOTAL_COST
                 and recorded_cost == total_cost
                 and actual_within_reservations
             )
@@ -5629,7 +5622,8 @@ def main(argv: list[str] | None = None) -> int:
                     "prior_unknown_exposure_usd": str(args.prior_unknown_exposure_usd),
                     "current_known_cost_usd": str(total_cost),
                     "current_retained_exposure_usd": "0",
-                    "total_cap_exposure_usd": str(prior_total + total_cost),
+                    "current_run_cap_exposure_usd": str(total_cost),
+                    "historical_total_exposure_usd": str(prior_total + total_cost),
                     "total_authoritative_cost_usd": str(
                         args.prior_known_cost_usd + total_cost
                     ),

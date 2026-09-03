@@ -40,7 +40,7 @@ Edit existing human-facing documentation in place. Preserve its facts, intent, v
 
 ## Change Discipline
 
-- Once the user authorizes an eval or calibration budget, continue paid attempts within the implemented cap without asking again. Stop only on success, when the cap cannot fund the next required atomic shape, or when another recorded safety boundary blocks execution.
+- Once the user authorizes an eval or calibration budget, continue paid attempts within each invocation's implemented cap without asking again. Stop only on success or when another recorded safety boundary blocks execution.
 - Prefer native Harbor, Modal, S3, and Docker mechanisms over custom control planes.
 - Do not add a custom run database.
 - Never deliberately serialize credentials into plans, receipts, logs, fixtures, or committed configuration.
