@@ -1592,3 +1592,11 @@ The first gold case completed native Harbor with reward one, then the controller
 D-121 makes new content blobs use canonical `application/octet-stream` transport metadata while preserving logical media type in each request or artifact descriptor. Content reuse and reads accept retained legacy transport types only after the existing digest, size, SHA-256 metadata, and service-checksum-where-applicable checks pass. D-122 adds the bounded run ID to failed admission evidence and directly proves child quiescence when cancellation observes a failed terminal controller, without invoking recovery and spawning a successor.
 
 One hundred fifty-three focused S3/controller/driver tests passed. The full 1,221-test non-Docker suite and all 10 required Docker tests passed, with lock/sync, Ruff, format, ty, Bandit, actionlint, wheel/sdist build, all-groups pip-audit, and `git diff --check`. A controller redeploy and fresh three-case retry remain pending.
+
+## 2026-09-02T19:15:24-07:00: Detached gold success and native trial-path correction
+
+Provenance: clean committed and deployed D-121 source; retained Modal/Tigris profile; fresh authoritative remote result; native Harbor 0.22 artifact inventory; terminal-only cancellation/recovery cleanup; provider-free regression and focused local validation. Full run identifiers remain private.
+
+The fresh first gold case reached terminal admission and successful immutable terminal proof with reward one, one exact binary sample, and 19 artifacts. The driver then rejected the valid inventory because its fake used `jobs/harbor-job/trials/<trial-name>/`; Harbor 0.22 writes each native trial directly at `jobs/harbor-job/<trial-name>/`. Failure handling retained the run ID, observed terminal authority, and completed terminal-only cleanup. Both Modal Apps report zero active tasks, and no proof was created.
+
+D-123 derives the exact trial root from the authoritative summary trial name and requires config, lock, result, verifier reward and diagnostics, artifact manifest, and collected workspace beneath that root. Seventy-eight focused driver, remote-result, and Harbor tests passed, including the real Docker fixture, with Ruff, format, ty, and `git diff --check`. The complete three-case sequence remains pending on a clean commit.

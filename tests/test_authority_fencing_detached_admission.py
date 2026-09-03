@@ -35,7 +35,7 @@ def _load_driver(name: str):  # type: ignore[no-untyped-def]
 
 def _artifact_paths() -> list[str]:
     prefix = "attempts/attempt-1"
-    trial = f"{prefix}/jobs/harbor-job/trials/authority-fencing__sample-0"
+    trial = f"{prefix}/jobs/harbor-job/authority-fencing__sample-0"
     return [
         f"{prefix}/controller-plan.json",
         f"{prefix}/controller-result.json",

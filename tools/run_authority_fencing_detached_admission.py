@@ -66,19 +66,14 @@ REQUIRED_ARTIFACTS: dict[str, Callable[[str], bool]] = {
     "job-config": lambda path: path.endswith("/jobs/harbor-job/config.json"),
     "job-lock": lambda path: path.endswith("/jobs/harbor-job/lock.json"),
     "job-result": lambda path: path.endswith("/jobs/harbor-job/result.json"),
-    "trial-config": lambda path: (
-        "/jobs/harbor-job/trials/" in path and path.endswith("/config.json")
-    ),
-    "trial-lock": lambda path: (
-        "/jobs/harbor-job/trials/" in path and path.endswith("/lock.json")
-    ),
-    "trial-result": lambda path: (
-        "/jobs/harbor-job/trials/" in path and path.endswith("/result.json")
-    ),
-    "reward": lambda path: path.endswith("/verifier/reward.json"),
-    "diagnostics": lambda path: path.endswith("/verifier/diagnostics.json"),
-    "artifact-manifest": lambda path: path.endswith("/artifacts/manifest.json"),
-    "collected-workspace": lambda path: "/artifacts/workspace/" in path,
+}
+TRIAL_REQUIRED_FILES = {
+    "artifact-manifest": "artifacts/manifest.json",
+    "diagnostics": "verifier/diagnostics.json",
+    "reward": "verifier/reward.json",
+    "trial-config": "config.json",
+    "trial-lock": "lock.json",
+    "trial-result": "result.json",
 }
 AUDIT_SOLUTION = b"""#!/bin/sh
 set -u
@@ -495,11 +490,19 @@ def _validate_remote_result(
     ):
         raise ValueError("binary authority-fencing summary does not match expectation")
     paths = tuple(item.logical_path for item in result.artifacts)
-    missing = tuple(
+    missing = [
         name
         for name, predicate in REQUIRED_ARTIFACTS.items()
         if not any(predicate(path) for path in paths)
+    ]
+    trial_root = f"/jobs/harbor-job/{summary.trials[0].trial_name}/"
+    missing.extend(
+        name
+        for name, suffix in TRIAL_REQUIRED_FILES.items()
+        if not any(path.endswith(trial_root + suffix) for path in paths)
     )
+    if not any(trial_root + "artifacts/workspace/" in path for path in paths):
+        missing.append("collected-workspace")
     if missing:
         raise ValueError("terminal inventory omits required native artifacts")
 
