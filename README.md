@@ -40,8 +40,8 @@ and transitions, Git objects, a clean clone, and product behavior before writing
 exact binary reward bytes. Its runtime evidence records whether DNS resolved and
 the returned addresses; Harbor's Docker egress control may permit that lookup.
 Direct-IP and hostname TCP connection attempts must both fail, and either
-connection succeeding forces reward `0`. Candidate-specific detached Modal
-admission remains unproven.
+connection succeeding forces reward `0`. The candidate-specific detached Modal
+sequence passes two gold runs and one reward-forgery audit.
 The unlisted candidate also has a source-only local calibration runner with two
 fixed OpenCode model groups. Every attempt creates a fresh labeled Docker bridge
 with an explicit deterministic `/28` from a dedicated 10/8 pool. Allocation
@@ -213,8 +213,10 @@ The source-only `authority-fencing` detached-admission driver requires explicit
 binary projects from one private candidate snapshot, and runs two unchanged
 Oracle copies before one solution-only reward-forgery audit. Local
 fake-backed tests cover its terminal, artifact, controller, cleanup,
-cancellation, redaction, private-output, and stop-on-failure gates. The
-candidate-specific live run remains unproven, and the real catalog stays empty.
+cancellation, redaction, private-output, and stop-on-failure gates. The complete
+live sequence passed with rewards `1`, `1`, and `0`, terminal authority, native
+inventories, and child cleanup. The real catalog stays empty because exact-four
+model calibration remains budget-blocked.
 
 Explicit detached-controller recovery is locally and live verified. It refuses
 running or inspection-unknown owners and cancellation admission states.

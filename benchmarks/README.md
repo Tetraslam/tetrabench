@@ -220,10 +220,10 @@ Wheels contain neither catalog nor source-only fixture files; source
 distributions retain the two prerequisite fixtures. The unadmitted
 `authority-fencing` candidate, its hidden verifier, mutants, gold solution,
 candidate-only admission tool, and candidate-only project test are absent from
-both wheel and source distribution. Retained storage and controller access pass
-a fresh source-only smoke, while candidate-specific detached proof and automatic
-catalog admission remain unproven. The catalogs stay empty until detached proof
-and the remaining admission work pass.
+both wheel and source distribution. The candidate-specific detached sequence
+passes two gold runs and one reward-forgery audit with terminal authority and
+cleanup. Automatic catalog admission remains blocked on exact-four model
+calibration, so the catalogs stay empty.
 
 ## Systems design through implementation
 

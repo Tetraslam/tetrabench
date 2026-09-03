@@ -3,9 +3,9 @@
 ## Status
 
 - Project state: P0 through P6 are complete for their local/static contracts. Live Tigris/Modal evidence includes cancellation, forced controller interruption/recovery, and the E-046 Single-region `iad` cutover. Current live provider IAM/privacy/encryption state, AWS behavior, and true provider preemption remain `unproven`.
-- Current action: D-123 was committed, and a fresh sequence accepted gold one. Gold two also reached authoritative terminal success with reward `1`, 19 artifacts, and complete cleanup, but the first terminal read preceded visible terminal-admission acknowledgement. D-124 now treats that terminal-last publication window as nonterminal for this stricter gate and waits for the coherent terminal/terminal view. Exact-four proof remains absent. Cumulative calibration accounting is `$1.9375816` known plus `$5.01455` unknown, total `$6.9521316`; four allocations would be `$4.5119671`, below the `$5.49288` maximum reservation.
-- Next action: commit D-124, then rerun the bounded detached sequence against the retained profile: two gold repetitions and one shortcut audit with terminal, binary-reward, artifact, owner, and cleanup validation. Further exact-four calibration is blocked until final provider evidence reduces unknown exposure or a separately reviewed bounded contract fits four maximum requests within the remaining `$18.0478684`. The exact E-021/E-023 live IAM/privacy/encryption probes, AWS consistency probe, and real provider-initiated Modal preemption remain pending.
-- Task-catalog gate: `authority-fencing` exists only as an explicitly requested local candidate under `benchmarks/tasks/`; `benchmarks/catalog.toml` remains empty. Catalog admission still requires the detached P7 proofs and complete bounded admission repetitions.
+- Current action: E-124 passed the complete clean detached `authority-fencing` sequence from commit `da1fbb2`: two independent gold runs each reached reward `1` with 19 artifacts, and the solution-only reward-forgery audit reached reward `0` with 20 artifacts. All three had terminal admission, succeeded controller calls, two-sweep terminal cleanup, fresh-process coherent rereads, and two further empty child sweeps. The private canonical proof is mode `0600`, 3,004 bytes, and SHA-256 `2301feeffdadaa2bf2576ad7fec8b594bd90101bdb62dc7455822a93350fa4c8`. Exact-four proof remains absent.
+- Next action: detached execution and audit are complete. Further exact-four calibration is blocked until final provider evidence reduces unknown exposure or a separately reviewed bounded contract fits four maximum requests within the remaining `$18.0478684`; catalog admission remains blocked on that proof. The exact E-021/E-023 live IAM/privacy/encryption probes, AWS consistency probe, and real provider-initiated Modal preemption remain pending.
+- Task-catalog gate: `authority-fencing` exists only as an explicitly requested local candidate under `benchmarks/tasks/`; `benchmarks/catalog.toml` remains empty. E-124 completes detached P7 execution and audit evidence; catalog admission still requires exact-four calibration and budget completion.
 - Canonical record updated: 2026-09-02.
 
 ### `authority-fencing` candidate working record
@@ -27,7 +27,7 @@
 | Atomic unit and largest real shape | One production `SubmissionService.submit` is the mutation unit. The largest operation is exactly three fresh one-task runs, stopped at the first failure, under one shared wall-clock deadline no greater than 30 minutes. Each run has one binary sample for `authority-fencing`; the audit changes only its copied `solution/solve.sh`. |
 | Authority and lifecycle owner | One clean, stable checkout identity and one temporary fd-private candidate snapshot own selection and audit isolation. `prepare_submission` owns the sealed request and endpoint selection; S3 admission and immutable terminal records own coordination and completion; Modal FunctionCall owns active execution; Harbor native files own reward and artifact meaning; terminal-only `RecoveryService` owns the final two-sweep child-quiescence proof. |
 | Native primitive or capability gap | Reuse production preparation, submission, Modal controller, S3 store, remote result, child observation, cancellation, and recovery. No custom provider protocol or catalog mutation is needed. The source-only wrapper adds only bounded orchestration, copied-fixture construction, validation, redacted evidence, direct cleanup of an already-failed owner without recovery spawn, and the existing fd-anchored private proof writer. |
-| Planned faithful evidence | Provider-free fakes prove confirmation before construction, clean-source refusal, one-snapshot temporary catalog selection and copy isolation, exact reward/summary/inventory/controller/recovery gates, timeout and post-submit cancellation, bounded redaction, successful-only proof creation, and sequential stop-on-first-failure. Live candidate-specific execution remains `unproven` until an explicitly authorized run completes. |
+| Planned faithful evidence | Provider-free fakes prove confirmation before construction, clean-source refusal, one-snapshot temporary catalog selection and copy isolation, exact reward/summary/inventory/controller/recovery gates, timeout and post-submit cancellation, bounded redaction, successful-only proof creation, and sequential stop-on-first-failure. E-124 passes the complete live candidate-specific sequence and fresh-process verification. |
 
 ## Systems-Design Working Record
 
@@ -342,8 +342,8 @@ runs/<run-id>/terminals/<terminal-sha>.json
 - [ ] [U-009] `unproven`: live AWS `PutObject` conditional create/update behavior. AWS documents the required 200/404/409/412 semantics, but no AWS mutation was run.
 - [x] [U-010] Resolved by E-046: a new private Tigris Single-region `iad` bucket passed the live consistency probe and became the authoritative coordination baseline without modifying or copying the retained Global bucket.
 - [ ] [U-011] `unproven`: current live Tigris/AWS IAM denials, bucket privacy, and effective encryption. Retained E-046 evidence records the Tigris bucket and policies at cutover, but renewed credentials are required for the E-021/E-023 probes.
-- [ ] [U-012] `partially proven`: E-061 proves automatic selected-fixture sealing, local tree equivalence, and detached controller materialized-path resolution without checkout fallback. E-064 proves the Harbor 0.22 separate-verifier, public-agent/no-network-verifier, declared-artifact, stop-main-first forge-sidecar, and clean-verification handoff locally. Retained storage and controller access pass a fresh source-only smoke; the candidate-specific detached sequence and catalog admission remain `unproven`.
-- [ ] [U-013] `partially proven`: E-068 locally rejects every binary primary reward except exact integer `0` or `1`, validates all native diagnostics, and computes deterministic task/sample pass rates. Retained storage and controller access pass a fresh source-only smoke; candidate-specific detached binary proof remains `unproven`.
+- [x] [U-012] Resolved by E-124 for the candidate path: automatic selected-fixture sealing, materialized-path resolution, Harbor 0.22 separate verification, forge collection, and clean-verifier handoff passed detached Modal. Production catalog admission remains separately blocked on exact-four calibration.
+- [x] [U-013] Resolved by E-124: two detached binary gold samples produced exact reward `1`, and the detached reward-forgery audit produced exact reward `0`, with validated native summaries and terminal inventories.
 
 ## Planned Package Tree
 
@@ -464,25 +464,24 @@ live IAM, privacy, and encryption checks.
 - [x] [P7-01] Seal and request-bind the complete selected fixture for local and
   detached execution. E-061 passes locally; the first live Modal catalog run
   remains part of U-012.
-- [ ] [P7-02] Prove a Harbor 0.22 separate-verifier prototype locally and in
+- [x] [P7-02] Prove a Harbor 0.22 separate-verifier prototype locally and in
   detached Modal, including clean `tests/`-built verifier images, declared
   `/artifacts`, agent public network, verifier no-network, and lifecycle order.
-  E-064 passes locally; current storage and controller access pass a fresh live
-  smoke, while this candidate's detached path remains `unproven`.
-- [ ] [P7-03] Prove a minimal forge sidecar whose state and event log are
+  E-064 passes locally and E-124 passes the candidate path in detached Modal.
+- [x] [P7-03] Prove a minimal forge sidecar whose state and event log are
   finalized before agent exit, exported only after main stops, and reconstructed
-  by a clean verifier. E-065 passes locally; detached Modal remains `unproven`.
-- [ ] [P7-04] Implement fixture-manifest validation. Exact binary primary-reward
+  by a clean verifier. E-065 passes locally and E-124 passes detached Modal.
+- [x] [P7-04] Implement fixture-manifest validation. Exact binary primary-reward
   admission and binary section pass-rate summaries passed E-068 locally;
-  `authority-fencing` now has strict task-local manifests and referential checks,
-  while generic detached validation remains `unproven`.
+  `authority-fencing` has strict task-local manifests and referential checks;
+  E-124 passes detached binary reward authority.
 - [ ] [P7-05] Implement the fixed admission repetitions, mutant cap, exploit
   audits, calibration records, runtime limits, model-spend cap, wall-clock cap,
   and task/native-artifact budgets in D-069. E-077 passes the local gold
   repetition, no-op, mutant, and exploit gates. E-118 passes the source-only
-  detached driver contract with provider fakes. Two detached repetitions, the
-  detached audit, two-profile calibration, budget completion, and catalog
-  admission remain `unproven`.
+  detached driver contract with provider fakes, and E-124 passes two detached
+  repetitions plus the detached audit. Two-profile calibration, budget
+  completion, and catalog admission remain `unproven`.
 
 Acceptance: U-012 and U-013 pass locally and in detached Modal before the first
 task fixture is created. P7 adds no fixture or catalog entry.
@@ -617,6 +616,7 @@ task fixture is created. P7 adds no fixture or catalog entry.
 | E-121 | Digest-only content reuse and failed-run cleanup correction | Same bytes under distinct logical media types and legacy stored transport type; unchanged byte/hash/size/checksum verification; failed-controller direct child quiescence; no recovery call; bounded run ID in failure report; focused and full local validation | passed locally; controller redeploy and live retry pending | 153 focused S3/controller/driver tests passed. The complete 1,221-test non-Docker suite and all 10 Docker tests passed, with lock/sync, Ruff, format, ty, Bandit, actionlint, wheel/sdist build, all-groups pip-audit, and `git diff --check`. D-121/D-122; `src/tetrabench/s3.py`; `tools/run_authority_fencing_detached_admission.py`. |
 | E-122 | Corrected storage reaches detached gold terminal and exposes fake artifact layout | Clean deployed D-121 source; fresh gold run; authoritative remote result and binary summary; native inventory; terminal admission; terminal-only cleanup; absent proof; version-matched regression | gold execution passed; driver gate corrected locally; full sequence pending | The fresh gold run succeeded with reward `1`, one binary sample, 19 artifacts, and terminal admission. Failure cleanup observed terminal authority and completed. The driver rejected only because its fake placed trial files under `harbor-job/trials/<name>` while the real Harbor 0.22 inventory uses `harbor-job/<name>`. D-123 binds every required trial artifact to the summary's exact native trial name. Seventy-eight focused driver/remote/Harbor tests passed, including a real Docker Harbor fixture, with Ruff, format, ty, and `git diff --check`. Full identifiers remain private. |
 | E-123 | Two detached gold terminals expose admission-acknowledgement visibility window | Clean committed D-123 source; first accepted gold; second authoritative remote result and binary summary; native inventory; terminal admission on reread; terminal-only cleanup; absent proof; polling regression | both gold executions passed; coherent-view gate corrected locally; full sequence pending | Gold one passed every driver gate. Gold two independently succeeded with reward `1`, one binary sample, and 19 artifacts. Its first immutable-terminal read preceded visible terminal-admission acknowledgement, so the driver stopped before the audit despite a later coherent terminal/terminal result. Cleanup completed and both Apps report zero active tasks. D-124 now waits through that bounded state. Seventy-one focused tests plus Ruff, format, ty, and `git diff --check` passed. Full identifiers remain private. |
+| E-124 | Complete detached gold/gold/reward-forgery admission | Clean commit `da1fbb2`; one private candidate snapshot; three fresh temporary binary projects; two reward-one gold terminals; one reward-zero solution-only forgery terminal; exact summaries and native inventories; succeeded controller calls; terminal admission; terminal-only cleanup; fresh-process rereads and empty child sweeps; exclusive private canonical proof | passed live; detached candidate admission complete; catalog remains calibration-blocked | Both gold cases produced one passing binary sample and 19 artifacts. The audit produced one failing binary sample and 20 artifacts, proving the forged reward did not control the clean verifier. Every case completed two recovery sweeps; independent rereads found coherent terminal authority and two further child sweeps remained empty. Both Modal Apps reported zero active tasks. The retained proof is mode `0600`, 3,004 bytes, canonical JSON plus one newline, and SHA-256 `2301feeffdadaa2bf2576ad7fec8b594bd90101bdb62dc7455822a93350fa4c8`. Full run and terminal identifiers remain private. D-119..D-124. |
 
 ## Deferred Capabilities
 

@@ -1608,3 +1608,13 @@ Provenance: clean committed D-123 source; retained Modal/Tigris profile; two fre
 Gold one passed every driver gate with reward one, 19 artifacts, terminal admission, a succeeded controller call, and two-sweep cleanup. Gold two independently reached the same authoritative reward-one terminal and cleanup state. Its first remote read observed the immutable terminal before the mutable admission acknowledgement became visible, so the driver rejected it before the reward-forgery audit. A fresh read showed the required terminal/terminal view, and both Modal Apps reported zero active tasks. No proof was created.
 
 D-124 continues bounded polling across a terminal-last/nonterminal-admission view, returns only after terminal admission is visible, and preserves immediate conflict rejection. Seventy-one focused driver, remote-result, and controller tests passed with Ruff, format, ty, and `git diff --check`. A fresh clean three-case sequence remains pending.
+
+## 2026-09-02T19:41:59-07:00: Complete detached authority-fencing admission
+
+Provenance: clean commit `da1fbb2`; retained Modal/Tigris profile; source-only detached admission driver; three fresh projects from one private candidate snapshot; fresh-process remote rereads; independent run-scoped child sweeps; Modal App inspection; retained private proof validation. Full run, call, attempt, and terminal identifiers remain private.
+
+E-124 passed. Both independent gold cases reached successful terminal proof with exact binary reward one, 19 artifacts, terminal admission, succeeded controller calls, and two-sweep cleanup. The solution-only reward-forgery audit reached successful terminal proof with exact binary reward zero, 20 artifacts, terminal admission, a succeeded controller call, and two-sweep cleanup. Its copied fixture digest differs from the shared gold digest, while the source identity and deployed endpoint remained fixed. The forged reward did not control the clean verifier.
+
+Fresh-process result reads reproduced rewards one, one, and zero with no conflicts. Two additional run-scoped sweeps per case were empty, and both Modal Apps reported zero active tasks. The exclusive proof at `~/.local/share/opencode/tetrabench-research/authority-fencing-detached-admission-2026-09-02/proof-r4.json` is mode `0600`, 3,004 bytes, canonical JSON followed by one newline, and SHA-256 `2301feeffdadaa2bf2576ad7fec8b594bd90101bdb62dc7455822a93350fa4c8`.
+
+Detached candidate execution, separate verification, binary reward authority, repetition, forgery resistance, and cleanup are complete. The checked-in catalog remains empty because exact-four calibration is still budget-blocked by `$5.01455` conservative unknown exposure.
