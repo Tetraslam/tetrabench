@@ -201,6 +201,13 @@ catalog task directory and seals that complete fixture into the immutable
 context before it constructs an S3 or Modal service. The source-only fixture
 helper remains the only exercised live cloud submission path.
 
+Digest-addressed content blobs use canonical `application/octet-stream` S3
+transport metadata because one byte digest may back context and artifact
+descriptors with different logical media types. Logical media remains bound in
+those descriptors; blob integrity remains bound by digest, size, SHA-256
+metadata, and service checksum where applicable. Retained blobs with earlier
+transport types remain readable under the same byte-level verification.
+
 The source-only `authority-fencing` detached-admission driver requires explicit
 `--yes` and a clean, stable checkout, derives three fresh temporary one-task
 binary projects from one private candidate snapshot, and runs two unchanged

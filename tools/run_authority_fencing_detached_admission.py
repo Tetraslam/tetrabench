@@ -111,6 +111,10 @@ class _Recovery(Protocol):
     def recover(self, run_id: str) -> Any: ...
 
 
+class _Children(Protocol):
+    def sweep(self, run_id: str) -> Any: ...
+
+
 @dataclass(frozen=True, slots=True)
 class RuntimeServices:
     submission: _Submission
@@ -118,6 +122,7 @@ class RuntimeServices:
     controller: _Controller
     cancellation: _Cancellation
     recovery: _Recovery
+    children: _Children
 
 
 @dataclass(frozen=True, slots=True)
@@ -132,6 +137,7 @@ class DriverDependencies:
 @dataclass(slots=True)
 class CaseProgress:
     stage: str = "project"
+    run_id: str | None = None
     post_submit: bool = False
     cancellation_attempted: bool = False
     cancellation_completed: bool = False
@@ -172,6 +178,7 @@ def _production_services(
             children,
         ),
         recovery=RecoveryService(store, controller, children, submission),
+        children=children,
     )
 
 
@@ -549,8 +556,22 @@ def _validate_cancellation_result(
 def _cancel_failed_case(
     services: RuntimeServices,
     run_id: str,
+    *,
+    sleep: Callable[[float], None],
 ) -> None:
     cancellation = services.cancellation.cancel(run_id)
+    if cancellation.state == "failed" and cancellation.controller_terminal_observed:
+        consecutive_empty = 0
+        for sweep in range(5):
+            result = services.children.sweep(run_id)
+            consecutive_empty = (
+                consecutive_empty + 1 if not result.remaining_child_ids else 0
+            )
+            if consecutive_empty >= 2:
+                return
+            if sweep < 4:
+                sleep(0.2)
+        raise ValueError("post-failure child cleanup is incomplete")
     _validate_cancellation_result(cancellation, run_id=run_id)
     if cancellation.state != "terminal":
         return
@@ -631,7 +652,7 @@ def _execute_case(
         if progress.post_submit:
             progress.cancellation_attempted = True
             with suppress(BaseException):
-                _cancel_failed_case(services, run_id)
+                _cancel_failed_case(services, run_id, sleep=dependencies.sleep)
                 progress.cancellation_completed = True
         raise
 
@@ -709,6 +730,7 @@ def run_admission(
                 run_id = validate_run_id(
                     f"{run_prefix}-{ordinal}-{dependencies.uuid_hex()[:12]}"
                 )
+                progress.run_id = run_id
                 if run_id in run_ids:
                     raise ValueError("fresh run ID generation repeated")
                 run_ids.add(run_id)
@@ -754,6 +776,8 @@ def run_admission(
             "code": _error_code(error),
             "stage": progress.stage,
         }
+        if progress.run_id is not None:
+            report["error"]["run_id"] = progress.run_id
     return report
 
 

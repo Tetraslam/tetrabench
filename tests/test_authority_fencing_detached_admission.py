@@ -203,6 +203,17 @@ class _Recovery:
         )
 
 
+class _Children:
+    def __init__(self, sweeps: tuple[tuple[str, ...], ...] = ((), ())) -> None:
+        self.sweeps = list(sweeps)
+        self.calls = 0
+
+    def sweep(self, run_id: str) -> Any:
+        self.calls += 1
+        remaining = self.sweeps.pop(0) if self.sweeps else ()
+        return SimpleNamespace(run_id=run_id, remaining_child_ids=remaining)
+
+
 def _services(
     driver: Any,
     *,
@@ -213,8 +224,10 @@ def _services(
         "running", "succeeded", "failed", "expired", "inspection_failed"
     ] = "succeeded",
     recovery: _Recovery | None = None,
+    cancellation_result: Any | None = None,
+    children: _Children | None = None,
 ) -> tuple[Any, _Cancellation]:
-    cancellation = _Cancellation()
+    cancellation = _Cancellation(cancellation_result)
     result = _remote_result(reward).model_copy(update={"run_id": run_id})
     services = driver.RuntimeServices(
         submission=_Submission(),
@@ -222,6 +235,7 @@ def _services(
         controller=_Controller(controller_state),
         cancellation=cancellation,
         recovery=recovery or _Recovery(),
+        children=children or _Children(),
     )
     return services, cancellation
 
@@ -449,6 +463,61 @@ def test_post_submit_error_does_not_claim_incomplete_cancellation() -> None:
     assert progress.cancellation_completed is False
 
 
+def test_failed_admission_gets_direct_cleanup_without_recovery() -> None:
+    driver = _load_driver("detached_admission_failed_cleanup")
+    children = _Children((("child-1",), (), ()))
+    cancellation_result = SimpleNamespace(
+        run_id="run-1",
+        state="failed",
+        controller_terminal_observed=True,
+        terminal_proof_observed=False,
+        cleanup_complete=False,
+    )
+    services, cancellation = _services(
+        driver,
+        remote_error=RuntimeError("failed"),
+        cancellation_result=cancellation_result,
+        children=children,
+    )
+    recovery_calls = 0
+
+    class RefusingRecovery:
+        def recover(self, _run_id: str) -> Any:
+            nonlocal recovery_calls
+            recovery_calls += 1
+            pytest.fail("failed admission cleanup must not spawn through recovery")
+
+    services = driver.RuntimeServices(
+        submission=services.submission,
+        remote=services.remote,
+        controller=services.controller,
+        cancellation=services.cancellation,
+        recovery=RefusingRecovery(),
+        children=children,
+    )
+    progress = driver.CaseProgress()
+    dependencies = driver.DriverDependencies(
+        monotonic=lambda: 1.0,
+        sleep=lambda _seconds: None,
+    )
+    with pytest.raises(RuntimeError, match="failed"):
+        driver._execute_case(
+            _prepared("run-1"),
+            services,
+            kind="gold-1",
+            expected_reward=1,
+            fixture_sha256="c" * 64,
+            deadline=2.0,
+            interval=1,
+            dependencies=dependencies,
+            progress=progress,
+        )
+    assert cancellation.run_ids == ["run-1"]
+    assert children.calls == 3
+    assert recovery_calls == 0
+    assert progress.cancellation_completed is True
+
+
 def test_post_submit_timeout_invokes_cancellation() -> None:
     driver = _load_driver("detached_admission_timeout_cancellation")
     cancellation = _Cancellation()
@@ -463,6 +532,7 @@ def test_post_submit_timeout_invokes_cancellation() -> None:
         controller=_Controller(),
         cancellation=cancellation,
         recovery=_Recovery(),
+        children=_Children(),
     )
     progress = driver.CaseProgress()
     clock = iter((0.0, 2.0))
@@ -530,6 +600,7 @@ def test_failed_report_is_bounded_and_omits_exception_content(
         "cancellation_attempted": True,
         "cancellation_completed": True,
         "code": "operation_error",
+        "run_id": "authority-admission-111111111111-1-111111111111",
         "stage": "remote-result",
     }
 
