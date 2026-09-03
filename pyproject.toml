@@ -31,7 +31,9 @@ exclude = [
     "/benchmarks/tasks/systems-design/authority-fencing",
     "/questionnaire-meme.png",
     "/tests/test_authority_fencing_task.py",
+    "/tests/test_authority_fencing_detached_admission.py",
     "/tools/run_authority_fencing_admission.py",
+    "/tools/run_authority_fencing_detached_admission.py",
     "/tests/test_authority_fencing_calibration.py",
     "/tools/run_authority_fencing_calibration.py",
 ]

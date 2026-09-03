@@ -220,10 +220,10 @@ Wheels contain neither catalog nor source-only fixture files; source
 distributions retain the two prerequisite fixtures. The unadmitted
 `authority-fencing` candidate, its hidden verifier, mutants, gold solution,
 candidate-only admission tool, and candidate-only project test are absent from
-both wheel and source distribution. Detached Modal runs of E-064 and automatic
-catalog sealing remain unproven because the retained storage credentials are
-expired. The catalogs stay empty until detached proof and the remaining
-admission work pass.
+both wheel and source distribution. Retained storage and controller access pass
+a fresh source-only smoke, while candidate-specific detached proof and automatic
+catalog admission remain unproven. The catalogs stay empty until detached proof
+and the remaining admission work pass.
 
 ## Systems design through implementation
 

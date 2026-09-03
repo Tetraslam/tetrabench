@@ -1554,3 +1554,31 @@ Correct cumulative accounting is `$1.9375816` known OpenRouter cost plus `$5.014
 Provenance: PR 23 squash merge `70c07d7`; post-merge GitHub Actions run `33685915940`; GitHub review, comments, threads, and mergeability inspection. No provider call occurred.
 
 PR 23 passed Python 3.12 release parity and full-history secret scanning with no review feedback. It merged as `70c07d7`, and post-merge run `33685915940` passed both jobs. The repository is clean at that revision, exact-four proof remains absent, and further calibration remains budget-blocked at `$6.9521316` total cap exposure.
+
+## 2026-09-02T17:35:53-07:00: Retained cloud access and controller revalidation
+
+Provenance: 1Password Agents-vault item metadata; process-local use of its machine access key; authenticated Tigris CLI and S3 reads; Modal profile, Environment, Secret, App, and Volume inspection; current-source controller deployment; one source-only detached Harbor smoke; fresh authoritative result and cleanup inspection.
+
+Tigris browser OAuth and tetrabench automation are separate. Interactive CLI access uses OAuth. Automation uses the `Tigris Tetrabench Only` item in the 1Password `Agents` vault, fields `access key id` and `secret access key`; values remain absent from files, argv, logs, and this record. A process-local `doctor --online` read proved the machine key can access Single-region bucket `tetrabench-coordination-iad-20260829-04c2a8ed` and prefix `baseline/modal-v2` with safe admission topology.
+
+Modal profile `tetracorp` owns inactive Environment `tetrabench-baseline-baseline-8ba8496a`. That Environment, rather than the workspace default, scopes Secret `tetrabench-baseline-tigris`, deployed App `tetrabench-baseline`, and Volume `tetrabench-baseline-baseline-8ba8496a-controller`. Default-environment resource listings therefore do not establish their absence. Current `master` deployed successfully without replacing the retained Secret.
+
+Source-only run `smoke-20260902-resume-001` reached authoritative terminal success with reward `1`, one validated numeric sample, and 14 terminal-last artifacts. The Modal Secret's usage timestamp advanced, the Harbor App reported zero active tasks, and no cleanup attention remained. This revalidates the retained machine credential, controller deployment, nested Harbor execution, Volume path, and Tigris publication. It does not prove the candidate-specific detached admission gates.
+
+## 2026-09-02T17:51:30-07:00: Source-only detached authority-fencing admission driver
+
+Provenance: user-provided behavioral contract; local source inspection; provider-free fakes; temporary catalog preparation; package build inspection; focused Python 3.12 validation. No live provider, credential store, real catalog, Docker marker, commit, or proof output was used.
+
+The source-only driver requires explicit `--yes` before source preparation or provider construction, accepts one safe deployed-profile name, and uses one shared deadline of at most 30 minutes. It sequentially prepares three fresh one-task binary projects from verified candidate copies: two unchanged Oracle/gold cases expecting reward one, then one copy whose sole mutation is an executable reward-forgery `solution/solve.sh` expecting reward zero. Production submission, Modal controller, Tigris store, remote result, child observer, cancellation, and terminal-only recovery services remain the authority boundaries.
+
+Each accepted case requires successful immutable terminal proof, terminal admission, one exact binary `authority-fencing` sample, expected reward and pass count, the required controller/job/trial/verifier/artifact/workspace inventory classes, a terminal returned controller call, and terminal-only recovery with at least two sweeps, complete cleanup, and no successor. Post-submit errors and timeouts best-effort cancel with the same observer while retaining the original fixed failure class. Canonical evidence contains only bounded identifiers, counts, states, and digests; the existing fd-anchored writer creates optional mode-0600 proof only after all three cases pass.
+
+Twelve focused driver tests plus the package-exclusion test passed, and 64 existing non-Docker authority-fencing tests passed with three Docker tests deselected. Focused Ruff check and format check, ty, and `git diff --check` passed. The candidate-specific detached run remains `unproven`.
+
+## 2026-09-02T18:11:21-07:00: Detached-admission review correction and local validation
+
+Provenance: independent review against production submission, lifecycle, remote-result, and controller contracts; provider-free regressions; full local Python 3.12 CI/security/package parity. No live provider, credential, catalog, or proof output was invoked.
+
+The preceding detached-driver entry is narrowed by D-120. Admission now refuses a dirty checkout before fixture or provider construction, binds its imported proof helper, captures one private candidate snapshot for all three cases, and requires the complete source identity to remain unchanged through completion. Failure cleanup restores the production cancellation window and reports completion only for a matching final cancellation result with complete cleanup; a terminal result additionally passes terminal-only recovery and two-sweep child quiescence.
+
+Fourteen focused driver tests and 1,220 non-Docker tests passed, as did all 10 required Docker tests. Lock/sync, Ruff, format, ty, Bandit, actionlint, wheel/sdist build, isolated-wheel smoke, all-groups pip-audit, `git diff --check`, and redacted full-history Gitleaks passed. Candidate-specific detached execution remains `unproven` until this reviewed source is committed and the clean live sequence succeeds.
