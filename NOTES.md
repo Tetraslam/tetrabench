@@ -1600,3 +1600,11 @@ Provenance: clean committed and deployed D-121 source; retained Modal/Tigris pro
 The fresh first gold case reached terminal admission and successful immutable terminal proof with reward one, one exact binary sample, and 19 artifacts. The driver then rejected the valid inventory because its fake used `jobs/harbor-job/trials/<trial-name>/`; Harbor 0.22 writes each native trial directly at `jobs/harbor-job/<trial-name>/`. Failure handling retained the run ID, observed terminal authority, and completed terminal-only cleanup. Both Modal Apps report zero active tasks, and no proof was created.
 
 D-123 derives the exact trial root from the authoritative summary trial name and requires config, lock, result, verifier reward and diagnostics, artifact manifest, and collected workspace beneath that root. Seventy-eight focused driver, remote-result, and Harbor tests passed, including the real Docker fixture, with Ruff, format, ty, and `git diff --check`. The complete three-case sequence remains pending on a clean commit.
+
+## 2026-09-02T19:25:24-07:00: Second detached gold success and acknowledgement-window correction
+
+Provenance: clean committed D-123 source; retained Modal/Tigris profile; two fresh gold executions; authoritative remote result reread; terminal-only cleanup; Modal task inspection; provider-free polling regression and focused local validation. Full run identifiers remain private.
+
+Gold one passed every driver gate with reward one, 19 artifacts, terminal admission, a succeeded controller call, and two-sweep cleanup. Gold two independently reached the same authoritative reward-one terminal and cleanup state. Its first remote read observed the immutable terminal before the mutable admission acknowledgement became visible, so the driver rejected it before the reward-forgery audit. A fresh read showed the required terminal/terminal view, and both Modal Apps reported zero active tasks. No proof was created.
+
+D-124 continues bounded polling across a terminal-last/nonterminal-admission view, returns only after terminal admission is visible, and preserves immediate conflict rejection. Seventy-one focused driver, remote-result, and controller tests passed with Ruff, format, ty, and `git diff --check`. A fresh clean three-case sequence remains pending.

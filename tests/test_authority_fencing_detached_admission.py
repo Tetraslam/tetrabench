@@ -369,6 +369,33 @@ def test_summary_and_run_identity_validation_fail_closed() -> None:
         driver._validate_remote_result(result, 1, run_id="another-run")
 
 
+def test_remote_poll_waits_for_terminal_admission_acknowledgement() -> None:
+    driver = _load_driver("detached_admission_terminal_ack")
+    terminal = _remote_result(1)
+    values = iter(
+        (
+            terminal.model_copy(update={"admission_state": "running"}),
+            terminal,
+        )
+    )
+    sleeps: list[float] = []
+
+    class Remote:
+        def result(self, _run_id: str) -> RemoteResult:
+            return next(values)
+
+    result = driver._poll_remote(
+        Remote(),
+        "run-1",
+        deadline=2.0,
+        interval=1,
+        monotonic=lambda: 1.0,
+        sleep=sleeps.append,
+    )
+    assert result.admission_state == "terminal"
+    assert sleeps == [1]
+
+
 def test_controller_and_terminal_cleanup_are_required() -> None:
     driver = _load_driver("detached_admission_controller_cleanup")
     dependencies = driver.DriverDependencies(

@@ -412,7 +412,7 @@ def _poll_remote(
         if monotonic() >= deadline:
             raise DetachedAdmissionTimeout("remote terminal deadline elapsed")
         result = remote.result(run_id)
-        if result.state == "terminal":
+        if result.state == "terminal" and result.admission_state == "terminal":
             return result
         if result.state == "conflict":
             raise ValueError("authoritative remote result is conflicted")
