@@ -1618,3 +1618,9 @@ E-124 passed. Both independent gold cases reached successful terminal proof with
 Fresh-process result reads reproduced rewards one, one, and zero with no conflicts. Two additional run-scoped sweeps per case were empty, and both Modal Apps reported zero active tasks. The exclusive proof at `~/.local/share/opencode/tetrabench-research/authority-fencing-detached-admission-2026-09-02/proof-r4.json` is mode `0600`, 3,004 bytes, canonical JSON followed by one newline, and SHA-256 `2301feeffdadaa2bf2576ad7fec8b594bd90101bdb62dc7455822a93350fa4c8`.
 
 Detached candidate execution, separate verification, binary reward authority, repetition, forgery resistance, and cleanup are complete. The checked-in catalog remains empty because exact-four calibration is still budget-blocked by `$5.01455` conservative unknown exposure.
+
+## 2026-09-02T19:57:55-07:00: PR 25 status-consistency correction
+
+Provenance: valid Codex review finding on PR 25 and a current-state search across the plan and benchmark documentation.
+
+The candidate working record and benchmark implementation table still repeated pre-E-124 claims that detached execution, both repetitions, and the audit were unproven. They now mark those gates complete and name exact-four calibration plus budget completion as the remaining catalog blockers. P7-01 through P7-04 and the final task-catalog summary now agree with resolved U-012/U-013 and E-124. Historical notes and evidence rows retain the state they recorded at their creation.

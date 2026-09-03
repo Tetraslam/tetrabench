@@ -663,7 +663,7 @@ most 8 distinct fault schedules.
 
 | Candidate | Status |
 | --- | --- |
-| `systems-design/authority-fencing` | Local candidate implemented under `benchmarks/tasks/`; intentionally unlisted and excluded from wheel/sdist. The clean local proof passed all 17 gold/no-op/mutant/exploit matrix entries and exactly three ordered unretried production CLI runs. Local gold repetition, no-op, mutant, and exploit gates are passed. Two detached repetitions, the detached audit, two-profile calibration, budget completion, and catalog admission remain `unproven`. |
+| `systems-design/authority-fencing` | Local candidate implemented under `benchmarks/tasks/`; intentionally unlisted and excluded from wheel/sdist. The clean local proof passed all 17 gold/no-op/mutant/exploit matrix entries and exactly three ordered unretried production CLI runs. The detached proof passed two gold runs and one reward-forgery audit with terminal authority and cleanup. Two-profile calibration, budget completion, and catalog admission remain `unproven`. |
 | Remaining v1 candidates | Absent. |
 
 1. Run the locally proven E-064 separate-verifier and forge-sidecar prototype in
