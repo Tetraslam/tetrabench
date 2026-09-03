@@ -87,7 +87,7 @@ final event kind, and bounded ATIF shape. A future exception retains only its
 class and bounded native structure. Positive request-count checks cannot mask this evidence. Raw streams,
 paths, exception messages, prompts, model content, logs, and tool output are
 excluded.
-Before any attempt, the runner divides `$25` minus prior known cost and prior
+Before any attempt, the runner divides `$50` minus prior known cost and prior
 unknown exposure into four deterministic clean-run allocations, or two in debug
 mode. The allocations
 sum exactly to the available budget, each must cover one complete worst-case
@@ -154,7 +154,7 @@ Authorization.
 Cleanup reconciles exact random names and labels regardless of create-call
 outcomes, reaps the attach client, and proves no active authority or owned
 resource remains. A dead parent may leave an inert network; the next startup's
-exact-label sweep removes it. No host port is published. The shared `$25` cap can
+exact-label sweep removes it. No host port is published. The shared `$50` cap can
 be seeded with explicit prior known cost and prior unknown exposure. They remain
 separate in evidence and both reduce available budget. Provider evidence
 reconciled seventeen earlier OpenRouter generations at `$0.0166085`, `$0.0165085`,
@@ -167,9 +167,9 @@ add `$0.5479435`, sixteen retry 17 generations add `$0.2259166`, and two retry
 `$0.336685`; its incomplete generation retains `$4.05369` as unknown because no
 finish reason establishes final billing. The earlier LiteLLM reservation also
 remains `$0.96086` unknown. Combined cap consumption is `$1.9375816` known plus
-`$5.01455` unknown, or `$6.9521316` total. Four-way allocation would be
-`$4.5119671`, below the `$5.49288` worst-case reservation, so another clean proof
-cannot run under the current `$25` cap.
+`$5.01455` conservatively retained, or `$6.9521316` total. Under the user-
+authorized `$50` cap, four-way allocation is `$10.7619671`, above the `$5.49288`
+worst-case reservation, so the clean proof can run.
 Debug mode defaults prior exposure to zero and also supports
 `--debug-deny-upstream`. It requires one attempt per profile and forbids proof
 output. After normal authenticated pricing, each broker accepts exactly six
@@ -216,7 +216,7 @@ fake-backed tests cover its terminal, artifact, controller, cleanup,
 cancellation, redaction, private-output, and stop-on-failure gates. The complete
 live sequence passed with rewards `1`, `1`, and `0`, terminal authority, native
 inventories, and child cleanup. The real catalog stays empty because exact-four
-model calibration remains budget-blocked.
+model calibration remains pending.
 
 Explicit detached-controller recovery is locally and live verified. It refuses
 running or inspection-unknown owners and cancellation admission states.

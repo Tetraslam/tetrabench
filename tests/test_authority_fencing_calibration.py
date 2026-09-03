@@ -3569,13 +3569,13 @@ def test_stream_timeout_retains_unknown_and_never_exceeds_attempt_deadline() -> 
 
 def test_cost_cap_and_exact_reservations_are_atomic() -> None:
     ledger = calibration.SpendLedger()
-    first = ledger.reserve(Decimal("20"))
-    ledger.settle(first, Decimal("20"))
-    second = ledger.reserve(Decimal("5"))
+    first = ledger.reserve(Decimal("40"))
+    ledger.settle(first, Decimal("40"))
+    second = ledger.reserve(Decimal("10"))
     with pytest.raises(RuntimeError, match="remaining budget"):
         ledger.reserve(Decimal("0.01"))
-    ledger.settle(second, Decimal("5"))
-    assert ledger.cost == Decimal("25")
+    ledger.settle(second, Decimal("10"))
+    assert ledger.cost == Decimal("50")
     assert ledger.reserved == 0
 
 
@@ -3584,21 +3584,21 @@ def test_prior_unknown_exposure_consumes_cap_without_becoming_cost_or_attempt() 
     assert ledger.prior_unknown_exposure == Decimal("0.96086")
     assert ledger.cost == 0
     with pytest.raises(RuntimeError, match="remaining budget"):
-        ledger.reserve(Decimal("24.03915"))
-    reservation = ledger.reserve(Decimal("24.03914"))
+        ledger.reserve(Decimal("49.03915"))
+    reservation = ledger.reserve(Decimal("49.03914"))
     ledger.release_unforwarded(reservation)
     assert ledger.cost == 0
     assert ledger.reserved == 0
 
 
 def test_four_worst_case_reservations_plus_recorded_prior_fit_shared_cap() -> None:
-    prior = Decimal("2.280708")
+    prior = Decimal("6.9521316")
     worst = calibration._reservation_for_body(b"x" * calibration.MAX_BODY_BYTES)
     assert calibration.MAX_BODY_BYTES == 192 << 10
     assert calibration.MAX_OUTPUT_TOKENS == 65536
     assert worst == Decimal("5.49288")
     assert prior + 4 * worst <= calibration.MAX_TOTAL_COST
-    assert prior + 5 * worst > calibration.MAX_TOTAL_COST
+    assert (calibration.MAX_TOTAL_COST - prior) / 4 == Decimal("10.7619671")
 
 
 @pytest.mark.parametrize("attempts_per_profile", [1, 2])
@@ -3646,7 +3646,7 @@ def test_arbitrary_settlement_cannot_exceed_its_reservation_or_cap() -> None:
     ledger = calibration.SpendLedger()
     reservation = ledger.reserve(Decimal("1"))
     with pytest.raises(RuntimeError, match="exceeded exact reservation"):
-        ledger.settle(reservation, Decimal("25"))
+        ledger.settle(reservation, Decimal("50"))
     assert ledger.cost == 0
     assert ledger.reserved == 0
     assert ledger.fatal == "authoritative cost exceeded exact reservation"
@@ -3673,7 +3673,7 @@ def test_two_concurrent_reservations_cannot_oversubscribe() -> None:
     def reserve() -> None:
         barrier.wait()
         try:
-            outcomes.append(ledger.reserve(Decimal("13")))
+            outcomes.append(ledger.reserve(Decimal("26")))
         except BaseException as error:
             outcomes.append(error)
 
@@ -3685,7 +3685,7 @@ def test_two_concurrent_reservations_cannot_oversubscribe() -> None:
         thread.join(timeout=2)
     assert sum(isinstance(item, calibration.Reservation) for item in outcomes) == 1
     assert sum(isinstance(item, RuntimeError) for item in outcomes) == 1
-    assert ledger.reserved == Decimal("13")
+    assert ledger.reserved == Decimal("26")
 
 
 def test_reservation_failure_does_not_commit_endpoint_or_request_count() -> None:
@@ -3723,7 +3723,7 @@ def test_concurrent_begin_request_commits_only_the_reserved_winner() -> None:
     def begin() -> None:
         barrier.wait()
         try:
-            outcomes.append(state.begin_request("/v1/responses", Decimal("13")))
+            outcomes.append(state.begin_request("/v1/responses", Decimal("26")))
         except BaseException as error:
             outcomes.append(error)
 
@@ -3738,7 +3738,7 @@ def test_concurrent_begin_request_commits_only_the_reserved_winner() -> None:
     assert sum(isinstance(item, RuntimeError) for item in outcomes) == 1
     assert state.locked_endpoint == "/v1/responses"
     assert state.request_count == 1
-    assert ledger.reserved == Decimal("13")
+    assert ledger.reserved == Decimal("26")
     state.semaphore.release()
 
 
@@ -4286,16 +4286,16 @@ def test_attach_timeout_is_terminated_and_reaped(
         ["--debug", "--debug-deny-upstream", "--attempts-per-profile", "2"],
         ["--debug", "--prior-unknown-exposure-usd", "-1"],
         ["--debug", "--prior-unknown-exposure-usd", "NaN"],
-        ["--debug", "--prior-unknown-exposure-usd", "25.01"],
+        ["--debug", "--prior-unknown-exposure-usd", "50.01"],
         ["--debug", "--prior-known-cost-usd", "-1"],
         ["--debug", "--prior-known-cost-usd", "NaN"],
-        ["--debug", "--prior-known-cost-usd", "25.01"],
+        ["--debug", "--prior-known-cost-usd", "50.01"],
         [
             "--debug",
             "--prior-known-cost-usd",
             "0.01",
             "--prior-unknown-exposure-usd",
-            "25",
+            "50",
         ],
     ],
 )

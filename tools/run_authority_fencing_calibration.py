@@ -137,7 +137,7 @@ LEGACY_LITELLM_KEY_ENV = "TETRABENCH_CALIBRATION_GATEWAY_KEY"
 PARENT_KEY_ENV = LEGACY_LITELLM_KEY_ENV
 TASK_ID = "systems-design/authority-fencing"
 MAX_ATTEMPT_SECONDS = 35 * 60
-MAX_TOTAL_COST = Decimal("25")
+MAX_TOTAL_COST = Decimal("50")
 MAX_INPUT_OR_CACHE_COST_PER_TOKEN = Decimal("10") / Decimal(1_000_000)
 MAX_OUTPUT_COST_PER_TOKEN = Decimal("50") / Decimal(1_000_000)
 RESERVATION_SAFETY_MARGIN = Decimal("0.25")
@@ -5351,7 +5351,7 @@ def _nonnegative_usd(value: str) -> Decimal:
         ) from error
     if not parsed.is_finite() or parsed < 0 or parsed > MAX_TOTAL_COST:
         raise argparse.ArgumentTypeError(
-            "must be a finite nonnegative decimal at most 25"
+            f"must be a finite nonnegative decimal at most {MAX_TOTAL_COST}"
         )
     return parsed
 
@@ -5375,7 +5375,9 @@ def parse_arguments(argv: list[str]) -> argparse.Namespace:
     )
     args = parser.parse_args(argv)
     if args.prior_known_cost_usd + args.prior_unknown_exposure_usd > MAX_TOTAL_COST:
-        parser.error("combined prior cost and exposure must be at most 25")
+        parser.error(
+            f"combined prior cost and exposure must be at most {MAX_TOTAL_COST}"
+        )
     expected_attempts = 1 if args.debug else 2
     if args.attempts_per_profile is None:
         args.attempts_per_profile = expected_attempts

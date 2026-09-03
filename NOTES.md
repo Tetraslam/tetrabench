@@ -1624,3 +1624,9 @@ Detached candidate execution, separate verification, binary reward authority, re
 Provenance: valid Codex review finding on PR 25 and a current-state search across the plan and benchmark documentation.
 
 The candidate working record and benchmark implementation table still repeated pre-E-124 claims that detached execution, both repetitions, and the audit were unproven. They now mark those gates complete and name exact-four calibration plus budget completion as the remaining catalog blockers. P7-01 through P7-04 and the final task-catalog summary now agree with resolved U-012/U-013 and E-124. Historical notes and evidence rows retain the state they recorded at their creation.
+
+## 2026-09-02T21:12:50-07:00: User-authorized calibration cap raised to `$50`
+
+Provenance: explicit user instruction after reviewing the prior internal `$25` policy; local source and arithmetic inspection. No model or provider call occurred.
+
+D-125 changes only the total calibration authorization from `$25` to `$50`. The exact four-run shape, two fixed profiles, 35-minute attempt limit, request/body/output bounds, pricing ceilings, `$5.49288` worst-case request reservation, authoritative settlement, and cleanup requirements remain unchanged. Current prior accounting of `$1.9375816` known cost plus `$5.01455` conservatively retained leaves `$43.0478684`, divided into four exact `$10.7619671` allocations. Historical `$25` decisions and evidence remain unchanged as records of the policy in force when those runs occurred.
