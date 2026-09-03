@@ -384,10 +384,10 @@ peers and unrelated host containers are not containment evidence. Docker's
 reported IPAM gateway and `Internal` value are recorded as topology only;
 authenticated pricing and later forwarding prove actual egress. This transport
 requires no host reachability or firewall change. No real calibration has
-completed, so difficulty calibration remains unproven. Current accounting is
-`$1.9375816` known cost plus `$5.01455` conservatively retained against the
-user-authorized `$50` cap. Four-way allocation is `$10.7619671`, above the
-`$5.49288` worst-case request reservation, so the clean proof can run. A
+completed, so difficulty calibration remains unproven. Current accounting after
+retry 20 is `$4.7552035` known cost plus `$5.01455` conservatively retained
+against the user-authorized `$50` cap. Four-way allocation is `$10.057561625`,
+above the `$5.49288` worst-case request reservation. A
 separate direct OpenRouter contract probe cost `$0.00007`; it is not benchmark
 calibration. `--debug-deny-upstream` is
 a non-admissible one-attempt-per-profile diagnostic with no proof output. It

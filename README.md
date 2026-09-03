@@ -166,10 +166,11 @@ add `$0.5479435`, sixteen retry 17 generations add `$0.2259166`, and two retry
 18 generations add `$0.0551320`. Twenty-five settled retry 19 generations add
 `$0.336685`; its incomplete generation retains `$4.05369` as unknown because no
 finish reason establishes final billing. The earlier LiteLLM reservation also
-remains `$0.96086` unknown. Combined cap consumption is `$1.9375816` known plus
-`$5.01455` conservatively retained, or `$6.9521316` total. Under the user-
-authorized `$50` cap, four-way allocation is `$10.7619671`, above the `$5.49288`
-worst-case reservation, so the clean proof can run.
+remains `$0.96086` unknown. Retry 20 added `$2.8176219` settled cost and no new
+unknown exposure before an undifferentiated native-validation failure. Combined
+cap consumption is `$4.7552035` known plus `$5.01455` conservatively retained,
+or `$9.7697535` total. Under the user-authorized `$50` cap, four-way allocation
+is `$10.057561625`, above the `$5.49288` worst-case reservation.
 Debug mode defaults prior exposure to zero and also supports
 `--debug-deny-upstream`. It requires one attempt per profile and forbids proof
 output. After normal authenticated pricing, each broker accepts exactly six

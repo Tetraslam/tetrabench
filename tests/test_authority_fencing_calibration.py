@@ -5010,6 +5010,62 @@ def test_each_preactivation_phase_retains_only_safe_stage_authority(
 
 
 @pytest.mark.parametrize(
+    ("message", "cause_class"),
+    [
+        (
+            "native Harbor production config mismatch",
+            "NativeProductionConfigMismatch",
+        ),
+        ("native Harbor job outcome mismatch", "NativeJobOutcomeMismatch"),
+        (
+            "native Harbor trial directory count mismatch",
+            "NativeTrialDirectoryMismatch",
+        ),
+        ("native Harbor trial evidence mismatch", "NativeTrialEvidenceMismatch"),
+        ("native Harbor agent identity mismatch", "NativeAgentIdentityMismatch"),
+        (
+            "native artifact manifest provenance mismatch",
+            "NativeArtifactManifestMismatch",
+        ),
+        (
+            "production CLI binary reward summary mismatch",
+            "NativeRewardSummaryMismatch",
+        ),
+        (
+            "production OpenCode run omitted its ATIF trajectory",
+            "NativeTrajectoryMissing",
+        ),
+        ("private model output /private/path", "NativeSnapshotValidationError"),
+    ],
+)
+def test_native_record_failures_retain_only_closed_boundary(
+    message: str, cause_class: str
+) -> None:
+    attempt = calibration._started_attempt(
+        ordinal=1,
+        profile="alternate",
+        model_group="anthropic/claude-sonnet-5",
+    )
+
+    with pytest.raises(calibration.CalibrationStageError) as caught:
+        calibration._run_phase(
+            attempt,
+            "native_validation",
+            lambda: calibration._raise_classified_native_record_error(
+                ValueError(message)
+            ),
+        )
+
+    assert caught.value.evidence == {
+        "cause_class": cause_class,
+        "failed_stage": "native_validation",
+    }
+    retained = json.dumps(caught.value.evidence)
+    assert "private model output" not in retained
+    assert "/private/path" not in retained
+
+
+@pytest.mark.parametrize(
     ("returncode", "kind", "cause_class"),
     [
         (0, "successful_early_exit", "EarlyCommandSuccess"),
