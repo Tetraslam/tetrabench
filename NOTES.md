@@ -1676,3 +1676,11 @@ Cumulative calibration accounting is `$6.0126436` known plus `$17.807213975` con
 Provenance: final source review; full local Python 3.12 and real-Docker suites; isolated wheel installation; canonical init/doctor/validate/plan outputs; package build; dependency and security checks; external link checks; pinned Vale AI-tells pass over the public README.
 
 The release candidate passes 1,254 non-Docker tests and all 11 required Docker tests. A separately installed wheel creates a starter project, passes offline doctor, validates the sealed starter fixture, and resolves a runnable one-trial plan. Ruff, formatting, ty, Bandit, actionlint, `uv lock --check`, wheel/sdist build, pip-audit, `git diff --check`, and the full-history Gitleaks scan pass. The README links resolve, and Vale reports zero errors; its three warnings are rejected as false positives for the lowercase project name, the proper noun Modal, and a nonrepetitive imperative section. Final independent review found no actionable issue.
+
+## 2026-09-03T02:42:39-07:00: PR 26 review corrections
+
+Provenance: two valid Codex findings on PR 26; focused and complete non-Docker tests; Ruff, formatting, ty, Bandit, diff checks, and the pinned Vale ruleset.
+
+`task add` now rejects any configured catalog or sibling writer lock located inside the fixture being added. This check runs before initial fixture validation or lock creation, so catalog replacement cannot mutate bytes inside the just-validated task tree. A regression places the catalog beneath the starter fixture and proves rejection without creating the lock or changing the catalog. Twenty-four focused authoring tests and all 1,255 non-Docker tests pass.
+
+The concise README now lists `sections`, `controller info`, and `runs` and links `docs/cli-reference.md`. The reference restores current exit codes, error redaction, provider-read boundaries, local evidence retention, detached authority, cancellation/recovery behavior, and artifact limits without moving those details ahead of the quickstart. Vale reports zero errors; remaining experimental warnings do not identify a factual or structural problem.

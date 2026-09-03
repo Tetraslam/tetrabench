@@ -411,6 +411,18 @@ def _catalog_path(root: Path, configured_path: str) -> Path:
     return current
 
 
+def _reject_catalog_fixture_overlap(
+    root: Path, catalog_path: Path, fixture: str
+) -> None:
+    fixture_path = root / fixture
+    lock_path = catalog_path.with_name(f".{catalog_path.name}.lock")
+    if any(
+        fixture_path == path or fixture_path in path.parents
+        for path in (catalog_path, lock_path)
+    ):
+        raise ValueError("catalog and its lock must be outside the task fixture")
+
+
 def _atomic_append_catalog(
     root: Path,
     catalog_path: Path,
@@ -509,6 +521,9 @@ def add_task(root: Path, section: str, task_id: str, fixture: str) -> FixtureVal
     section_name = _validated_section(section)
     validated_id = _validated_task_id(task_id)
     logical_path = validate_logical_path(fixture)
+    config = load_project_config(root)
+    catalog_path = _catalog_path(root, config.catalog_path)
+    _reject_catalog_fixture_overlap(root, catalog_path, logical_path)
     validated_snapshot = _validate_fixture_snapshot(root, logical_path)
     validation = FixtureValidation(
         fixture=logical_path,
@@ -517,8 +532,6 @@ def add_task(root: Path, section: str, task_id: str, fixture: str) -> FixtureVal
             item.content.size for item in validated_snapshot.manifest.files
         ),
     )
-    config = load_project_config(root)
-    catalog_path = _catalog_path(root, config.catalog_path)
     _atomic_append_catalog(
         root,
         catalog_path,

@@ -93,22 +93,29 @@ stricter rules used by tetrabench's own benchmark catalog.
 | Command | Purpose | Side effects |
 | --- | --- | --- |
 | `init` | Create a runnable local project | New directory |
+| `sections` | List catalog sections and task counts | None |
 | `task new` | Create an unlisted Harbor task | New task directory |
 | `task validate` | Seal and validate one fixture | None |
 | `task add` | Add a validated task to the project catalog | Atomic catalog update |
 | `doctor` | Validate config, catalog, context, and optional storage reads | None |
 | `plan` | Resolve a canonical secret-free execution plan | None |
 | `run` | Run selected tasks through local Docker | New private output directory |
+| `controller info` | Show the selected Modal deployment contract | None |
 | `controller deploy` | Deploy the configured Modal controller | Cloud mutation, confirmation required |
 | `submit` | Publish a request and spawn detached execution | Cloud mutation |
 | `status` | Combine durable and provider execution evidence | Provider reads |
 | `result` | Read authoritative remote state without a local receipt | Storage reads |
+| `runs` | List local receipts or validated remote run records | Local or provider reads |
 | `cancel` | Record cancellation intent and clean owned children | Cloud mutation, confirmation required |
 | `recover` | Clean a stopped owner and prepare a successor | Cloud mutation, confirmation required |
 | `artifacts pull` | Materialize one successful terminal inventory | New private output directory |
 
 Add `--json` for canonical machine-readable output. The `--json` forms of
 `controller deploy`, `cancel`, and `recover` require `--yes`.
+
+See the [CLI reference](docs/cli-reference.md) for exit codes, retained failure
+evidence, provider-read boundaries, cancellation and recovery behavior, and
+artifact materialization limits.
 
 ## Project configuration
 

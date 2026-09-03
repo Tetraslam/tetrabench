@@ -514,6 +514,42 @@ def test_add_replace_failure_keeps_original_catalog(
     ]
 
 
+def test_add_rejects_catalog_inside_fixture_before_lock_creation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    project = _init(tmp_path)
+    fixture = "benchmarks/tasks/systems-design/hello-tetrabench"
+    fixture_path = project / fixture
+    nested_catalog = fixture_path / "catalog.toml"
+    nested_catalog.write_bytes((project / "benchmarks/catalog.toml").read_bytes())
+    (project / "tetrabench.toml").write_text(
+        f'''schema_version = 1
+catalog_path = "{fixture}/catalog.toml"
+
+[controller]
+kind = "local"
+
+[execution]
+kind = "docker"
+''',
+        encoding="utf-8",
+    )
+    monkeypatch.chdir(project)
+
+    result = runner.invoke(
+        app,
+        ["task", "add", "systems-design", "nested", fixture, "--json"],
+    )
+
+    assert result.exit_code == 2
+    assert "outside the task fixture" in str(_payload(result.stderr)["error"])
+    assert not (fixture_path / ".catalog.toml.lock").exists()
+    catalog = load_catalog(project, f"{fixture}/catalog.toml")
+    assert [task.id for task in catalog.sections.systems_design.tasks] == [
+        "hello-tetrabench"
+    ]
+
+
 @pytest.mark.parametrize(
     ("relative_path", "replacement", "swap"),
     [
