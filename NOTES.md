@@ -1554,3 +1554,73 @@ Correct cumulative accounting is `$1.9375816` known OpenRouter cost plus `$5.014
 Provenance: PR 23 squash merge `70c07d7`; post-merge GitHub Actions run `33685915940`; GitHub review, comments, threads, and mergeability inspection. No provider call occurred.
 
 PR 23 passed Python 3.12 release parity and full-history secret scanning with no review feedback. It merged as `70c07d7`, and post-merge run `33685915940` passed both jobs. The repository is clean at that revision, exact-four proof remains absent, and further calibration remains budget-blocked at `$6.9521316` total cap exposure.
+
+## 2026-09-02T17:35:53-07:00: Retained cloud access and controller revalidation
+
+Provenance: 1Password Agents-vault item metadata; process-local use of its machine access key; authenticated Tigris CLI and S3 reads; Modal profile, Environment, Secret, App, and Volume inspection; current-source controller deployment; one source-only detached Harbor smoke; fresh authoritative result and cleanup inspection.
+
+Tigris browser OAuth and tetrabench automation are separate. Interactive CLI access uses OAuth. Automation uses the `Tigris Tetrabench Only` item in the 1Password `Agents` vault, fields `access key id` and `secret access key`; values remain absent from files, argv, logs, and this record. A process-local `doctor --online` read proved the machine key can access Single-region bucket `tetrabench-coordination-iad-20260829-04c2a8ed` and prefix `baseline/modal-v2` with safe admission topology.
+
+Modal profile `tetracorp` owns inactive Environment `tetrabench-baseline-baseline-8ba8496a`. That Environment, rather than the workspace default, scopes Secret `tetrabench-baseline-tigris`, deployed App `tetrabench-baseline`, and Volume `tetrabench-baseline-baseline-8ba8496a-controller`. Default-environment resource listings therefore do not establish their absence. Current `master` deployed successfully without replacing the retained Secret.
+
+Source-only run `smoke-20260902-resume-001` reached authoritative terminal success with reward `1`, one validated numeric sample, and 14 terminal-last artifacts. The Modal Secret's usage timestamp advanced, the Harbor App reported zero active tasks, and no cleanup attention remained. This revalidates the retained machine credential, controller deployment, nested Harbor execution, Volume path, and Tigris publication. It does not prove the candidate-specific detached admission gates.
+
+## 2026-09-02T17:51:30-07:00: Source-only detached authority-fencing admission driver
+
+Provenance: user-provided behavioral contract; local source inspection; provider-free fakes; temporary catalog preparation; package build inspection; focused Python 3.12 validation. No live provider, credential store, real catalog, Docker marker, commit, or proof output was used.
+
+The source-only driver requires explicit `--yes` before source preparation or provider construction, accepts one safe deployed-profile name, and uses one shared deadline of at most 30 minutes. It sequentially prepares three fresh one-task binary projects from verified candidate copies: two unchanged Oracle/gold cases expecting reward one, then one copy whose sole mutation is an executable reward-forgery `solution/solve.sh` expecting reward zero. Production submission, Modal controller, Tigris store, remote result, child observer, cancellation, and terminal-only recovery services remain the authority boundaries.
+
+Each accepted case requires successful immutable terminal proof, terminal admission, one exact binary `authority-fencing` sample, expected reward and pass count, the required controller/job/trial/verifier/artifact/workspace inventory classes, a terminal returned controller call, and terminal-only recovery with at least two sweeps, complete cleanup, and no successor. Post-submit errors and timeouts best-effort cancel with the same observer while retaining the original fixed failure class. Canonical evidence contains only bounded identifiers, counts, states, and digests; the existing fd-anchored writer creates optional mode-0600 proof only after all three cases pass.
+
+Twelve focused driver tests plus the package-exclusion test passed, and 64 existing non-Docker authority-fencing tests passed with three Docker tests deselected. Focused Ruff check and format check, ty, and `git diff --check` passed. The candidate-specific detached run remains `unproven`.
+
+## 2026-09-02T18:11:21-07:00: Detached-admission review correction and local validation
+
+Provenance: independent review against production submission, lifecycle, remote-result, and controller contracts; provider-free regressions; full local Python 3.12 CI/security/package parity. No live provider, credential, catalog, or proof output was invoked.
+
+The preceding detached-driver entry is narrowed by D-120. Admission now refuses a dirty checkout before fixture or provider construction, binds its imported proof helper, captures one private candidate snapshot for all three cases, and requires the complete source identity to remain unchanged through completion. Failure cleanup restores the production cancellation window and reports completion only for a matching final cancellation result with complete cleanup; a terminal result additionally passes terminal-only recovery and two-sweep child quiescence.
+
+Fourteen focused driver tests and 1,220 non-Docker tests passed, as did all 10 required Docker tests. Lock/sync, Ruff, format, ty, Bandit, actionlint, wheel/sdist build, isolated-wheel smoke, all-groups pip-audit, `git diff --check`, and redacted full-history Gitleaks passed. Candidate-specific detached execution remains `unproven` until this reviewed source is committed and the clean live sequence succeeds.
+
+## 2026-09-02T19:03:01-07:00: First detached gold failure and content-object correction
+
+Provenance: clean committed detached driver; retained Modal/Tigris profile; controller and Harbor logs; remote result and admission inspection; downloaded named-Volume attempt; authenticated S3 HEAD inspection; two direct run-scoped child sweeps; local production fix and regressions. Credential values and full run identifiers remain absent from this record.
+
+The first gold case completed native Harbor with reward one, then the controller failed during artifact publication with `S3ConflictError`. Digest-addressed candidate files had already been sealed as context using `application/octet-stream`; artifact publication reused the same keys while requiring path-derived types such as `text/x-python`. The key contract is digest-only, so one object cannot make path-specific transport metadata authoritative. No terminal or proof was created. The controller and Harbor Apps had zero active tasks, and two direct child sweeps were empty.
+
+D-121 makes new content blobs use canonical `application/octet-stream` transport metadata while preserving logical media type in each request or artifact descriptor. Content reuse and reads accept retained legacy transport types only after the existing digest, size, SHA-256 metadata, and service-checksum-where-applicable checks pass. D-122 adds the bounded run ID to failed admission evidence and directly proves child quiescence when cancellation observes a failed terminal controller, without invoking recovery and spawning a successor.
+
+One hundred fifty-three focused S3/controller/driver tests passed. The full 1,221-test non-Docker suite and all 10 required Docker tests passed, with lock/sync, Ruff, format, ty, Bandit, actionlint, wheel/sdist build, all-groups pip-audit, and `git diff --check`. A controller redeploy and fresh three-case retry remain pending.
+
+## 2026-09-02T19:15:24-07:00: Detached gold success and native trial-path correction
+
+Provenance: clean committed and deployed D-121 source; retained Modal/Tigris profile; fresh authoritative remote result; native Harbor 0.22 artifact inventory; terminal-only cancellation/recovery cleanup; provider-free regression and focused local validation. Full run identifiers remain private.
+
+The fresh first gold case reached terminal admission and successful immutable terminal proof with reward one, one exact binary sample, and 19 artifacts. The driver then rejected the valid inventory because its fake used `jobs/harbor-job/trials/<trial-name>/`; Harbor 0.22 writes each native trial directly at `jobs/harbor-job/<trial-name>/`. Failure handling retained the run ID, observed terminal authority, and completed terminal-only cleanup. Both Modal Apps report zero active tasks, and no proof was created.
+
+D-123 derives the exact trial root from the authoritative summary trial name and requires config, lock, result, verifier reward and diagnostics, artifact manifest, and collected workspace beneath that root. Seventy-eight focused driver, remote-result, and Harbor tests passed, including the real Docker fixture, with Ruff, format, ty, and `git diff --check`. The complete three-case sequence remains pending on a clean commit.
+
+## 2026-09-02T19:25:24-07:00: Second detached gold success and acknowledgement-window correction
+
+Provenance: clean committed D-123 source; retained Modal/Tigris profile; two fresh gold executions; authoritative remote result reread; terminal-only cleanup; Modal task inspection; provider-free polling regression and focused local validation. Full run identifiers remain private.
+
+Gold one passed every driver gate with reward one, 19 artifacts, terminal admission, a succeeded controller call, and two-sweep cleanup. Gold two independently reached the same authoritative reward-one terminal and cleanup state. Its first remote read observed the immutable terminal before the mutable admission acknowledgement became visible, so the driver rejected it before the reward-forgery audit. A fresh read showed the required terminal/terminal view, and both Modal Apps reported zero active tasks. No proof was created.
+
+D-124 continues bounded polling across a terminal-last/nonterminal-admission view, returns only after terminal admission is visible, and preserves immediate conflict rejection. Seventy-one focused driver, remote-result, and controller tests passed with Ruff, format, ty, and `git diff --check`. A fresh clean three-case sequence remains pending.
+
+## 2026-09-02T19:41:59-07:00: Complete detached authority-fencing admission
+
+Provenance: clean commit `da1fbb2`; retained Modal/Tigris profile; source-only detached admission driver; three fresh projects from one private candidate snapshot; fresh-process remote rereads; independent run-scoped child sweeps; Modal App inspection; retained private proof validation. Full run, call, attempt, and terminal identifiers remain private.
+
+E-124 passed. Both independent gold cases reached successful terminal proof with exact binary reward one, 19 artifacts, terminal admission, succeeded controller calls, and two-sweep cleanup. The solution-only reward-forgery audit reached successful terminal proof with exact binary reward zero, 20 artifacts, terminal admission, a succeeded controller call, and two-sweep cleanup. Its copied fixture digest differs from the shared gold digest, while the source identity and deployed endpoint remained fixed. The forged reward did not control the clean verifier.
+
+Fresh-process result reads reproduced rewards one, one, and zero with no conflicts. Two additional run-scoped sweeps per case were empty, and both Modal Apps reported zero active tasks. The exclusive proof at `~/.local/share/opencode/tetrabench-research/authority-fencing-detached-admission-2026-09-02/proof-r4.json` is mode `0600`, 3,004 bytes, canonical JSON followed by one newline, and SHA-256 `2301feeffdadaa2bf2576ad7fec8b594bd90101bdb62dc7455822a93350fa4c8`.
+
+Detached candidate execution, separate verification, binary reward authority, repetition, forgery resistance, and cleanup are complete. The checked-in catalog remains empty because exact-four calibration is still budget-blocked by `$5.01455` conservative unknown exposure.
+
+## 2026-09-02T19:57:55-07:00: PR 25 status-consistency correction
+
+Provenance: valid Codex review finding on PR 25 and a current-state search across the plan and benchmark documentation.
+
+The candidate working record and benchmark implementation table still repeated pre-E-124 claims that detached execution, both repetitions, and the audit were unproven. They now mark those gates complete and name exact-four calibration plus budget completion as the remaining catalog blockers. P7-01 through P7-04 and the final task-catalog summary now agree with resolved U-012/U-013 and E-124. Historical notes and evidence rows retain the state they recorded at their creation.

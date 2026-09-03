@@ -220,10 +220,10 @@ Wheels contain neither catalog nor source-only fixture files; source
 distributions retain the two prerequisite fixtures. The unadmitted
 `authority-fencing` candidate, its hidden verifier, mutants, gold solution,
 candidate-only admission tool, and candidate-only project test are absent from
-both wheel and source distribution. Detached Modal runs of E-064 and automatic
-catalog sealing remain unproven because the retained storage credentials are
-expired. The catalogs stay empty until detached proof and the remaining
-admission work pass.
+both wheel and source distribution. The candidate-specific detached sequence
+passes two gold runs and one reward-forgery audit with terminal authority and
+cleanup. Automatic catalog admission remains blocked on exact-four model
+calibration, so the catalogs stay empty.
 
 ## Systems design through implementation
 
@@ -663,7 +663,7 @@ most 8 distinct fault schedules.
 
 | Candidate | Status |
 | --- | --- |
-| `systems-design/authority-fencing` | Local candidate implemented under `benchmarks/tasks/`; intentionally unlisted and excluded from wheel/sdist. The clean local proof passed all 17 gold/no-op/mutant/exploit matrix entries and exactly three ordered unretried production CLI runs. Local gold repetition, no-op, mutant, and exploit gates are passed. Two detached repetitions, the detached audit, two-profile calibration, budget completion, and catalog admission remain `unproven`. |
+| `systems-design/authority-fencing` | Local candidate implemented under `benchmarks/tasks/`; intentionally unlisted and excluded from wheel/sdist. The clean local proof passed all 17 gold/no-op/mutant/exploit matrix entries and exactly three ordered unretried production CLI runs. The detached proof passed two gold runs and one reward-forgery audit with terminal authority and cleanup. Two-profile calibration, budget completion, and catalog admission remain `unproven`. |
 | Remaining v1 candidates | Absent. |
 
 1. Run the locally proven E-064 separate-verifier and forge-sidecar prototype in

@@ -60,6 +60,7 @@ type StorageConfig = (
 
 _SHA256_METADATA_KEY = "sha256"
 _JSON_MEDIA_TYPE = "application/json"
+_CONTENT_MEDIA_TYPE = "application/octet-stream"
 _READ_CHUNK_SIZE = 1024 * 1024
 DEFAULT_MULTIPART_THRESHOLD = 64 * 1024 * 1024
 DEFAULT_MULTIPART_CHUNK_SIZE = 16 * 1024 * 1024
@@ -433,7 +434,8 @@ class S3Store:
             data,
             sha256=descriptor.sha256,
             size=descriptor.size,
-            media_type=descriptor.media_type,
+            media_type=_CONTENT_MEDIA_TYPE,
+            verify_existing_media_type=False,
         )
         return descriptor
 
@@ -488,7 +490,8 @@ class S3Store:
                 stream,
                 sha256=descriptor.sha256,
                 size=descriptor.size,
-                media_type=descriptor.media_type,
+                media_type=_CONTENT_MEDIA_TYPE,
+                verify_existing_media_type=False,
             )
         after_upload = os.fstat(stream.fileno())
         if _file_identity(after_hash) != _file_identity(after_upload):
@@ -504,7 +507,7 @@ class S3Store:
             descriptor.key,
             sha256=descriptor.sha256,
             size=descriptor.size,
-            media_type=descriptor.media_type,
+            media_type=None,
             exact_service_checksum=False,
             collect=False,
         )
@@ -518,7 +521,7 @@ class S3Store:
             descriptor.key,
             sha256=descriptor.sha256,
             size=descriptor.size,
-            media_type=descriptor.media_type,
+            media_type=None,
             max_size=descriptor.size,
             exact_service_checksum=False,
         )
@@ -535,7 +538,7 @@ class S3Store:
             descriptor.key,
             sha256=descriptor.sha256,
             size=descriptor.size,
-            media_type=descriptor.media_type,
+            media_type=None,
             exact_service_checksum=False,
             collect=False,
             destination_fd=fd,
@@ -855,7 +858,7 @@ class S3Store:
             descriptor.key,
             sha256=descriptor.sha256,
             size=descriptor.size,
-            media_type=descriptor.media_type,
+            media_type=None,
             exact_service_checksum=False,
         ):
             return
@@ -864,7 +867,7 @@ class S3Store:
             Bucket=self._bucket,
             Key=descriptor.key,
             ExtraArgs={
-                "ContentType": descriptor.media_type,
+                "ContentType": _CONTENT_MEDIA_TYPE,
                 "Metadata": {_SHA256_METADATA_KEY: descriptor.sha256},
                 "ChecksumAlgorithm": "SHA256",
             },
@@ -874,7 +877,7 @@ class S3Store:
             descriptor.key,
             sha256=descriptor.sha256,
             size=descriptor.size,
-            media_type=descriptor.media_type,
+            media_type=_CONTENT_MEDIA_TYPE,
             exact_service_checksum=False,
         )
 
@@ -886,13 +889,14 @@ class S3Store:
         sha256: str,
         size: int,
         media_type: str,
+        verify_existing_media_type: bool = True,
     ) -> None:
         validate_s3_key(key)
         if self._reuse_existing(
             key,
             sha256=sha256,
             size=size,
-            media_type=media_type,
+            media_type=media_type if verify_existing_media_type else None,
             exact_service_checksum=True,
         ):
             return
@@ -919,7 +923,7 @@ class S3Store:
         *,
         sha256: str,
         size: int,
-        media_type: str,
+        media_type: str | None,
         exact_service_checksum: bool,
     ) -> bool:
         try:

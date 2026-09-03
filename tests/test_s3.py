@@ -572,10 +572,21 @@ def test_content_bytes_are_checksummed_verified_and_idempotent(
     stored = client.objects[descriptor.key]
 
     assert stored.body == b"payload"
+    assert stored.content_type == "application/octet-stream"
     assert stored.metadata == {"sha256": descriptor.sha256}
     assert stored.checksum_sha256 == base64.b64encode(
         bytes.fromhex(descriptor.sha256)
     ).decode("ascii")
+    assert [operation for operation in client.operations if operation[0] == "put"] == [
+        ("put", descriptor.key)
+    ]
+
+    stored.content_type = "text/plain"
+    alternate = s3.publish_content(b"payload", media_type="application/json")
+    assert alternate.sha256 == descriptor.sha256
+    assert alternate.key == descriptor.key
+    assert alternate.media_type == "application/json"
+    assert s3.read_content(alternate) == b"payload"
     assert [operation for operation in client.operations if operation[0] == "put"] == [
         ("put", descriptor.key)
     ]
