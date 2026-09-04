@@ -3287,7 +3287,7 @@ class CalibrationBrokerHandler(BaseHTTPRequestHandler):
             recovered_delivery_cost = False
             if (
                 state.backend.name == OPENROUTER_BACKEND.name
-                and endpoint == "/v1/chat/completions"
+                and endpoint in ALLOWED_PATHS
                 and status == HTTPStatus.OK
                 and request_id is not None
                 and response_body_read
@@ -3298,7 +3298,7 @@ class CalibrationBrokerHandler(BaseHTTPRequestHandler):
                         state,
                         settlement=None,
                         generation_id=request_id,
-                        streamed=True,
+                        streamed=stream,
                     )
                 except (OSError, http.client.HTTPException, RuntimeError, ValueError):
                     cost = None

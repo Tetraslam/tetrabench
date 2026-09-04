@@ -2169,6 +2169,69 @@ def test_openrouter_empty_glm_stream_settles_cost_and_allows_retry() -> None:
             assert ledger.fatal is None
 
 
+def test_openrouter_empty_responses_stream_settles_cost_and_allows_retry() -> None:
+    with fake_upstream(
+        headers=[
+            ("Content-Type", "text/event-stream"),
+            ("X-Generation-Id", "empty-generation-1"),
+        ],
+        body=b"",
+        queued_get_responses=[
+            (
+                HTTPStatus.OK,
+                [("Content-Type", "application/json")],
+                openrouter_generation(
+                    response_id="empty-generation-1",
+                    model="openai/gpt-5.6-sol-20260709",
+                    finish_reason="stop",
+                ),
+            )
+        ],
+    ) as upstream:
+        ledger = calibration.SpendLedger()
+        with running_broker(
+            upstream,
+            ledger=ledger,
+            backend=calibration.OPENROUTER_BACKEND,
+            model="openai/gpt-5.6-sol",
+            canonical_model="openai/gpt-5.6-sol-20260709",
+        ) as broker:
+            document = {
+                "input": "redacted",
+                "model": "openai/gpt-5.6-sol",
+                "stream": True,
+            }
+            assert request(broker, document=document)[0] == 502
+            assert ledger.cost == Decimal("0.00007")
+            assert ledger.reserved == 0
+            assert ledger.fatal is None
+            assert broker.state.records[0].settlement == "settled"
+            assert broker.state.records[0].settlement_failure == "empty_stream_delivery"
+
+            upstream.body = openrouter_responses_sse(
+                response_id="response-generation-2",
+                model="openai/gpt-5.6-sol-20260709",
+            )
+            upstream.response_headers = [
+                ("Content-Type", "text/event-stream"),
+                ("X-Generation-Id", "response-generation-2"),
+            ]
+            upstream.queued_get_responses.append(
+                (
+                    HTTPStatus.OK,
+                    [("Content-Type", "application/json")],
+                    openrouter_generation(
+                        response_id="response-generation-2",
+                        model="openai/gpt-5.6-sol-20260709",
+                    ),
+                )
+            )
+            assert request(broker, document=document)[0] == 200
+            assert ledger.cost == Decimal("0.00014")
+            assert ledger.reserved == 0
+            assert ledger.fatal is None
+
+
 @pytest.mark.parametrize(
     "body",
     [
