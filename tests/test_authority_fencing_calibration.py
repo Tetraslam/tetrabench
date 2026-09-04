@@ -625,7 +625,7 @@ def test_profiles_are_exact_ordered_and_candidate_only(tmp_path: Path) -> None:
     assert config.count("[profiles.") == 8
     assert 'model_name = "openai/openai/gpt-5.6-sol"' in config
     assert 'model_name = "zai/z-ai/glm-5.3-flash"' in config
-    assert config.count('agent_name = "opencode"') == 2
+    assert config.count(f'agent_name = "{calibration.CALIBRATION_AGENT}"') == 2
     assert config.count("attempts = 1") == 2
     assert config.count("concurrency = 1") == 2
     catalog = (project / "benchmarks/catalog.toml").read_text()
@@ -1255,7 +1255,7 @@ def test_production_cli_compiles_each_calibration_profile_without_model_access(
     document = json.loads(result.stdout)
     assert result.stderr == b""
     assert document["harbor"] == {
-        "agent_name": "opencode",
+        "agent_name": calibration.CALIBRATION_AGENT,
         "attempts": 1,
         "concurrency": 1,
         "model_name": model,
@@ -6289,7 +6289,10 @@ def test_harbor_main_is_inspected_and_activated_before_agent_setup(
     )
     config = config_root / "tetrabench/config.toml"
     config.write_text(
-        config.read_text().replace('agent_name = "opencode"', 'agent_name = "oracle"')
+        config.read_text().replace(
+            f'agent_name = "{calibration.CALIBRATION_AGENT}"',
+            'agent_name = "oracle"',
+        )
     )
     home = tmp_path / "home"
     home.mkdir(mode=0o700)

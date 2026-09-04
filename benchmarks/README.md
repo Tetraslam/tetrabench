@@ -286,11 +286,14 @@ provenance, and no surviving child or current-run Docker residue.
 
 The source-only calibration runner fixes the ordered profiles `target`
 (`openai/openai/gpt-5.6-sol`) and `alternate`
-(`openai/z-ai/glm-5.3-flash`) at two unretried attempts each. Immutable
+(`zai/z-ai/glm-5.3-flash`) at two unretried attempts each. Immutable
 profile records separately bind Harbor, child, broker, and upstream model
 identities. OpenRouter is the default personal backend; LiteLLM is an explicit
 optional work backend. Calibration runs the topology probe first, reads the
 selected backend's authenticated pricing second, and starts attempts last.
+The calibration-only Harbor adapter gives every OpenCode session the fixed
+non-default title `tetrabench-calibration`, so OpenCode does not launch its
+concurrent title-generation model request.
 OpenRouter `/models` pricing takes conservative maxima across every flat
 conditional override, including prompt thresholds and UTC windows, and every
 cache-write tier. Unknown override conditions or pricing keys fail closed.
@@ -395,14 +398,14 @@ reported IPAM gateway and `Internal` value are recorded as topology only;
 authenticated pricing and later forwarding prove actual egress. This transport
 requires no host reachability or firewall change. No real calibration has
 completed, so difficulty calibration remains unproven. Historical accounting
-after retry 24c is `$6.0126436` known cost plus `$17.807213975` conservatively
+after retry 58 is `$26.311122640` known cost plus `$117.044363975` conservatively
 retained unknown exposure; it does not consume the next invocation's `$50` cap.
 A
 separate direct OpenRouter contract probe cost `$0.00007`; it is not benchmark
 calibration. `--debug-deny-upstream` is
 a non-admissible one-attempt-per-profile diagnostic with no proof output. It
 performs normal authenticated pricing, then requires exactly six locally denied
-OpenCode retries per profile, released reservations, native errored-trial
+OpenCode requests per profile (one initial request plus five retries), released reservations, native errored-trial
 evidence, zero usage/exposure, and complete cleanup. It proves OpenCode
 installation, configuration, and endpoint routing at zero completion cost.
 Attempt diagnostics retain ordered boolean status for every sidecar, topology,

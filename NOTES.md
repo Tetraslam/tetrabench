@@ -1794,3 +1794,25 @@ Both 1 GiB target attempts completed with reward zero across 16 and 11 settled R
 The failed-delivery broker reconciliation window and OpenCode response-header timeout were both five minutes. A zero-byte handler could therefore still be polling the authenticated generation record when OpenCode abandoned the request, returned nonzero, and caused cleanup to revoke the broker before its final ledger write. D-132 now injects a six-minute header timeout for both built-in GPT Responses and custom GLM Chat Completions while retaining the five-minute failed-delivery lookup and 35-minute attempt deadline. The enforced order is `300 seconds < 360 seconds < 2,100 seconds`. Normal successful-response settlement remains bounded at 30 seconds.
 
 All 483 focused calibration tests, Ruff check/format, ty, and `git diff --check` pass. Retry 57 added `$0.3728559` known cost and `$12.50` conservative unknown exposure. Historical accounting is `$26.075996040` known plus `$104.544363975` unknown. The private report is mode `0600`, 48,096 bytes, SHA-256 `48172ca38d08b3e78e2bee61c4be9f4080be4c9d29ce034add8b0e2f7cc073a9`; stderr is empty and mode `0600`.
+
+## 2026-09-04T15:11:37-07:00: Retry 58 disproves the timeout-only diagnosis
+
+Provenance: clean commit `7b4ebd6`; exact-four OpenRouter retry 58; bounded private report; native Harbor/OpenCode structural evidence; exact-label Docker inspection and cleanup. Full request, generation, session, and native artifact identifiers remain private.
+
+Both target attempts completed with rewards zero and one across eight settled Responses requests each, costing `$0.1107755` and `$0.1243511`. GLM completed two agent steps and six tool uses before OpenCode emitted one `APIError` and the production CLI returned status one at `cli_wait`. No authoritative final broker ledger survived cleanup. The report's zero request count is conservative fallback evidence rather than proof that no request reached the broker, so the complete `$12.50` allocation remains unknown. No fourth attempt ran, no proof was created, and no labeled Docker resource survived.
+
+Retry 58 added `$0.2351266` known cost and `$12.50` conservative unknown exposure. Historical accounting is `$26.311122640` known plus `$117.044363975` unknown, totaling `$143.355486615`; it does not consume a later invocation's `$50` cap. The private report is mode `0600`, 42,919 bytes, SHA-256 `e212383e74031723850d12938df33467578fde891a7534188e755b17807524b9`; stderr is empty, mode `0600`, and SHA-256 `e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855`.
+
+## 2026-09-04T15:11:37-07:00: D-134 removes concurrent OpenCode title generation
+
+Provenance: Harbor 0.22 public custom-agent factory and installed OpenCode adapter; exact OpenCode 1.18.28 `run --title` and non-default-title source behavior; wheel-contained tetrabench subclass; focused Python 3.12 validation; three real-Docker denied-upstream diagnostics; exact-label Docker inspection. No request was forwarded to a model provider and no model cost or retained exposure was incurred.
+
+The calibration profile now names `tetrabench.calibration_opencode:CalibrationOpenCode`. The subclass adds only fixed `--title tetrabench-calibration` to Harbor's existing command, causing OpenCode to skip its concurrent three-attempt title-generation operation while preserving runtime agent identity `opencode`. Native validation now distinguishes the configured custom import path from that inherited runtime identity instead of weakening either check.
+
+The final nonpaid diagnostic passed both profiles on OpenCode 1.18.28. GPT made six authenticated denied `/v1/responses` requests; GLM made six authenticated denied `/v1/chat/completions` requests, down from the previous nine. Six is the exact native boundary for one main request plus five 503 retries. Every request was rejected before upstream connection or parent authorization, every reservation was released, cost and retained exposure remained zero, and no labeled container or network survived. The combined 518 non-Docker calibration and Harbor-runner tests pass; Ruff check/format and ty pass. A clean commit and exact-four paid validation remain pending.
+
+## 2026-09-04T15:27:12-07:00: D-134 full local validation
+
+Provenance: final local source; Python 3.12; real Docker daemon; authenticated pricing with denied upstream forwarding; package build and inspection; dependency, source, workflow, diff, and full-history secret checks. No request was forwarded to a model provider and no model cost or retained exposure was incurred.
+
+All 1,263 non-Docker tests and all 11 required Docker tests pass. Ruff check and format, ty, Bandit, `uv lock --check`, wheel/sdist build, all-groups pip-audit, actionlint, `git diff --check`, and full-history Gitleaks over 97 commits pass. The built wheel contains `tetrabench/calibration_opencode.py`. The real-Docker denied-upstream diagnostic passed both profiles at six requests each with zero forwarding, zero cost or retained exposure, and no labeled residue. A clean commit and exact-four paid validation remain pending.

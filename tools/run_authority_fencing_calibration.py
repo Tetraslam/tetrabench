@@ -136,6 +136,7 @@ LITELLM_KEY_ENV = "TETRABENCH_LITELLM_API_KEY"
 LEGACY_LITELLM_KEY_ENV = "TETRABENCH_CALIBRATION_GATEWAY_KEY"
 PARENT_KEY_ENV = LEGACY_LITELLM_KEY_ENV
 TASK_ID = "systems-design/authority-fencing"
+CALIBRATION_AGENT = "tetrabench.calibration_opencode:CalibrationOpenCode"
 MAX_ATTEMPT_SECONDS = 35 * 60
 MAX_TOTAL_COST = Decimal("50")
 MAX_INPUT_OR_CACHE_COST_PER_TOKEN = Decimal("10") / Decimal(1_000_000)
@@ -143,7 +144,7 @@ MAX_OUTPUT_COST_PER_TOKEN = Decimal("50") / Decimal(1_000_000)
 RESERVATION_SAFETY_MARGIN = Decimal("0.25")
 MAX_OUTPUT_TOKENS = 65536
 MAX_REQUESTS = 64
-DENY_UPSTREAM_EXPECTED_REQUESTS = {"alternate": 9, "target": 6}
+DENY_UPSTREAM_EXPECTED_REQUESTS = {"alternate": 6, "target": 6}
 MAX_CONCURRENCY = 2
 MAX_WORKERS = 4
 DEFAULT_BROKER_PORT = 62017
@@ -4337,7 +4338,7 @@ kind = "modal"
                 f"[profiles.{profile}.selection]",
                 'include = ["authority-fencing"]',
                 f"[profiles.{profile}.harbor]",
-                'agent_name = "opencode"',
+                f'agent_name = "{CALIBRATION_AGENT}"',
                 f'model_name = "{profile_contract.harbor_model}"',
                 "attempts = 1",
                 "concurrency = 1",
@@ -5205,7 +5206,8 @@ def _validate_native_attempt(
             ordinal=ordinal,
             expected_task_checksum=expected_task_checksum,
             expected_task_digest=expected_task_digest,
-            expected_agent_name="opencode",
+            expected_agent_name=CALIBRATION_AGENT,
+            expected_agent_info_name="opencode",
             expected_model_name=harbor_model,
             expected_reward=int(document["reward"]),
             expected_exception_type=(
