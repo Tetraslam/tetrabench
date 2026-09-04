@@ -678,8 +678,13 @@ def test_target_profile_header_timeout_exceeds_delivery_reconciliation() -> None
             }
         },
     }
+    assert calibration.DELIVERY_FAILURE_SETTLEMENT_WINDOW_SECONDS == 900
+    assert calibration.OPENCODE_HEADER_TIMEOUT_MS == 960_000
     assert calibration.OPENCODE_HEADER_TIMEOUT_MS > (
         calibration.DELIVERY_FAILURE_SETTLEMENT_WINDOW_SECONDS * 1000
+    )
+    assert calibration.MAX_ATTEMPT_SECONDS > (
+        calibration.OPENCODE_HEADER_TIMEOUT_MS / 1000
     )
 
 

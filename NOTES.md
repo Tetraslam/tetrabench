@@ -1816,3 +1816,19 @@ The final nonpaid diagnostic passed both profiles on OpenCode 1.18.28. GPT made 
 Provenance: final local source; Python 3.12; real Docker daemon; authenticated pricing with denied upstream forwarding; package build and inspection; dependency, source, workflow, diff, and full-history secret checks. No request was forwarded to a model provider and no model cost or retained exposure was incurred.
 
 All 1,263 non-Docker tests and all 11 required Docker tests pass. Ruff check and format, ty, Bandit, `uv lock --check`, wheel/sdist build, all-groups pip-audit, actionlint, `git diff --check`, and full-history Gitleaks over 97 commits pass. The built wheel contains `tetrabench/calibration_opencode.py`. The real-Docker denied-upstream diagnostic passed both profiles at six requests each with zero forwarding, zero cost or retained exposure, and no labeled residue. A clean commit and exact-four paid validation remain pending.
+
+## 2026-09-04T15:49:25-07:00: Retry 59 proves five-minute reconciliation is insufficient
+
+Provenance: clean commit `bf4ba2c`; exact-four OpenRouter retry 59; bounded private report; exact broker record; authenticated read-only OpenRouter generation record; exact settlement arithmetic; exact-label Docker inspection. Full request, generation, session, and native artifact identifiers remain private.
+
+Both target attempts completed with reward zero across 12 settled Responses requests each, costing `$0.1395741` and `$0.1511167`. GLM's first request returned HTTP 200 with an exact generation header and a fully read zero-byte body. The five-minute failed-delivery lookup expired before terminal provider state, retained `$3.84121`, and OpenCode ended with one `APIError`; no fourth attempt or proof followed. Cleanup left no labeled Docker resource.
+
+The later authenticated generation record proves exact canonical GLM-5.3 Flash identity, streamed and uncancelled terminal `tool_calls`, bounded native usage, 627-second generation time, and exact cost `$0.0010932`. That cost supersedes the retained reservation without making the missing response body valid. Retry 59's exact cost is `$0.2917840`. Historical accounting is `$26.602906640` known cost plus `$117.044363975` unknown exposure; it does not consume a later invocation's cap. The mode-0600 report is 46,877 bytes with SHA-256 `61c9a2025ce8c2268e2a7a147371c31a01c6fc2f88a6980222e242830c29a49c`; stderr is empty, mode `0600`, and SHA-256 `e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855`. The mode-0600 generation record is 1,447 bytes with SHA-256 `b884eed34e09326a62ded72172e7a121266436f5ebf3669a5106813160873186`.
+
+D-135 gives only exact HTTP 200 zero-byte delivery reconciliation a 900-second window and raises both OpenCode response-header timeouts to 960 seconds. Normal successful-response settlement remains 30 seconds and the attempt remains 2,100 seconds, preserving `900 seconds < 960 seconds < 2,100 seconds` and at least one full retry window. Focused validation is pending; no further paid retry is permitted before it passes and the change is committed.
+
+## 2026-09-04T15:55:33-07:00: D-135 focused validation
+
+Provenance: final local source; Python 3.12 focused tests; lint, formatting, types, diff, and changed-content secret checks. No provider call occurred.
+
+All 479 non-Docker calibration tests pass, including exact assertions for the 900-second reconciliation, 960-second client timeout, and 2,100-second attempt ordering. Ruff check and format, ty, `git diff --check`, and redacted changed-content Gitleaks pass. A clean commit remains required before the next exact-four invocation.
