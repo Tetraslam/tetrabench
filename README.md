@@ -199,11 +199,10 @@ are recovery hints, not run authority.
 ## Repository benchmarks
 
 The checked-in production catalog remains empty. `systems-design/authority-fencing`
-is a source candidate whose local, detached, and reward-forgery proofs passed
-before a required agent-memory correction. Those proofs must be rerun on the
-corrected bytes before its exact four-run model calibration can admit it. This
-does not affect projects created by `tetrabench init` or tasks added to a user's
-own catalog.
+is a source candidate with completed local, detached, and reward-forgery proofs
+on its corrected 1 GiB agent environment. It stays unlisted until its exact
+four-run model calibration passes. This does not affect projects created by
+`tetrabench init` or tasks added to a user's own catalog.
 
 Read [the benchmark contract](benchmarks/README.md) for task design and
 admission, and [the project record](IMPLEMENTATION_PLAN.md) for authority

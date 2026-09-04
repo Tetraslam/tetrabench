@@ -672,7 +672,7 @@ most 8 distinct fault schedules.
 
 | Candidate | Status |
 | --- | --- |
-| `systems-design/authority-fencing` | Local candidate implemented under `benchmarks/tasks/`; intentionally unlisted and excluded from wheel/sdist. The clean local and detached gold/gold/reward-forgery proofs passed before the agent memory limit changed from 512 MiB to 1 GiB after a kernel-confirmed OpenCode OOM. Those proofs, two-profile calibration, and catalog admission remain pending on the corrected bytes. |
+| `systems-design/authority-fencing` | Local candidate implemented under `benchmarks/tasks/`; intentionally unlisted and excluded from wheel/sdist. After a kernel-confirmed OpenCode OOM raised its agent limit to 1 GiB, the corrected bytes passed the clean 17-case local matrix, three production CLI runs, and detached gold/gold/reward-forgery proof. Two-profile calibration and catalog admission remain pending. |
 | Remaining v1 candidates | Absent. |
 
 1. Run the locally proven E-064 separate-verifier and forge-sidecar prototype in
