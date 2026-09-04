@@ -648,7 +648,7 @@ def test_glm_profile_produces_content_free_openai_compatible_config() -> None:
     assert provider["options"] == {
         "apiKey": "{env:ZAI_API_KEY}",
         "baseURL": "http://broker:62017/v1",
-        "headerTimeout": 300_000,
+        "headerTimeout": calibration.OPENCODE_HEADER_TIMEOUT_MS,
     }
     assert provider["models"]["z-ai/glm-5.3-flash"]["limit"] == {
         "context": 1_245_184,
@@ -657,6 +657,30 @@ def test_glm_profile_produces_content_free_openai_compatible_config() -> None:
     assert document["model"] == "zai/z-ai/glm-5.3-flash"
     assert document["small_model"] == "zai/z-ai/glm-5.3-flash"
     assert "secret" not in json.dumps(document).lower()
+
+
+def test_target_profile_header_timeout_exceeds_delivery_reconciliation() -> None:
+    content = calibration._opencode_provider_config_content(
+        profile=calibration.PROFILE_CONTRACTS[0],
+        base_url="http://broker:62017/v1",
+        max_input_tokens=984_464,
+        max_output_tokens=128_000,
+    )
+    assert content is not None
+    document = json.loads(content)
+    assert document == {
+        "$schema": "https://opencode.ai/config.json",
+        "provider": {
+            "openai": {
+                "options": {
+                    "headerTimeout": calibration.OPENCODE_HEADER_TIMEOUT_MS,
+                }
+            }
+        },
+    }
+    assert calibration.OPENCODE_HEADER_TIMEOUT_MS > (
+        calibration.DELIVERY_FAILURE_SETTLEMENT_WINDOW_SECONDS * 1000
+    )
 
 
 def test_glm_config_is_injected_into_harbor_main_environment(tmp_path: Path) -> None:

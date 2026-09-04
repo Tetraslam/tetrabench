@@ -164,6 +164,7 @@ GENERATION_MAX_RESPONSE_BYTES = 1 << 20
 SETTLEMENT_WINDOW_SECONDS = 30.0
 DELIVERY_FAILURE_SETTLEMENT_WINDOW_SECONDS = 300.0
 SETTLEMENT_POLL_SECONDS = 0.1
+OPENCODE_HEADER_TIMEOUT_MS = 360_000
 MIN_PARENT_KEY_LENGTH = 16
 MAX_PARENT_KEY_LENGTH = 512
 MIN_BROKER_TOKEN_LENGTH = 32
@@ -4354,7 +4355,20 @@ def _opencode_provider_config_content(
     max_output_tokens: int,
 ) -> str | None:
     if profile.opencode_npm is None:
-        return None
+        if profile.opencode_provider != "openai":
+            raise ValueError("calibration OpenCode provider is unsupported")
+        return canonical(
+            {
+                "$schema": "https://opencode.ai/config.json",
+                "provider": {
+                    profile.opencode_provider: {
+                        "options": {
+                            "headerTimeout": OPENCODE_HEADER_TIMEOUT_MS,
+                        }
+                    }
+                },
+            }
+        )
     if (
         profile.opencode_provider != "zai"
         or profile.opencode_npm != "@ai-sdk/openai-compatible"
@@ -4383,7 +4397,7 @@ def _opencode_provider_config_content(
                     "options": {
                         "apiKey": f"{{env:{profile.credential_env}}}",
                         "baseURL": base_url,
-                        "headerTimeout": 300_000,
+                        "headerTimeout": OPENCODE_HEADER_TIMEOUT_MS,
                     },
                 }
             },
