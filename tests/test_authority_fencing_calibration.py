@@ -337,7 +337,7 @@ def openrouter_generation(
     native_input_tokens: int | None = None,
     native_output_tokens: int | None = None,
     cancelled: bool = False,
-    finish_reason: str = "tool_calls",
+    finish_reason: str | None = "tool_calls",
 ) -> bytes:
     return json.dumps(
         {
@@ -678,8 +678,8 @@ def test_target_profile_header_timeout_exceeds_delivery_reconciliation() -> None
             }
         },
     }
-    assert calibration.DELIVERY_FAILURE_SETTLEMENT_WINDOW_SECONDS == 900
-    assert calibration.OPENCODE_HEADER_TIMEOUT_MS == 960_000
+    assert calibration.DELIVERY_FAILURE_SETTLEMENT_WINDOW_SECONDS == 300
+    assert calibration.OPENCODE_HEADER_TIMEOUT_MS == 360_000
     assert calibration.OPENCODE_HEADER_TIMEOUT_MS > (
         calibration.DELIVERY_FAILURE_SETTLEMENT_WINDOW_SECONDS * 1000
     )
@@ -2199,6 +2199,59 @@ def test_openrouter_empty_glm_stream_settles_cost_and_allows_retry() -> None:
             assert ledger.cost == Decimal("0.00014")
             assert ledger.reserved == 0
             assert ledger.fatal is None
+
+
+def test_openrouter_empty_stream_polls_nonterminal_generation_until_terminal() -> None:
+    with fake_upstream(
+        headers=[
+            ("Content-Type", "text/event-stream"),
+            ("X-Generation-Id", "empty-generation-1"),
+        ],
+        body=b"",
+        queued_get_responses=[
+            (
+                HTTPStatus.OK,
+                [("Content-Type", "application/json")],
+                openrouter_generation(
+                    response_id="empty-generation-1",
+                    model="z-ai/glm-5.3-flash-20260826",
+                    finish_reason=None,
+                ),
+            ),
+            (
+                HTTPStatus.OK,
+                [("Content-Type", "application/json")],
+                openrouter_generation(
+                    response_id="empty-generation-1",
+                    model="z-ai/glm-5.3-flash-20260826",
+                ),
+            ),
+        ],
+    ) as upstream:
+        ledger = calibration.SpendLedger()
+        with running_broker(
+            upstream,
+            ledger=ledger,
+            backend=calibration.OPENROUTER_BACKEND,
+            model="z-ai/glm-5.3-flash",
+            canonical_model="z-ai/glm-5.3-flash-20260826",
+        ) as broker:
+            assert (
+                request(
+                    broker,
+                    path="/v1/chat/completions",
+                    document={
+                        "messages": [{"content": "redacted", "role": "user"}],
+                        "model": "z-ai/glm-5.3-flash",
+                        "stream": True,
+                    },
+                )[0]
+                == 502
+            )
+    assert sum("body" not in item for item in upstream.requests) == 2
+    assert ledger.cost == Decimal("0.00007")
+    assert ledger.reserved == 0
+    assert ledger.fatal is None
 
 
 def test_openrouter_empty_responses_stream_settles_cost_and_allows_retry(

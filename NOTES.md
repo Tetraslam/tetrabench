@@ -1832,3 +1832,19 @@ D-135 gives only exact HTTP 200 zero-byte delivery reconciliation a 900-second w
 Provenance: final local source; Python 3.12 focused tests; lint, formatting, types, diff, and changed-content secret checks. No provider call occurred.
 
 All 479 non-Docker calibration tests pass, including exact assertions for the 900-second reconciliation, 960-second client timeout, and 2,100-second attempt ordering. Ruff check and format, ty, `git diff --check`, and redacted changed-content Gitleaks pass. A clean commit remains required before the next exact-four invocation.
+
+## 2026-09-04T16:23:37-07:00: Retry 60 supersedes D-135's timeout diagnosis
+
+Provenance: clean commit `e748c03`; exact-four OpenRouter retry 60; bounded private report; exact broker record; authenticated read-only OpenRouter generation record; source inspection; exact-label Docker inspection. Full request, generation, session, and native artifact identifiers remain private.
+
+Both target attempts completed with reward zero. They settled 25 and nine Responses requests at `$0.3707552` and `$0.1314611`. GLM's first request returned HTTP 200 with an exact generation header and a fully read zero-byte body, then retained `$3.84121` and ended at `cli_wait` with one `APIError`. The alternate attempt ended well before D-135's 900-second reconciliation bound, so an insufficient timeout did not cause this failure. No fourth attempt or proof followed, and no labeled Docker resource survived.
+
+The later authenticated generation row proves exact canonical GLM-5.3 Flash identity, streamed and uncancelled terminal `tool_calls`, bounded native usage, and exact cost `$0.0010952`. Its `generation_time` and `latency` values do not establish generation-record visibility delay; the preceding note's interpretation of retry 59's `generation_time=627` as 627 seconds is unsupported. Retry 60's exact cost is `$0.5033115`. Historical accounting is `$27.106218140` known plus `$117.044363975` unknown. The mode-0600 report is 51,559 bytes with SHA-256 `8dae78517a57e221bfd3cf456e550b850d24ee666cbee6bf1888ddc03d35cabc`; stderr is empty, mode `0600`, and SHA-256 `e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855`. The mode-0600 generation record is 1,453 bytes with SHA-256 `e5ce8ef54b0e59149bac6175023e3901489e5a62e5eaddf6a3b70cdd22a2939d`.
+
+Source inspection identifies the actual gap. Failed-delivery generation polling retries HTTP 404, but an HTTP 200 row with null `finish_reason` exits the poll immediately. D-136 restores the 300-second reconciliation and 360-second client timeout, gives only that exact matching nonterminal row the existing bounded retry, and leaves cancelled, malformed, mismatched, unsupported-terminal, and unpriced rows fail-closed. Focused validation is pending; no paid retry is permitted before it passes and the correction is committed.
+
+## 2026-09-04T16:36:59-07:00: D-136 focused validation
+
+Provenance: final local source; fake OpenRouter nonterminal-to-terminal generation sequence; Python 3.12 focused tests; lint, formatting, types, diff, and changed-content secret checks. No provider call occurred.
+
+The regression returns an exact HTTP 200 generation row with null `finish_reason`, then an exact terminal row. The broker retries once, settles exact cost, releases the reservation, records `empty_stream_delivery`, and remains nonfatal for the next model request. All 480 non-Docker calibration tests pass. Ruff check and format, ty, `git diff --check`, and redacted changed-content Gitleaks pass. A clean commit remains required before another exact-four invocation.

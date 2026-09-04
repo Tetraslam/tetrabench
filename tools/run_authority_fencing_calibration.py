@@ -163,9 +163,9 @@ MAX_RESPONSE_BYTES = 64 << 20
 MODEL_INFO_MAX_RESPONSE_BYTES = 4 << 20
 GENERATION_MAX_RESPONSE_BYTES = 1 << 20
 SETTLEMENT_WINDOW_SECONDS = 30.0
-DELIVERY_FAILURE_SETTLEMENT_WINDOW_SECONDS = 900.0
+DELIVERY_FAILURE_SETTLEMENT_WINDOW_SECONDS = 300.0
 SETTLEMENT_POLL_SECONDS = 0.1
-OPENCODE_HEADER_TIMEOUT_MS = 960_000
+OPENCODE_HEADER_TIMEOUT_MS = 360_000
 MIN_PARENT_KEY_LENGTH = 16
 MAX_PARENT_KEY_LENGTH = 512
 MIN_BROKER_TOKEN_LENGTH = 32
@@ -1742,9 +1742,12 @@ def _validate_openrouter_delivery_failure_generation(
         raise OpenRouterSettlementError("generation_model_mismatch")
     if generation.get("streamed") is not expected_streamed:
         raise OpenRouterSettlementError("generation_stream_mismatch")
-    if generation.get("cancelled") is not False or generation.get(
-        "finish_reason"
-    ) not in {"content_filter", "length", "stop", "tool_calls"}:
+    if generation.get("cancelled") is not False:
+        raise OpenRouterSettlementError("generation_terminal_mismatch")
+    finish_reason = generation.get("finish_reason")
+    if finish_reason is None:
+        raise OpenRouterSettlementError("generation_nonterminal")
+    if finish_reason not in {"content_filter", "length", "stop", "tool_calls"}:
         raise OpenRouterSettlementError("generation_terminal_mismatch")
     try:
         total_cost = _stream_cost(generation.get("total_cost"))
@@ -1826,20 +1829,29 @@ def _poll_openrouter_generation(
                     raise TimeoutError("OpenRouter generation settlement timed out")
             elif response.status == HTTPStatus.OK:
                 if settlement is None:
-                    return _validate_openrouter_delivery_failure_generation(
+                    try:
+                        return _validate_openrouter_delivery_failure_generation(
+                            body,
+                            expected_id=lookup_id,
+                            expected_models=state.response_models,
+                            expected_streamed=streamed,
+                        )
+                    except OpenRouterSettlementError as error:
+                        if error.code != "generation_nonterminal":
+                            raise
+                        if time.monotonic() + SETTLEMENT_POLL_SECONDS >= deadline:
+                            raise TimeoutError(
+                                "OpenRouter generation settlement timed out"
+                            ) from error
+                else:
+                    return _validate_openrouter_generation(
                         body,
                         expected_id=lookup_id,
                         expected_models=state.response_models,
                         expected_streamed=streamed,
+                        expected_cost=settlement.cost,
+                        expected_usage=settlement.usage,
                     )
-                return _validate_openrouter_generation(
-                    body,
-                    expected_id=lookup_id,
-                    expected_models=state.response_models,
-                    expected_streamed=streamed,
-                    expected_cost=settlement.cost,
-                    expected_usage=settlement.usage,
-                )
             else:
                 raise ValueError("OpenRouter generation request failed")
         finally:
