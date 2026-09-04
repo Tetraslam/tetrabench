@@ -162,6 +162,7 @@ MAX_RESPONSE_BYTES = 64 << 20
 MODEL_INFO_MAX_RESPONSE_BYTES = 4 << 20
 GENERATION_MAX_RESPONSE_BYTES = 1 << 20
 SETTLEMENT_WINDOW_SECONDS = 30.0
+DELIVERY_FAILURE_SETTLEMENT_WINDOW_SECONDS = 300.0
 SETTLEMENT_POLL_SECONDS = 0.1
 MIN_PARENT_KEY_LENGTH = 16
 MAX_PARENT_KEY_LENGTH = 512
@@ -1766,12 +1767,18 @@ def _poll_openrouter_generation(
     settlement: SettlementResult | None,
     generation_id: str | None,
     streamed: bool,
+    settlement_window_seconds: float | None = None,
 ) -> Decimal:
     generation_path = state.backend.generation_path
     if generation_path is None:
         raise ValueError("backend generation adapter is missing")
     parsed = _parse_upstream_url(state.upstream_url)
-    deadline = min(state.deadline, time.monotonic() + SETTLEMENT_WINDOW_SECONDS)
+    window = (
+        SETTLEMENT_WINDOW_SECONDS
+        if settlement_window_seconds is None
+        else settlement_window_seconds
+    )
+    deadline = min(state.deadline, time.monotonic() + window)
     if generation_id is not None:
         lookup_id = generation_id
     elif settlement is not None:
@@ -3299,6 +3306,9 @@ class CalibrationBrokerHandler(BaseHTTPRequestHandler):
                         settlement=None,
                         generation_id=request_id,
                         streamed=stream,
+                        settlement_window_seconds=(
+                            DELIVERY_FAILURE_SETTLEMENT_WINDOW_SECONDS
+                        ),
                     )
                 except (OSError, http.client.HTTPException, RuntimeError, ValueError):
                     cost = None

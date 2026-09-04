@@ -2139,6 +2139,9 @@ def test_openrouter_empty_glm_stream_settles_cost_and_allows_retry() -> None:
             assert ledger.cost == Decimal("0.00007")
             assert ledger.reserved == 0
             assert ledger.fatal is None
+            deadline = time.monotonic() + 2
+            while not broker.state.records and time.monotonic() < deadline:
+                time.sleep(0.01)
             assert broker.state.records[0].settlement == "settled"
             assert broker.state.records[0].settlement_failure == "empty_stream_delivery"
 
@@ -2169,7 +2172,23 @@ def test_openrouter_empty_glm_stream_settles_cost_and_allows_retry() -> None:
             assert ledger.fatal is None
 
 
-def test_openrouter_empty_responses_stream_settles_cost_and_allows_retry() -> None:
+def test_openrouter_empty_responses_stream_settles_cost_and_allows_retry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    settlement_windows: list[float] = []
+    poll_generation = calibration._poll_openrouter_generation
+
+    def capture_settlement_window(*args: Any, **kwargs: Any) -> Decimal:
+        settlement_windows.append(
+            kwargs.get(
+                "settlement_window_seconds", calibration.SETTLEMENT_WINDOW_SECONDS
+            )
+        )
+        return poll_generation(*args, **kwargs)
+
+    monkeypatch.setattr(
+        calibration, "_poll_openrouter_generation", capture_settlement_window
+    )
     with fake_upstream(
         headers=[
             ("Content-Type", "text/event-stream"),
@@ -2205,6 +2224,9 @@ def test_openrouter_empty_responses_stream_settles_cost_and_allows_retry() -> No
             assert ledger.cost == Decimal("0.00007")
             assert ledger.reserved == 0
             assert ledger.fatal is None
+            deadline = time.monotonic() + 2
+            while not broker.state.records and time.monotonic() < deadline:
+                time.sleep(0.01)
             assert broker.state.records[0].settlement == "settled"
             assert broker.state.records[0].settlement_failure == "empty_stream_delivery"
 
@@ -2230,6 +2252,9 @@ def test_openrouter_empty_responses_stream_settles_cost_and_allows_retry() -> No
             assert ledger.cost == Decimal("0.00014")
             assert ledger.reserved == 0
             assert ledger.fatal is None
+    assert settlement_windows[0] == (
+        calibration.DELIVERY_FAILURE_SETTLEMENT_WINDOW_SECONDS
+    )
 
 
 @pytest.mark.parametrize(

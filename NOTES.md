@@ -1774,3 +1774,13 @@ The local proof is admissible on the corrected bytes. All 17 gold/no-op/mutant/e
 The detached proof is also admissible on the same clean revision and candidate manifest `aa59b2f3d309571987ea6864ca2299557e86029cd037aa4e3dfef08b6fe66f0b`. Both gold cases reached reward one with 19 artifacts; the solution-only reward-forgery audit reached reward zero with 20 artifacts. Every case reached terminal admission with a succeeded controller and two cleanup sweeps. The mode-0600 proof is 2,956 bytes with SHA-256 `aff84ef04a5030b3d1e3b95c701bc22efef73e0fce116c26c1ed806ae3d291de`.
 
 D-133's current-byte local and detached gates are complete. Exact-four calibration is the sole remaining catalog blocker.
+
+## 2026-09-04T13:17:30-07:00: Retry 56 extends failed-delivery settlement polling
+
+Provenance: clean commit `ec98021`; exact-four OpenRouter retry 56; bounded private report; authenticated read-only OpenRouter generation record; focused Python 3.12 validation; exact-label Docker cleanup. Full request and generation identifiers remain private.
+
+Both 1 GiB target attempts completed without an OOM, returning reward zero across 14 and nine settled Responses requests. GLM attempt one settled one request at `$0.00024733`; a concurrent HTTP 200 request delivered zero bytes, and the 30-second D-132 recovery lookup did not observe a terminal generation before retaining `$3.55818`. The attempt ended at `cli_wait` with one bounded `APIError`, and no owned Docker resource survived.
+
+The authenticated generation record later proved exact canonical GLM-5.3 Flash identity, streamed and uncancelled terminal `stop` state, bounded native usage, and exact cost `$0.00019275`. This cost supersedes the retained reservation without making the missing output valid. D-132 now gives only the zero-byte delivery-recovery lookup a five-minute settlement window; normal successful-response settlement remains 30 seconds, and both remain inside the 35-minute attempt deadline. Focused timeout tests prove dynamically shortened deadlines still apply, and separate empty-stream regressions prove both endpoints settle and permit a subsequent valid retry. All 482 focused calibration tests, Ruff check/format, ty, and `git diff --check` pass.
+
+Retry 56's exact current cost is `$0.29328798`. Historical accounting is `$25.703140140` known cost plus `$92.044363975` unknown exposure. The private report is mode `0600`, 47,120 bytes, SHA-256 `e943c5dea771ad2e1983d6daacd53f66c430e38d3780b593fb35018f61ebf5e7`; stderr is empty and mode `0600`.
