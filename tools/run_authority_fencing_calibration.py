@@ -215,6 +215,7 @@ class BackendContract:
 @dataclasses.dataclass(frozen=True, slots=True)
 class ProfileContract:
     name: str
+    opencode_provider: str
     child_model: str
     broker_model: str
     upstream_model: str
@@ -261,6 +262,7 @@ BROKER_DNS = LITELLM_BACKEND.broker_dns
 PROFILE_CONTRACTS = (
     ProfileContract(
         name="target",
+        opencode_provider="openai",
         child_model="openai/gpt-5.6-sol",
         broker_model="openai/gpt-5.6-sol",
         upstream_model="openai/gpt-5.6-sol",
@@ -268,10 +270,11 @@ PROFILE_CONTRACTS = (
     ),
     ProfileContract(
         name="alternate",
+        opencode_provider="calibration",
         child_model="z-ai/glm-5.3-flash",
         broker_model="z-ai/glm-5.3-flash",
         upstream_model="z-ai/glm-5.3-flash",
-        harbor_model="openai/z-ai/glm-5.3-flash",
+        harbor_model="calibration/z-ai/glm-5.3-flash",
     ),
 )
 PROFILES = tuple((profile.name, profile.broker_model) for profile in PROFILE_CONTRACTS)
@@ -1514,6 +1517,143 @@ def _parse_openrouter_responses_stream(
         )
     if terminal is None:
         raise ValueError("OpenRouter stream terminal is missing")
+    return terminal
+
+
+def _parse_openrouter_chat_stream(
+    body: bytes, *, expected_models: frozenset[str]
+) -> SettlementResult:
+    try:
+        text = body.decode("utf-8")
+    except UnicodeDecodeError as error:
+        raise ValueError("OpenRouter chat stream is not UTF-8") from error
+    normalized = text.replace("\r\n", "\n")
+    if "\r" in normalized or not normalized.endswith("\n\n"):
+        raise ValueError("OpenRouter chat stream framing is malformed")
+    frames: list[str] = []
+    for block in normalized[:-2].split("\n\n"):
+        if not block:
+            continue
+        data_values: list[str] = []
+        for line in block.split("\n"):
+            if line.startswith(":"):
+                continue
+            if line.startswith("data: "):
+                data_values.append(line[6:])
+            else:
+                raise ValueError("OpenRouter chat stream framing is malformed")
+        if data_values:
+            if len(data_values) != 1:
+                raise ValueError("OpenRouter chat stream framing is ambiguous")
+            frames.append(data_values[0])
+    if not frames or frames[-1] != "[DONE]":
+        raise ValueError("OpenRouter chat stream completion marker is missing")
+
+    response_id: str | None = None
+    response_model: str | None = None
+    finish_reason: str | None = None
+    terminal: SettlementResult | None = None
+    allowed_top_fields = {
+        "choices",
+        "created",
+        "id",
+        "model",
+        "object",
+        "provider",
+        "service_tier",
+        "usage",
+    }
+    allowed_choice_fields = {"delta", "finish_reason", "index", "native_finish_reason"}
+    allowed_delta_fields = {
+        "content",
+        "reasoning",
+        "reasoning_content",
+        "reasoning_details",
+        "refusal",
+        "role",
+        "tool_calls",
+    }
+    for index, data in enumerate(frames[:-1]):
+        if data == "[DONE]":
+            raise ValueError("OpenRouter chat completion marker is ambiguous")
+        document = _strict_json_decimal(data.encode())
+        if (
+            not isinstance(document, dict)
+            or not set(document) <= allowed_top_fields
+            or document.get("object") != "chat.completion.chunk"
+        ):
+            raise ValueError("OpenRouter chat stream event is malformed")
+        current_id = _response_identifier(document.get("id"))
+        current_model = _response_identifier(document.get("model"))
+        if current_model not in expected_models:
+            raise ValueError("OpenRouter response model mismatch")
+        if response_id is None:
+            response_id = current_id
+            response_model = current_model
+        elif current_id != response_id or current_model != response_model:
+            raise ValueError("OpenRouter chat stream identity changed")
+        choices = document.get("choices")
+        if not isinstance(choices, list) or len(choices) != 1:
+            raise ValueError("OpenRouter chat stream choice count is invalid")
+        choice = choices[0]
+        if (
+            not isinstance(choice, dict)
+            or not set(choice) <= allowed_choice_fields
+            or choice.get("index") != 0
+            or not isinstance(choice.get("delta"), dict)
+            or not set(choice["delta"]) <= allowed_delta_fields
+        ):
+            raise ValueError("OpenRouter chat stream choice is malformed")
+        delta = choice["delta"]
+        for field in ("content", "reasoning", "reasoning_content", "refusal"):
+            if (
+                field in delta
+                and delta[field] is not None
+                and not isinstance(delta[field], str)
+            ):
+                raise ValueError("OpenRouter chat stream delta is malformed")
+        if "role" in delta and delta["role"] not in {None, "assistant"}:
+            raise ValueError("OpenRouter chat stream role is invalid")
+        for field in ("reasoning_details", "tool_calls"):
+            if (
+                field in delta
+                and delta[field] is not None
+                and not isinstance(delta[field], list)
+            ):
+                raise ValueError("OpenRouter chat stream delta is malformed")
+
+        current_finish = choice.get("finish_reason")
+        if current_finish is not None and current_finish not in {
+            "content_filter",
+            "length",
+            "stop",
+            "tool_calls",
+        }:
+            raise ValueError("OpenRouter chat stream finish reason is invalid")
+        usage = document.get("usage")
+        if usage is not None:
+            if index != len(frames) - 2 or current_finish is None:
+                raise ValueError("OpenRouter chat stream usage is misplaced")
+            if finish_reason is not None and current_finish != finish_reason:
+                raise ValueError("OpenRouter chat stream finish reason changed")
+            cost, bounded_usage = _normalized_usage(
+                usage, endpoint="/v1/chat/completions", cost_required=False
+            )
+            terminal = SettlementResult(
+                response_id=current_id,
+                model=current_model,
+                cost=cost,
+                usage=bounded_usage,
+            )
+            finish_reason = current_finish
+        elif current_finish is not None:
+            if finish_reason is not None:
+                raise ValueError("OpenRouter chat stream terminal is ambiguous")
+            finish_reason = current_finish
+        elif finish_reason is not None:
+            raise ValueError("OpenRouter chat stream has post-terminal data")
+    if terminal is None or response_id is None or response_model is None:
+        raise ValueError("OpenRouter chat stream terminal usage is missing")
     return terminal
 
 
@@ -2771,7 +2911,7 @@ def _validate_request(
             raise ValueError("broker responses multiplicity/background rejected")
         _validate_responses_content(document)
     else:
-        if stream:
+        if stream and state.model != "z-ai/glm-5.3-flash":
             raise ValueError("broker streaming chat is unsupported")
         allowed_limit_fields = {"max_completion_tokens", "max_tokens"}
         injected_field = "max_completion_tokens"
@@ -3003,9 +3143,14 @@ class CalibrationBrokerHandler(BaseHTTPRequestHandler):
                 )
                 if stream:
                     if state.backend.name == OPENROUTER_BACKEND.name:
-                        openrouter_settlement = _parse_openrouter_responses_stream(
-                            response_body, expected_models=state.response_models
-                        )
+                        if endpoint == "/v1/chat/completions":
+                            openrouter_settlement = _parse_openrouter_chat_stream(
+                                response_body, expected_models=state.response_models
+                            )
+                        else:
+                            openrouter_settlement = _parse_openrouter_responses_stream(
+                                response_body, expected_models=state.response_models
+                            )
                         cost = _poll_openrouter_generation(
                             state,
                             settlement=openrouter_settlement,
@@ -3014,6 +3159,12 @@ class CalibrationBrokerHandler(BaseHTTPRequestHandler):
                         )
                         request_id = request_id or openrouter_settlement.response_id
                         usage = openrouter_settlement.usage
+                    elif endpoint == "/v1/chat/completions":
+                        chat_settlement = _parse_openrouter_chat_stream(
+                            response_body, expected_models=state.response_models
+                        )
+                        cost = _parse_cost(response.headers)
+                        usage = chat_settlement.usage
                     else:
                         cost, usage = _parse_responses_stream(response_body)
                 elif state.backend.name == OPENROUTER_BACKEND.name:
@@ -4056,8 +4207,8 @@ kind = "modal"
     config = config_root / "tetrabench/config.toml"
     config.parent.mkdir(parents=True)
     lines = ["schema_version = 1"]
-    for profile, model_group in PROFILES:
-        model = f"openai/{model_group}"
+    for profile_contract in PROFILE_CONTRACTS:
+        profile = profile_contract.name
         lines.extend(
             [
                 f"[profiles.{profile}.controller]",
@@ -4068,13 +4219,59 @@ kind = "modal"
                 'include = ["authority-fencing"]',
                 f"[profiles.{profile}.harbor]",
                 'agent_name = "opencode"',
-                f'model_name = "{model}"',
+                f'model_name = "{profile_contract.harbor_model}"',
                 "attempts = 1",
                 "concurrency = 1",
             ]
         )
     config.write_text("\n".join(lines) + "\n")
     return project, config_root
+
+
+def _write_opencode_provider_config(
+    config_root: Path,
+    *,
+    profile: ProfileContract,
+    base_url: str,
+    max_input_tokens: int,
+    max_output_tokens: int,
+) -> None:
+    if profile.opencode_provider == "openai":
+        return
+    if profile.opencode_provider != "calibration":
+        raise ValueError("calibration OpenCode provider is unsupported")
+    path = config_root / "opencode/opencode.json"
+    path.parent.mkdir(parents=True, mode=0o700)
+    path.write_text(
+        canonical(
+            {
+                "$schema": "https://opencode.ai/config.json",
+                "provider": {
+                    "calibration": {
+                        "models": {
+                            profile.child_model: {
+                                "limit": {
+                                    "context": max_input_tokens,
+                                    "output": min(max_output_tokens, MAX_OUTPUT_TOKENS),
+                                },
+                                "name": "GLM-5.3 Flash calibration",
+                                "reasoning": True,
+                                "tool_call": True,
+                            }
+                        },
+                        "name": "tetrabench calibration",
+                        "npm": "@ai-sdk/openai-compatible",
+                        "options": {
+                            "apiKey": "{env:OPENAI_API_KEY}",
+                            "baseURL": base_url,
+                            "headerTimeout": 300_000,
+                        },
+                    }
+                },
+            }
+        )
+        + "\n"
+    )
 
 
 def _validate_metrics(record: dict[str, Any]) -> dict[str, Any]:
@@ -5043,6 +5240,13 @@ def _run_attempt(
                 private_home=home,
                 token=attempt_token,
                 base_url=f"http://{names.alias}:{DEFAULT_BROKER_PORT}/v1",
+            )
+            _write_opencode_provider_config(
+                config_root,
+                profile=profile_contract,
+                base_url=f"http://{names.alias}:{DEFAULT_BROKER_PORT}/v1",
+                max_input_tokens=model_pricing["max_input_tokens"],
+                max_output_tokens=model_pricing["max_output_tokens"],
             )
             executor = ThreadPoolExecutor(max_workers=1)
             command_future: Future[CommandResult] | None = None

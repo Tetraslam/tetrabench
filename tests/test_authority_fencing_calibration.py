@@ -264,6 +264,67 @@ def openrouter_responses_sse(
     return f"{comment}{event}data: {json.dumps(document)}\n\ndata: [DONE]\n\n".encode()
 
 
+def openrouter_chat_sse(
+    *,
+    response_id: str = "chat-test-1",
+    model: str = "z-ai/glm-5.3-flash",
+    finish_reason: str = "tool_calls",
+    usage_finish_reason: str | None = None,
+    choices: int = 1,
+) -> bytes:
+    base = {
+        "created": 1,
+        "id": response_id,
+        "model": model,
+        "object": "chat.completion.chunk",
+        "provider": "test",
+    }
+    documents = [
+        {
+            **base,
+            "choices": [
+                {
+                    "delta": {"content": "", "role": "assistant"},
+                    "finish_reason": None,
+                    "index": index,
+                    "native_finish_reason": None,
+                }
+                for index in range(choices)
+            ],
+        },
+        {
+            **base,
+            "choices": [
+                {
+                    "delta": {"content": "", "role": "assistant"},
+                    "finish_reason": finish_reason,
+                    "index": 0,
+                    "native_finish_reason": finish_reason,
+                }
+            ],
+        },
+        {
+            **base,
+            "choices": [
+                {
+                    "delta": {"content": "", "role": "assistant"},
+                    "finish_reason": usage_finish_reason or finish_reason,
+                    "index": 0,
+                    "native_finish_reason": usage_finish_reason or finish_reason,
+                }
+            ],
+            "usage": {
+                "completion_tokens": 3,
+                "cost": "0.00007",
+                "prompt_tokens": 2,
+                "total_tokens": 5,
+            },
+        },
+    ]
+    frames = "".join(f"data: {json.dumps(document)}\n\n" for document in documents)
+    return f"{frames}data: [DONE]\n\n".encode()
+
+
 def openrouter_generation(
     *,
     response_id: str = "gen-test-1",
@@ -559,13 +620,40 @@ def test_profiles_are_exact_ordered_and_candidate_only(tmp_path: Path) -> None:
     )
     assert config.count("[profiles.") == 8
     assert 'model_name = "openai/openai/gpt-5.6-sol"' in config
-    assert 'model_name = "openai/z-ai/glm-5.3-flash"' in config
+    assert 'model_name = "calibration/z-ai/glm-5.3-flash"' in config
     assert config.count('agent_name = "opencode"') == 2
     assert config.count("attempts = 1") == 2
     assert config.count("concurrency = 1") == 2
     catalog = (project / "benchmarks/catalog.toml").read_text()
     assert catalog.count('id = "authority-fencing"') == 1
     assert 'reward_policy = "binary"' in catalog
+
+
+def test_glm_profile_writes_content_free_openai_compatible_config(
+    tmp_path: Path,
+) -> None:
+    _project, config_root = calibration._write_project(tmp_path, calibration.TASK)
+    profile = calibration.PROFILE_CONTRACTS[1]
+    calibration._write_opencode_provider_config(
+        config_root,
+        profile=profile,
+        base_url="http://broker:62017/v1",
+        max_input_tokens=1_245_184,
+        max_output_tokens=131_072,
+    )
+    document = json.loads((config_root / "opencode/opencode.json").read_text())
+    provider = document["provider"]["calibration"]
+    assert provider["npm"] == "@ai-sdk/openai-compatible"
+    assert provider["options"] == {
+        "apiKey": "{env:OPENAI_API_KEY}",
+        "baseURL": "http://broker:62017/v1",
+        "headerTimeout": 300_000,
+    }
+    assert provider["models"]["z-ai/glm-5.3-flash"]["limit"] == {
+        "context": 1_245_184,
+        "output": calibration.MAX_OUTPUT_TOKENS,
+    }
+    assert "secret" not in json.dumps(document).lower()
 
 
 def test_backend_and_profile_contracts_are_immutable_and_separate() -> None:
@@ -1088,7 +1176,7 @@ def test_atif_token_metrics_are_mandatory_coherent_and_nonzero() -> None:
     ("profile", "model"),
     [
         ("target", "openai/openai/gpt-5.6-sol"),
-        ("alternate", "openai/z-ai/glm-5.3-flash"),
+        ("alternate", "calibration/z-ai/glm-5.3-flash"),
     ],
 )
 def test_production_cli_compiles_each_calibration_profile_without_model_access(
@@ -1946,6 +2034,65 @@ def test_openrouter_nonstream_settles_from_body_and_generation() -> None:
         "/api/v1/responses",
         "/api/v1/generation?id=gen-test-1",
     ]
+
+
+def test_openrouter_glm_streaming_chat_settles_exact_generation() -> None:
+    body = openrouter_chat_sse(model="z-ai/glm-5.3-flash-20260826")
+    with fake_upstream(
+        headers=[
+            ("Content-Type", "text/event-stream"),
+            ("X-Generation-Id", "chat-generation-1"),
+        ],
+        body=body,
+        queued_get_responses=[
+            (
+                HTTPStatus.OK,
+                [("Content-Type", "application/json")],
+                openrouter_generation(
+                    response_id="chat-generation-1",
+                    model="z-ai/glm-5.3-flash-20260826",
+                ),
+            )
+        ],
+    ) as upstream:
+        ledger = calibration.SpendLedger()
+        with running_broker(
+            upstream,
+            ledger=ledger,
+            backend=calibration.OPENROUTER_BACKEND,
+            model="z-ai/glm-5.3-flash",
+            canonical_model="z-ai/glm-5.3-flash-20260826",
+        ) as broker:
+            status, _headers, returned = request(
+                broker,
+                path="/v1/chat/completions",
+                document={
+                    "messages": [{"content": "redacted", "role": "user"}],
+                    "model": "z-ai/glm-5.3-flash",
+                    "stream": True,
+                },
+            )
+    assert status == 200
+    assert returned == body
+    assert ledger.cost == Decimal("0.00007")
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        openrouter_chat_sse(choices=2),
+        openrouter_chat_sse(usage_finish_reason="stop"),
+        openrouter_chat_sse() + b'data: {"post":"terminal"}\n\n',
+    ],
+)
+def test_openrouter_glm_streaming_chat_rejects_ambiguous_terminal(body: bytes) -> None:
+    with pytest.raises(ValueError, match="OpenRouter chat"):
+        calibration._parse_openrouter_chat_stream(
+            body,
+            expected_models=frozenset(
+                {"z-ai/glm-5.3-flash", "z-ai/glm-5.3-flash-20260826"}
+            ),
+        )
 
 
 def test_openrouter_nonstream_chat_normalizes_prompt_completion_usage() -> None:

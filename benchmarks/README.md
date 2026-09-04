@@ -327,18 +327,22 @@ a fixed safety margin. Before attempts begin, the available budget is divided
 deterministically into four clean allocations, or two debug allocations. They
 sum exactly, each covers one worst-case request, each broker receives only its
 allocation, and unused allocation is not spend. LiteLLM preserves its
-response-cost settlement behavior. OpenRouter Responses SSE accepts data-only
-frames and optional matching event lines while ignoring comments and blank
-separators. It accepts the documented `response.completed` and `response.done`
-successful terminals followed only by `[DONE]`.
+response-cost settlement behavior. GPT-5.6 Sol uses OpenRouter Responses SSE,
+which accepts data-only frames and optional matching event lines while ignoring
+comments and blank separators. It accepts the documented `response.completed`
+and `response.done` successful terminals followed only by `[DONE]`. GLM-5.3
+Flash uses OpenCode's documented `@ai-sdk/openai-compatible` adapter and
+streaming Chat Completions through the same broker. That parser requires one
+stable choice and identity, one finish transition, an optional final usage
+chunk repeating that finish reason, then `[DONE]`.
 Terminal usage cost is optional; when present it must equal authoritative
 generation `total_cost`. Responses input/output tokens and chat prompt/completion
 tokens normalize separately, then a bounded authenticated `/generation?id=...`
 cross-check requires exact ID, model, stream shape, cost, and token counts before
 bytes reach the child. A present `X-Generation-Id` header must match the terminal
 and remains bounded failure evidence if body validation fails. Generation 404
-retries only inside that settlement window
-and the attempt deadline. Streaming chat remains unsupported. Any ambiguity
+retries only inside that settlement window and the attempt deadline. Streaming
+chat for every other profile remains unsupported. Any ambiguity
 retains the full reservation. Direct compatible endpoints require explicit
 pricing and settlement adapters.
 
