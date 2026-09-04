@@ -143,7 +143,7 @@ MAX_OUTPUT_COST_PER_TOKEN = Decimal("50") / Decimal(1_000_000)
 RESERVATION_SAFETY_MARGIN = Decimal("0.25")
 MAX_OUTPUT_TOKENS = 65536
 MAX_REQUESTS = 64
-DENY_UPSTREAM_EXPECTED_REQUESTS = 6
+DENY_UPSTREAM_EXPECTED_REQUESTS = {"alternate": 9, "target": 6}
 MAX_CONCURRENCY = 2
 MAX_WORKERS = 4
 DEFAULT_BROKER_PORT = 62017
@@ -216,6 +216,8 @@ class BackendContract:
 class ProfileContract:
     name: str
     opencode_provider: str
+    opencode_npm: str | None
+    credential_env: str
     child_model: str
     broker_model: str
     upstream_model: str
@@ -263,6 +265,8 @@ PROFILE_CONTRACTS = (
     ProfileContract(
         name="target",
         opencode_provider="openai",
+        opencode_npm=None,
+        credential_env="OPENAI_API_KEY",
         child_model="openai/gpt-5.6-sol",
         broker_model="openai/gpt-5.6-sol",
         upstream_model="openai/gpt-5.6-sol",
@@ -270,11 +274,13 @@ PROFILE_CONTRACTS = (
     ),
     ProfileContract(
         name="alternate",
-        opencode_provider="calibration",
+        opencode_provider="zai",
+        opencode_npm="@ai-sdk/openai-compatible",
+        credential_env="ZAI_API_KEY",
         child_model="z-ai/glm-5.3-flash",
         broker_model="z-ai/glm-5.3-flash",
         upstream_model="z-ai/glm-5.3-flash",
-        harbor_model="calibration/z-ai/glm-5.3-flash",
+        harbor_model="zai/z-ai/glm-5.3-flash",
     ),
 )
 PROFILES = tuple((profile.name, profile.broker_model) for profile in PROFILE_CONTRACTS)
@@ -2587,7 +2593,11 @@ def sweep_calibration_run(run_id: str) -> dict[str, int]:
     return {"containers": removed_containers, "networks": removed_networks}
 
 
-def _compose_bytes(names: DockerAttemptNames, candidate_manifest_sha256: str) -> bytes:
+def _compose_bytes(
+    names: DockerAttemptNames,
+    candidate_manifest_sha256: str,
+    opencode_config_content: str | None = None,
+) -> bytes:
     network = names.network
     _safe_docker_name(network, "network name")
     main_labels = {
@@ -2599,6 +2609,12 @@ def _compose_bytes(names: DockerAttemptNames, candidate_manifest_sha256: str) ->
         for key, value in main_labels.items()
     )
     dns = "".join(f"      - {resolver}\n" for resolver in MAIN_DNS)
+    environment = (
+        "    environment:\n"
+        f"      OPENCODE_CONFIG_CONTENT: {json.dumps(opencode_config_content)}\n"
+        if opencode_config_content is not None
+        else ""
+    )
     return (
         "services:\n"
         "  main:\n"
@@ -2619,6 +2635,7 @@ def _compose_bytes(names: DockerAttemptNames, candidate_manifest_sha256: str) ->
         "      timeout: 2s\n"
         "      retries: 1800\n"
         "      start_period: 1s\n"
+        f"{environment}"
         "    dns:\n"
         f"{dns}"
         "    networks:\n"
@@ -2631,7 +2648,11 @@ def _compose_bytes(names: DockerAttemptNames, candidate_manifest_sha256: str) ->
 
 
 def create_task_overlay(
-    candidate: Path, destination: Path, names: DockerAttemptNames | str
+    candidate: Path,
+    destination: Path,
+    names: DockerAttemptNames | str,
+    *,
+    opencode_config_content: str | None = None,
 ) -> TaskOverlay:
     if isinstance(names, str):
         # Retained only for focused overlay tests. Production always binds all labels.
@@ -2642,7 +2663,9 @@ def create_task_overlay(
     candidate_manifest_sha256 = manifest_digest(candidate_manifest)
     _copy_verified_tree(candidate, destination)
     compose = destination / "environment/docker-compose.yaml"
-    compose.write_bytes(_compose_bytes(names, candidate_manifest_sha256))
+    compose.write_bytes(
+        _compose_bytes(names, candidate_manifest_sha256, opencode_config_content)
+    )
     compose.chmod(0o644)
     overlay_manifest = tree_manifest(destination)
     compose_relative = "environment/docker-compose.yaml"
@@ -4148,8 +4171,11 @@ def child_environment(
     private_home: Path,
     token: str,
     base_url: str,
+    credential_env: str = "OPENAI_API_KEY",
     ambient: Mapping[str, str] | None = None,
 ) -> dict[str, str]:
+    if credential_env not in {"OPENAI_API_KEY", "ZAI_API_KEY"}:
+        raise ValueError("child credential environment is unsupported")
     source = os.environ if ambient is None else ambient
     environment = {
         "PATH": "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
@@ -4159,15 +4185,16 @@ def child_environment(
         "XDG_CONFIG_HOME": str(config_root),
         "XDG_DATA_HOME": str(private_home / "data"),
         "XDG_STATE_HOME": str(private_home / "state"),
-        "OPENAI_API_KEY": token,
-        "OPENAI_BASE_URL": base_url,
+        credential_env: token,
     }
+    if credential_env == "OPENAI_API_KEY":
+        environment["OPENAI_BASE_URL"] = base_url
     for name in ("DOCKER_HOST", "DOCKER_CONTEXT", "LANG", "LC_ALL", "TZ"):
         if value := source.get(name):
             environment[name] = value
     for name in environment:
         upper = name.upper()
-        if name not in {"OPENAI_API_KEY", "OPENAI_BASE_URL"} and any(
+        if name not in {credential_env, "OPENAI_BASE_URL"} and any(
             marker in upper for marker in PROVIDER_ENV_MARKERS
         ):
             raise ValueError("child environment allowlist admitted a credential")
@@ -4228,49 +4255,48 @@ kind = "modal"
     return project, config_root
 
 
-def _write_opencode_provider_config(
-    config_root: Path,
+def _opencode_provider_config_content(
     *,
     profile: ProfileContract,
     base_url: str,
     max_input_tokens: int,
     max_output_tokens: int,
-) -> None:
-    if profile.opencode_provider == "openai":
-        return
-    if profile.opencode_provider != "calibration":
+) -> str | None:
+    if profile.opencode_npm is None:
+        return None
+    if (
+        profile.opencode_provider != "zai"
+        or profile.opencode_npm != "@ai-sdk/openai-compatible"
+    ):
         raise ValueError("calibration OpenCode provider is unsupported")
-    path = config_root / "opencode/opencode.json"
-    path.parent.mkdir(parents=True, mode=0o700)
-    path.write_text(
-        canonical(
-            {
-                "$schema": "https://opencode.ai/config.json",
-                "provider": {
-                    "calibration": {
-                        "models": {
-                            profile.child_model: {
-                                "limit": {
-                                    "context": max_input_tokens,
-                                    "output": min(max_output_tokens, MAX_OUTPUT_TOKENS),
-                                },
-                                "name": "GLM-5.3 Flash calibration",
-                                "reasoning": True,
-                                "tool_call": True,
-                            }
-                        },
-                        "name": "tetrabench calibration",
-                        "npm": "@ai-sdk/openai-compatible",
-                        "options": {
-                            "apiKey": "{env:OPENAI_API_KEY}",
-                            "baseURL": base_url,
-                            "headerTimeout": 300_000,
-                        },
-                    }
-                },
-            }
-        )
-        + "\n"
+    return canonical(
+        {
+            "$schema": "https://opencode.ai/config.json",
+            "model": profile.harbor_model,
+            "small_model": profile.harbor_model,
+            "provider": {
+                profile.opencode_provider: {
+                    "models": {
+                        profile.child_model: {
+                            "limit": {
+                                "context": max_input_tokens,
+                                "output": min(max_output_tokens, MAX_OUTPUT_TOKENS),
+                            },
+                            "name": "GLM-5.3 Flash calibration",
+                            "reasoning": True,
+                            "tool_call": True,
+                        }
+                    },
+                    "name": "tetrabench calibration",
+                    "npm": profile.opencode_npm,
+                    "options": {
+                        "apiKey": f"{{env:{profile.credential_env}}}",
+                        "baseURL": base_url,
+                        "headerTimeout": 300_000,
+                    },
+                }
+            },
+        }
     )
 
 
@@ -5016,12 +5042,15 @@ def _fallback_attempt_spend(
     }
 
 
-def _validate_deny_upstream_ledger(document: Mapping[str, Any]) -> None:
+def _validate_deny_upstream_ledger(
+    document: Mapping[str, Any], *, profile: str
+) -> None:
+    expected_requests = DENY_UPSTREAM_EXPECTED_REQUESTS[profile]
     requests = document.get("requests")
     if (
-        document.get("request_count") != DENY_UPSTREAM_EXPECTED_REQUESTS
+        document.get("request_count") != expected_requests
         or not isinstance(requests, list)
-        or len(requests) != DENY_UPSTREAM_EXPECTED_REQUESTS
+        or len(requests) != expected_requests
         or document.get("known_actual_cost_usd") != "0"
         or Decimal(document.get("retained_unknown_reservation_usd", "-1")) != 0
     ):
@@ -5183,7 +5212,19 @@ def _run_attempt(
     attempt_root = private_root / f"attempt-{ordinal}"
     attempt_root.mkdir(mode=0o700)
     names = _docker_names(run_id, ordinal)
-    overlay = create_task_overlay(snapshot.task, attempt_root / "task-overlay", names)
+    base_url = f"http://{names.alias}:{DEFAULT_BROKER_PORT}/v1"
+    opencode_config_content = _opencode_provider_config_content(
+        profile=profile_contract,
+        base_url=base_url,
+        max_input_tokens=model_pricing["max_input_tokens"],
+        max_output_tokens=model_pricing["max_output_tokens"],
+    )
+    overlay = create_task_overlay(
+        snapshot.task,
+        attempt_root / "task-overlay",
+        names,
+        opencode_config_content=opencode_config_content,
+    )
     project, config_root = _write_project(attempt_root / "execution", overlay.task)
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", DeprecationWarning)
@@ -5239,14 +5280,8 @@ def _run_attempt(
                 config_root=config_root,
                 private_home=home,
                 token=attempt_token,
-                base_url=f"http://{names.alias}:{DEFAULT_BROKER_PORT}/v1",
-            )
-            _write_opencode_provider_config(
-                config_root,
-                profile=profile_contract,
-                base_url=f"http://{names.alias}:{DEFAULT_BROKER_PORT}/v1",
-                max_input_tokens=model_pricing["max_input_tokens"],
-                max_output_tokens=model_pricing["max_output_tokens"],
+                base_url=base_url,
+                credential_env=profile_contract.credential_env,
             )
             executor = ThreadPoolExecutor(max_workers=1)
             command_future: Future[CommandResult] | None = None
@@ -5355,7 +5390,7 @@ def _run_attempt(
                 if ledger["fatal"] is not None:
                     raise ValueError("calibration attempt ledger is fatal")
                 if debug_deny_upstream:
-                    _validate_deny_upstream_ledger(ledger)
+                    _validate_deny_upstream_ledger(ledger, profile=profile)
                 return security, ledger
 
             security_evidence, ledger_document = _run_phase(

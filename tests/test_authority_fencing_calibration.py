@@ -620,7 +620,7 @@ def test_profiles_are_exact_ordered_and_candidate_only(tmp_path: Path) -> None:
     )
     assert config.count("[profiles.") == 8
     assert 'model_name = "openai/openai/gpt-5.6-sol"' in config
-    assert 'model_name = "calibration/z-ai/glm-5.3-flash"' in config
+    assert 'model_name = "zai/z-ai/glm-5.3-flash"' in config
     assert config.count('agent_name = "opencode"') == 2
     assert config.count("attempts = 1") == 2
     assert config.count("concurrency = 1") == 2
@@ -629,23 +629,20 @@ def test_profiles_are_exact_ordered_and_candidate_only(tmp_path: Path) -> None:
     assert 'reward_policy = "binary"' in catalog
 
 
-def test_glm_profile_writes_content_free_openai_compatible_config(
-    tmp_path: Path,
-) -> None:
-    _project, config_root = calibration._write_project(tmp_path, calibration.TASK)
+def test_glm_profile_produces_content_free_openai_compatible_config() -> None:
     profile = calibration.PROFILE_CONTRACTS[1]
-    calibration._write_opencode_provider_config(
-        config_root,
+    content = calibration._opencode_provider_config_content(
         profile=profile,
         base_url="http://broker:62017/v1",
         max_input_tokens=1_245_184,
         max_output_tokens=131_072,
     )
-    document = json.loads((config_root / "opencode/opencode.json").read_text())
-    provider = document["provider"]["calibration"]
+    assert content is not None
+    document = json.loads(content)
+    provider = document["provider"]["zai"]
     assert provider["npm"] == "@ai-sdk/openai-compatible"
     assert provider["options"] == {
-        "apiKey": "{env:OPENAI_API_KEY}",
+        "apiKey": "{env:ZAI_API_KEY}",
         "baseURL": "http://broker:62017/v1",
         "headerTimeout": 300_000,
     }
@@ -653,7 +650,29 @@ def test_glm_profile_writes_content_free_openai_compatible_config(
         "context": 1_245_184,
         "output": calibration.MAX_OUTPUT_TOKENS,
     }
+    assert document["model"] == "zai/z-ai/glm-5.3-flash"
+    assert document["small_model"] == "zai/z-ai/glm-5.3-flash"
     assert "secret" not in json.dumps(document).lower()
+
+
+def test_glm_config_is_injected_into_harbor_main_environment(tmp_path: Path) -> None:
+    content = calibration._opencode_provider_config_content(
+        profile=calibration.PROFILE_CONTRACTS[1],
+        base_url="http://broker:62017/v1",
+        max_input_tokens=1_245_184,
+        max_output_tokens=131_072,
+    )
+    assert content is not None
+    overlay = calibration.create_task_overlay(
+        calibration.TASK,
+        tmp_path / "overlay",
+        "tb-cal-safe-1",
+        opencode_config_content=content,
+    )
+    compose = (overlay.task / "environment/docker-compose.yaml").read_text()
+    assert "    environment:\n" in compose
+    assert f"      OPENCODE_CONFIG_CONTENT: {json.dumps(content)}\n" in compose
+    assert TEST_OPENROUTER_KEY not in content
 
 
 def test_backend_and_profile_contracts_are_immutable_and_separate() -> None:
@@ -1176,7 +1195,7 @@ def test_atif_token_metrics_are_mandatory_coherent_and_nonzero() -> None:
     ("profile", "model"),
     [
         ("target", "openai/openai/gpt-5.6-sol"),
-        ("alternate", "calibration/z-ai/glm-5.3-flash"),
+        ("alternate", "zai/z-ai/glm-5.3-flash"),
     ],
 )
 def test_production_cli_compiles_each_calibration_profile_without_model_access(
@@ -4580,7 +4599,7 @@ def test_deny_upstream_rejects_any_forwarded_request() -> None:
             "upstream_opened": False,
             "usage": {},
         }
-        for _ in range(calibration.DENY_UPSTREAM_EXPECTED_REQUESTS)
+        for _ in range(calibration.DENY_UPSTREAM_EXPECTED_REQUESTS["target"])
     ]
     requests[-1]["upstream_opened"] = True
     with pytest.raises(
@@ -4592,7 +4611,8 @@ def test_deny_upstream_rejects_any_forwarded_request() -> None:
                 "request_count": len(requests),
                 "requests": requests,
                 "retained_unknown_reservation_usd": "0",
-            }
+            },
+            profile="target",
         )
 
 
