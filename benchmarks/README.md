@@ -350,8 +350,9 @@ expired. Expiry is checked under the token lock, rejects without consuming the
 token, and permanently invalidates the broker. One attempt per profile is debug
 mode only, while retained proof requires all four attempts from a clean committed
 snapshot. Native ATIF aggregate prompt and completion tokens must both be
-positive, cached tokens may
-be zero, and all three must agree with Harbor's native trial and job metrics.
+positive. Harbor 0.22's native null aggregate cache count is normalized to zero;
+nonzero cached tokens remain exact integers. All three totals must agree with
+Harbor's native trial and job metrics.
 The `$50` budget applies independently to each exact-four invocation and is
 split into four `$12.50` allocations. Historical known spend and retained
 unknown exposure remain accounting evidence but do not reduce a later

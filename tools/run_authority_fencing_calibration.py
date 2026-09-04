@@ -4085,15 +4085,17 @@ def _validate_metrics(record: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(metrics, dict):
         raise ValueError("OpenCode ATIF token metrics are missing")
     retained: dict[str, Any] = {}
-    for name in (
-        "total_prompt_tokens",
-        "total_completion_tokens",
-        "total_cached_tokens",
-    ):
+    for name in ("total_prompt_tokens", "total_completion_tokens"):
         value = metrics.get(name)
         if type(value) is not int or value < 0:
             raise ValueError("OpenCode ATIF metrics are invalid")
         retained[name] = value
+    cached_value = metrics.get("total_cached_tokens")
+    if cached_value is None:
+        cached_value = 0
+    if type(cached_value) is not int or cached_value < 0:
+        raise ValueError("OpenCode ATIF metrics are invalid")
+    retained["total_cached_tokens"] = cached_value
     prompt = retained["total_prompt_tokens"]
     completion = retained["total_completion_tokens"]
     cached = retained["total_cached_tokens"]

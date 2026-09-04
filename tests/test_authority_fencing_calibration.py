@@ -1050,15 +1050,18 @@ def test_atif_token_metrics_are_mandatory_coherent_and_nonzero() -> None:
         }
     }
     assert calibration._validate_metrics(record)["total_tokens"] == 15
-    for field in (
-        "total_prompt_tokens",
-        "total_completion_tokens",
-        "total_cached_tokens",
-    ):
+    no_cache = json.loads(json.dumps(record))
+    no_cache["trajectory"]["final_metrics"]["total_cached_tokens"] = None
+    assert calibration._validate_metrics(no_cache)["total_cached_tokens"] == 0
+    for field in ("total_prompt_tokens", "total_completion_tokens"):
         invalid = json.loads(json.dumps(record))
         invalid["trajectory"]["final_metrics"][field] = None
         with pytest.raises(ValueError, match="ATIF metrics"):
             calibration._validate_metrics(invalid)
+    invalid = json.loads(json.dumps(record))
+    invalid["trajectory"]["final_metrics"]["total_cached_tokens"] = "0"
+    with pytest.raises(ValueError, match="ATIF metrics"):
+        calibration._validate_metrics(invalid)
     invalid = json.loads(json.dumps(record))
     invalid["trajectory"]["final_metrics"].update(
         total_prompt_tokens=0, total_completion_tokens=0
