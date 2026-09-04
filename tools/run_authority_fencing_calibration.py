@@ -268,10 +268,10 @@ PROFILE_CONTRACTS = (
     ),
     ProfileContract(
         name="alternate",
-        child_model="anthropic/claude-sonnet-5",
-        broker_model="anthropic/claude-sonnet-5",
-        upstream_model="anthropic/claude-sonnet-5",
-        harbor_model="openai/anthropic/claude-sonnet-5",
+        child_model="z-ai/glm-5.3-flash",
+        broker_model="z-ai/glm-5.3-flash",
+        upstream_model="z-ai/glm-5.3-flash",
+        harbor_model="openai/z-ai/glm-5.3-flash",
     ),
 )
 PROFILES = tuple((profile.name, profile.broker_model) for profile in PROFILE_CONTRACTS)
@@ -1867,14 +1867,14 @@ def _openrouter_pricing_values(pricing: Any) -> dict[str, Decimal]:
         price = _nonnegative_decimal(value, field)
         if field in OPENROUTER_REACHABLE_UNRESERVED_PRICE_FIELDS and price != 0:
             raise ValueError("OpenRouter unsupported paid pricing is nonzero")
-    required = ("prompt", "completion", "input_cache_read", "input_cache_write")
+    required = ("prompt", "completion", "input_cache_read")
     values = {field: _positive_decimal(pricing.get(field), field) for field in required}
     write_tiers = [
         _positive_decimal(value, field)
         for field, value in pricing.items()
         if field.startswith("input_cache_write")
     ]
-    values["input_cache_write"] = max(write_tiers)
+    values["input_cache_write"] = max(write_tiers, default=values["prompt"])
     return values
 
 

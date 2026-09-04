@@ -286,7 +286,7 @@ provenance, and no surviving child or current-run Docker residue.
 
 The source-only calibration runner fixes the ordered profiles `target`
 (`openai/openai/gpt-5.6-sol`) and `alternate`
-(`openai/anthropic/claude-sonnet-5`) at two unretried attempts each. Immutable
+(`openai/z-ai/glm-5.3-flash`) at two unretried attempts each. Immutable
 profile records separately bind Harbor, child, broker, and upstream model
 identities. OpenRouter is the default personal backend; LiteLLM is an explicit
 optional work backend. Calibration runs the topology probe first, reads the
@@ -294,9 +294,11 @@ selected backend's authenticated pricing second, and starts attempts last.
 OpenRouter `/models` pricing takes conservative maxima across every flat
 conditional override, including prompt thresholds and UTC windows, and every
 cache-write tier. Unknown override conditions or pricing keys fail closed.
-LiteLLM retains `/model/info`. Both require finite
-positive input, output, cache-read, and cache-write rates plus positive model
-limits for exactly the selected models. Input and cache rates above `$10` per
+LiteLLM retains `/model/info`. Both require finite positive input, output, and
+cache-read rates plus positive model limits for exactly the selected models. An
+OpenRouter model with no advertised cache-write price reserves cache writes at
+its positive prompt rate; advertised cache-write tiers remain part of the
+conservative maximum. Input and cache rates above `$10` per
 million tokens or output rates above `$50` per million make calibration fail.
 Nonzero per-request or internal-reasoning charges also fail. Known media/search
 rates are accepted only where request admission makes their triggers unreachable.

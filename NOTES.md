@@ -1702,3 +1702,13 @@ Retries 25 and 25b failed before pricing with zero attempts because the launcher
 Historical accounting after retry 33 is `$16.1873954` known cost plus `$35.074823975` conservatively retained unknown exposure. These totals remain evidence and do not consume a later invocation's cap.
 
 Pinned Harbor 0.22 proves the deterministic native mismatch: `FinalMetrics.total_cached_tokens` is optional, OpenCode emits null when total cache reads are zero, and `populate_context_post_run` records that same value as integer zero in `AgentContext.n_cache_tokens`. D-129 normalizes only this native null representation to zero before retaining exact ATIF/trial/job agreement. Prompt and completion metrics remain mandatory positive integers, and nonzero cache values remain exact. All 474 focused calibration tests, Ruff check/format, ty, and `git diff --check` pass after the correction.
+
+## 2026-09-03T22:11:07-07:00: GLM-5.3 Flash replaces the alternate profile
+
+Provenance: explicit user instruction; authenticated OpenRouter `/models`; clean D-129 retries; focused local Python 3.12 validation; Docker residue inspection. Full request and generation identifiers remain private.
+
+Retries 34 through 45 retained the exact per-invocation `$50` boundary and left no owned Docker resource. D-129 passed live when retry 36 completed both target attempts and its first alternate attempt through native validation; the fourth attempt stopped at `cli_wait`. Other retries stopped at bounded CLI or provider-settlement boundaries. Historical accounting after retry 45 is `$23.3519015` known cost plus `$79.544363975` conservatively retained unknown exposure. These totals remain evidence and do not consume later invocation caps.
+
+The user replaced the slow `anthropic/claude-sonnet-5` alternate with GLM-5.3 Flash. OpenRouter's authenticated row identifies exact model `z-ai/glm-5.3-flash`, canonical slug `z-ai/glm-5.3-flash-20260826`, context length 1,310,720, maximum completion tokens 131,072, prompt price `$0.000000075` per token, completion price `$0.00000025`, and cache-read price `$0.000000015`. It advertises no cache-write support or price. D-130 conservatively uses the positive prompt rate for cache-write reservation only when every cache-write price is absent; advertised tiers still contribute to the maximum, and exact response settlement remains mandatory.
+
+The fixed exact-four shape is now two `openai/gpt-5.6-sol` and two `z-ai/glm-5.3-flash` attempts. All 474 focused calibration tests, Ruff check/format, ty, and `git diff --check` pass.

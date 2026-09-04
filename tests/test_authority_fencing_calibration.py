@@ -466,6 +466,14 @@ def openrouter_pricing_document() -> dict[str, Any]:
             "input_cache_write": "0.0000045",
         },
     ]
+    alternate = {
+        **base,
+        "prompt": "0.000000075",
+        "completion": "0.00000025",
+        "input_cache_read": "0.000000015",
+    }
+    alternate.pop("input_cache_write")
+    alternate.pop("input_cache_write_1h")
     return {
         "data": [
             {
@@ -476,11 +484,11 @@ def openrouter_pricing_document() -> dict[str, Any]:
                 "pricing": target,
             },
             {
-                "id": "anthropic/claude-sonnet-5",
-                "canonical_slug": "anthropic/claude-sonnet-5-20260630",
-                "context_length": 1000000,
-                "top_provider": {"max_completion_tokens": 128000},
-                "pricing": base,
+                "id": "z-ai/glm-5.3-flash",
+                "canonical_slug": "z-ai/glm-5.3-flash-20260826",
+                "context_length": 1310720,
+                "top_provider": {"max_completion_tokens": 131072},
+                "pricing": alternate,
             },
             {"id": "unrelated", "pricing": {"prompt": "99"}},
         ]
@@ -547,11 +555,11 @@ def test_profiles_are_exact_ordered_and_candidate_only(tmp_path: Path) -> None:
     config = (config_root / "tetrabench/config.toml").read_text()
     assert calibration.PROFILES == (
         ("target", "openai/gpt-5.6-sol"),
-        ("alternate", "anthropic/claude-sonnet-5"),
+        ("alternate", "z-ai/glm-5.3-flash"),
     )
     assert config.count("[profiles.") == 8
     assert 'model_name = "openai/openai/gpt-5.6-sol"' in config
-    assert 'model_name = "openai/anthropic/claude-sonnet-5"' in config
+    assert 'model_name = "openai/z-ai/glm-5.3-flash"' in config
     assert config.count('agent_name = "opencode"') == 2
     assert config.count("attempts = 1") == 2
     assert config.count("concurrency = 1") == 2
@@ -667,10 +675,8 @@ def test_openrouter_models_pricing_preserves_base_path_and_takes_override_maxima
         "output_cost_per_token": "0.000015",
         "pricing_source": "/models",
     }
-    assert snapshot.models[1]["cache_creation_input_token_cost"] == "0.000004"
-    assert snapshot.models[1]["canonical_model"] == (
-        "anthropic/claude-sonnet-5-20260630"
-    )
+    assert snapshot.models[1]["cache_creation_input_token_cost"] == "7.5E-8"
+    assert snapshot.models[1]["canonical_model"] == "z-ai/glm-5.3-flash-20260826"
 
 
 @pytest.mark.parametrize("model_index", [0, 1])
@@ -1082,7 +1088,7 @@ def test_atif_token_metrics_are_mandatory_coherent_and_nonzero() -> None:
     ("profile", "model"),
     [
         ("target", "openai/openai/gpt-5.6-sol"),
-        ("alternate", "openai/anthropic/claude-sonnet-5"),
+        ("alternate", "openai/z-ai/glm-5.3-flash"),
     ],
 )
 def test_production_cli_compiles_each_calibration_profile_without_model_access(
@@ -1791,10 +1797,7 @@ def test_openrouter_stream_accepts_data_only_or_matching_event_with_comments(
     ("model", "canonical_model"),
     [
         ("openai/gpt-5.6-sol", "openai/gpt-5.6-sol-20260709"),
-        (
-            "anthropic/claude-sonnet-5",
-            "anthropic/claude-sonnet-5-20260630",
-        ),
+        ("z-ai/glm-5.3-flash", "z-ai/glm-5.3-flash-20260826"),
     ],
 )
 def test_openrouter_stream_settles_provider_declared_canonical_model(
@@ -2519,7 +2522,7 @@ def test_top_level_non_text_modalities_audio_and_prediction_are_rejected(
         ({"path": "/v1/models"}, 400),
         ({"path": "/v1/../models"}, 400),
         ({"path": "/v1/responses?admin=true"}, 400),
-        ({"document": {"model": "anthropic/claude-sonnet-5"}}, 400),
+        ({"document": {"model": "z-ai/glm-5.3-flash"}}, 400),
         (
             {
                 "document": {
@@ -5055,7 +5058,7 @@ def test_native_record_failures_retain_only_closed_boundary(
     attempt = calibration._started_attempt(
         ordinal=1,
         profile="alternate",
-        model_group="anthropic/claude-sonnet-5",
+        model_group="z-ai/glm-5.3-flash",
     )
 
     with pytest.raises(calibration.CalibrationStageError) as caught:
