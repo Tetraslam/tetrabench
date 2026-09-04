@@ -336,6 +336,8 @@ def openrouter_generation(
     output_tokens: int = 3,
     native_input_tokens: int | None = None,
     native_output_tokens: int | None = None,
+    cancelled: bool = False,
+    finish_reason: str = "tool_calls",
 ) -> bytes:
     return json.dumps(
         {
@@ -344,6 +346,8 @@ def openrouter_generation(
                 "upstream_id": upstream_id or response_id,
                 "model": model,
                 "streamed": streamed,
+                "cancelled": cancelled,
+                "finish_reason": finish_reason,
                 "total_cost": cost,
                 "usage": cost,
                 "tokens_prompt": input_tokens,
@@ -2094,6 +2098,75 @@ def test_openrouter_glm_streaming_chat_settles_exact_generation() -> None:
     assert status == 200
     assert returned == body
     assert ledger.cost == Decimal("0.00007")
+
+
+def test_openrouter_empty_glm_stream_settles_cost_and_allows_retry() -> None:
+    generation_headers = [
+        ("Content-Type", "text/event-stream"),
+        ("X-Generation-Id", "empty-generation-1"),
+    ]
+    with fake_upstream(
+        headers=generation_headers,
+        body=b"",
+        queued_get_responses=[
+            (
+                HTTPStatus.OK,
+                [("Content-Type", "application/json")],
+                openrouter_generation(
+                    response_id="empty-generation-1",
+                    model="z-ai/glm-5.3-flash-20260826",
+                ),
+            )
+        ],
+    ) as upstream:
+        ledger = calibration.SpendLedger()
+        with running_broker(
+            upstream,
+            ledger=ledger,
+            backend=calibration.OPENROUTER_BACKEND,
+            model="z-ai/glm-5.3-flash",
+            canonical_model="z-ai/glm-5.3-flash-20260826",
+        ) as broker:
+            document = {
+                "messages": [{"content": "redacted", "role": "user"}],
+                "model": "z-ai/glm-5.3-flash",
+                "stream": True,
+            }
+            assert (
+                request(broker, path="/v1/chat/completions", document=document)[0]
+                == 502
+            )
+            assert ledger.cost == Decimal("0.00007")
+            assert ledger.reserved == 0
+            assert ledger.fatal is None
+            assert broker.state.records[0].settlement == "settled"
+            assert broker.state.records[0].settlement_failure == "empty_stream_delivery"
+
+            upstream.body = openrouter_chat_sse(
+                response_id="chat-generation-2",
+                model="z-ai/glm-5.3-flash-20260826",
+            )
+            upstream.response_headers = [
+                ("Content-Type", "text/event-stream"),
+                ("X-Generation-Id", "chat-generation-2"),
+            ]
+            upstream.queued_get_responses.append(
+                (
+                    HTTPStatus.OK,
+                    [("Content-Type", "application/json")],
+                    openrouter_generation(
+                        response_id="chat-generation-2",
+                        model="z-ai/glm-5.3-flash-20260826",
+                    ),
+                )
+            )
+            assert (
+                request(broker, path="/v1/chat/completions", document=document)[0]
+                == 200
+            )
+            assert ledger.cost == Decimal("0.00014")
+            assert ledger.reserved == 0
+            assert ledger.fatal is None
 
 
 @pytest.mark.parametrize(

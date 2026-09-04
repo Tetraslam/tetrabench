@@ -1718,10 +1718,52 @@ def _validate_openrouter_generation(
     return total_cost
 
 
+def _validate_openrouter_delivery_failure_generation(
+    body: bytes,
+    *,
+    expected_id: str,
+    expected_models: frozenset[str],
+    expected_streamed: bool,
+) -> Decimal:
+    document = _strict_json_decimal(body)
+    if not isinstance(document, dict) or not isinstance(document.get("data"), dict):
+        raise OpenRouterSettlementError("generation_schema")
+    generation = document["data"]
+    if generation.get("id") != expected_id:
+        raise OpenRouterSettlementError("generation_id_mismatch")
+    try:
+        generation_model = _response_identifier(generation.get("model"))
+    except ValueError as error:
+        raise OpenRouterSettlementError("generation_model_malformed") from error
+    if generation_model not in expected_models:
+        raise OpenRouterSettlementError("generation_model_mismatch")
+    if generation.get("streamed") is not expected_streamed:
+        raise OpenRouterSettlementError("generation_stream_mismatch")
+    if generation.get("cancelled") is not False or generation.get(
+        "finish_reason"
+    ) not in {"content_filter", "length", "stop", "tool_calls"}:
+        raise OpenRouterSettlementError("generation_terminal_mismatch")
+    try:
+        total_cost = _stream_cost(generation.get("total_cost"))
+        usage_cost = _stream_cost(generation.get("usage"))
+    except ValueError as error:
+        raise OpenRouterSettlementError("generation_cost_malformed") from error
+    if usage_cost != total_cost:
+        raise OpenRouterSettlementError("generation_cost_mismatch")
+    try:
+        _usage_token_count(generation.get("tokens_prompt"))
+        _usage_token_count(generation.get("tokens_completion"))
+        _usage_token_count(generation.get("native_tokens_prompt"))
+        _usage_token_count(generation.get("native_tokens_completion"))
+    except ValueError as error:
+        raise OpenRouterSettlementError("generation_native_tokens_malformed") from error
+    return total_cost
+
+
 def _poll_openrouter_generation(
     state: BrokerState,
     *,
-    settlement: SettlementResult,
+    settlement: SettlementResult | None,
     generation_id: str | None,
     streamed: bool,
 ) -> Decimal:
@@ -1730,7 +1772,12 @@ def _poll_openrouter_generation(
         raise ValueError("backend generation adapter is missing")
     parsed = _parse_upstream_url(state.upstream_url)
     deadline = min(state.deadline, time.monotonic() + SETTLEMENT_WINDOW_SECONDS)
-    lookup_id = generation_id or settlement.response_id
+    if generation_id is not None:
+        lookup_id = generation_id
+    elif settlement is not None:
+        lookup_id = settlement.response_id
+    else:
+        raise ValueError("OpenRouter generation identity is missing")
     path = (
         _join_upstream_path(parsed.path, generation_path)
         + "?"
@@ -1769,6 +1816,13 @@ def _poll_openrouter_generation(
                 if time.monotonic() + SETTLEMENT_POLL_SECONDS >= deadline:
                     raise TimeoutError("OpenRouter generation settlement timed out")
             elif response.status == HTTPStatus.OK:
+                if settlement is None:
+                    return _validate_openrouter_delivery_failure_generation(
+                        body,
+                        expected_id=lookup_id,
+                        expected_models=state.response_models,
+                        expected_streamed=streamed,
+                    )
                 return _validate_openrouter_generation(
                     body,
                     expected_id=lookup_id,
@@ -3101,6 +3155,8 @@ class CalibrationBrokerHandler(BaseHTTPRequestHandler):
         settlement = "unforwarded"
         settlement_failure: str | None = None
         response: http.client.HTTPResponse | None = None
+        response_body = b""
+        response_body_read = False
         forwarding = ForwardingAdmission()
         upstream_opened = False
         try:
@@ -3164,6 +3220,7 @@ class CalibrationBrokerHandler(BaseHTTPRequestHandler):
                 response_body = _read_bounded_response(
                     response, upstream, state, declared_length
                 )
+                response_body_read = True
                 if stream:
                     if state.backend.name == OPENROUTER_BACKEND.name:
                         if endpoint == "/v1/chat/completions":
@@ -3227,6 +3284,30 @@ class CalibrationBrokerHandler(BaseHTTPRequestHandler):
             if isinstance(error, OpenRouterSettlementError):
                 settlement_failure = error.code
             potentially_paid = potentially_paid or forwarding.started
+            recovered_delivery_cost = False
+            if (
+                state.backend.name == OPENROUTER_BACKEND.name
+                and endpoint == "/v1/chat/completions"
+                and status == HTTPStatus.OK
+                and request_id is not None
+                and response_body_read
+                and not response_body
+            ):
+                try:
+                    cost = _poll_openrouter_generation(
+                        state,
+                        settlement=None,
+                        generation_id=request_id,
+                        streamed=True,
+                    )
+                except (OSError, http.client.HTTPException, RuntimeError, ValueError):
+                    cost = None
+                else:
+                    state.finish_request(reservation, cost)
+                    settlement = "settled"
+                    settlement_failure = "empty_stream_delivery"
+                    settlement_finalized = True
+                    recovered_delivery_cost = True
             if reservation is not None and not settlement_finalized:
                 try:
                     if cost is not None:
@@ -3243,7 +3324,7 @@ class CalibrationBrokerHandler(BaseHTTPRequestHandler):
                         settlement = "released_unforwarded"
                 finally:
                     settlement_finalized = True
-            if state.ledger.fatal is None:
+            if state.ledger.fatal is None and not recovered_delivery_cost:
                 state.ledger.fail("broker upstream response invalid")
             self._reject(HTTPStatus.BAD_GATEWAY, "upstream rejected")
         finally:
