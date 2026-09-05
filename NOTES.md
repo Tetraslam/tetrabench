@@ -1928,3 +1928,9 @@ Provenance: GitHub Actions run `33942304718`; Codex review on PR 27; focused and
 Both hosted jobs passed. Codex reported two valid findings. Python equality made numeric zero and false collide in the nonterminal cancellation set, contrary to D-137's exact null-or-false contract; explicit singleton checks now reject integer and float zero. The benchmark README also retained retry-64 unproven prose after retry-65 admission; it now records the successful proof and current.... Historical accounting is unchanged. The focused four-case cancellation matrix, all 1,270 non-Docker tests, Ruff check/format, ty, and `git diff --check` pass. Both fixes await push, hosted rerun, and thread resolution.
 
 Correction: `current....` in the preceding entry means `current retry-65 accounting`.
+
+## 2026-09-04T21:18:15-07:00: Authority-fencing admission merged and verified
+
+Provenance: PR 27; reviewed head `e91a77c`; squash merge `9c0dc9887b23f54c76069185a1850191651388ba`; GitHub Actions runs `33943113421` and `33943684409`; fresh `origin/master` inspection.
+
+The reviewed-head rerun passed Python 3.12 and full-history Gitleaks. No second Codex finding appeared, and both first-round threads remained resolved. PR 27 merged into `master`. Post-merge CI again passed both jobs. Fresh remote inspection found merge commit `9c0dc98` at `origin/master`, one binary `authority-fencing` production-catalog entry, retry-65 proven calibration text, and the admitted implementation status. The authority-fencing admission loop is complete.
