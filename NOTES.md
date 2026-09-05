@@ -1920,3 +1920,11 @@ The exact clean source revision, two attempts per fixed profile, four `$12.50` a
 Provenance: current worktree; production catalog; full repository validation and package build.
 
 All 1,268 non-Docker tests and all 11 required Docker tests pass against the admitted catalog. Offline doctor, the canonical runnable one-trial systems-design plan, sealed fixture validation, Ruff check/format, ty, Bandit, actionlint, `uv lock --check`, wheel/sdist build, package-content checks, all-groups pip-audit, and `git diff --check` pass. The source distribution contains the admitted task fixture and the wheel remains code-only. Hosted CI, review, merge, and post-merge validation remain pending.
+
+## 2026-09-04T20:52:56-07:00: PR 27 first review adjudication
+
+Provenance: GitHub Actions run `33942304718`; Codex review on PR 27; focused and full local regressions.
+
+Both hosted jobs passed. Codex reported two valid findings. Python equality made numeric zero and false collide in the nonterminal cancellation set, contrary to D-137's exact null-or-false contract; explicit singleton checks now reject integer and float zero. The benchmark README also retained retry-64 unproven prose after retry-65 admission; it now records the successful proof and current.... Historical accounting is unchanged. The focused four-case cancellation matrix, all 1,270 non-Docker tests, Ruff check/format, ty, and `git diff --check` pass. Both fixes await push, hosted rerun, and thread resolution.
+
+Correction: `current....` in the preceding entry means `current retry-65 accounting`.

@@ -1759,7 +1759,8 @@ def _validate_openrouter_delivery_failure_generation(
         raise OpenRouterSettlementError("generation_id_mismatch")
     finish_reason = generation.get("finish_reason")
     if finish_reason is None:
-        if generation.get("cancelled") not in {None, False}:
+        cancelled = generation.get("cancelled")
+        if cancelled is not None and cancelled is not False:
             raise OpenRouterSettlementError("generation_terminal_mismatch")
         raise OpenRouterSettlementError("generation_nonterminal")
     try:

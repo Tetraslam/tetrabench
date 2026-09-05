@@ -2256,7 +2256,10 @@ def test_openrouter_empty_stream_polls_nonterminal_generation_until_terminal() -
     assert ledger.fatal is None
 
 
-def test_openrouter_empty_stream_does_not_retry_cancelled_generation() -> None:
+@pytest.mark.parametrize("cancelled", [True, 0, 0.0])
+def test_openrouter_empty_stream_does_not_retry_invalid_cancelled_generation(
+    cancelled: Any,
+) -> None:
     with fake_upstream(
         headers=[
             ("Content-Type", "text/event-stream"),
@@ -2270,7 +2273,7 @@ def test_openrouter_empty_stream_does_not_retry_cancelled_generation() -> None:
                 openrouter_generation(
                     response_id="empty-generation-1",
                     model="z-ai/glm-5.3-flash-20260826",
-                    cancelled=True,
+                    cancelled=cancelled,
                     finish_reason=None,
                 ),
             ),
