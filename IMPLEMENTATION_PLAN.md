@@ -3,8 +3,8 @@
 ## Status
 
 - Project state: P0 through P6 are complete for their local/static contracts. Live Tigris/Modal evidence includes cancellation, forced controller interruption/recovery, and the E-046 Single-region `iad` cutover. Current live provider IAM/privacy/encryption state, AWS behavior, and true provider preemption remain `unproven`.
-- Current action: `systems-design/authority-fencing` is admitted on `master` through merged PR 27 after complete local, detached, reward-forgery, exact-four calibration, review, and post-merge CI evidence.
-- Next action: no `authority-fencing` admission work remains. `atomic-outbox` is the next planned systems-design candidate. The exact E-021/E-023 live IAM/privacy/encryption probes, AWS consistency probe, and real provider-initiated Modal preemption remain optional evidence gaps for the current Tigris/Modal user path.
+- Current action: `systems-design/authority-fencing` is admitted on `master` through merged PR 27 after complete local, detached, reward-forgery, exact-four calibration, review, and post-merge CI evidence. PR 28 finalizes that state and includes one bounded-observation test-race fix from its hosted run.
+- Next action: push the PR 28 race fix, rerun hosted CI, merge the final record, and verify `master`. `atomic-outbox` is the next planned systems-design candidate. The exact E-021/E-023 live IAM/privacy/encryption probes, AWS consistency probe, and real provider-initiated Modal preemption remain optional evidence gaps for the current Tigris/Modal user path.
 - Task-catalog gate: E-132's corrected-byte local/detached execution and audit gates and E-143's exact-four calibration all pass. `authority-fencing` is admitted in `benchmarks/catalog.toml`; later systems and GitHub-workflow tasks remain absent pending their own complete gates.
 - Authoring UX: D-127 is merged through PR 26 with focused local and real-Docker evidence. It creates user-owned starter projects and tasks independently of the repository catalog.
 - Canonical record updated: 2026-09-04.

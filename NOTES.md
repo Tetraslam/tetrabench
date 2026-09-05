@@ -1942,3 +1942,9 @@ Provenance: Codex review on PR 28; complete plan and benchmark-document search.
 Codex correctly found that P7-05 and the Task Catalogs section still described calibration and admission as pending. P7-05 is now complete through E-143, its acceptance text names catalog admission, and Task Catalogs names the one admitted binary task and `atomic-outbox` as next. The same search found equivalent stale current-state prose in the benchmark contract and both copies of the task README; those now record the completed local, detached, calibration, and catalog gates while preserving the public-source contamination caveat. Historical evidence rows and append-only notes remain unchanged.
 
 Correction: the task-local README and its seeded workspace copy are calibrated fixture bytes and remain unchanged. Current admission status belongs to the canonical plan and repository-level benchmark contract, which are corrected here.
+
+## 2026-09-04T21:50:38-07:00: PR 28 hosted race correction
+
+Provenance: GitHub Actions run `33944891706`; failing `failed` invalid-stream parameter; focused and full local reruns.
+
+PR 28's full-history Gitleaks job passed, while Python 3.12 exposed an existing observation race: the client had received the broker's 502 before the handler appended its final request record, and the test indexed the record immediately. The production handler and ledger behaved as designed. The assertion now uses the suite's existing bounded two-second record wait before inspecting settlement. All 14 invalid-stream parameters and all 1,270 non-Docker tests pass, with Ruff check/format, ty, and `git diff --check`. The fix awaits push and hosted rerun.
