@@ -1742,11 +1742,13 @@ def _validate_openrouter_delivery_failure_generation(
         raise OpenRouterSettlementError("generation_model_mismatch")
     if generation.get("streamed") is not expected_streamed:
         raise OpenRouterSettlementError("generation_stream_mismatch")
-    if generation.get("cancelled") is not False:
-        raise OpenRouterSettlementError("generation_terminal_mismatch")
     finish_reason = generation.get("finish_reason")
     if finish_reason is None:
+        if generation.get("cancelled") not in {None, False}:
+            raise OpenRouterSettlementError("generation_terminal_mismatch")
         raise OpenRouterSettlementError("generation_nonterminal")
+    if generation.get("cancelled") is not False:
+        raise OpenRouterSettlementError("generation_terminal_mismatch")
     if finish_reason not in {"content_filter", "length", "stop", "tool_calls"}:
         raise OpenRouterSettlementError("generation_terminal_mismatch")
     try:
@@ -3324,7 +3326,17 @@ class CalibrationBrokerHandler(BaseHTTPRequestHandler):
                             DELIVERY_FAILURE_SETTLEMENT_WINDOW_SECONDS
                         ),
                     )
-                except (OSError, http.client.HTTPException, RuntimeError, ValueError):
+                except (
+                    OSError,
+                    http.client.HTTPException,
+                    RuntimeError,
+                    ValueError,
+                ) as recovery_error:
+                    settlement_failure = (
+                        recovery_error.code
+                        if isinstance(recovery_error, OpenRouterSettlementError)
+                        else "generation_settlement_unavailable"
+                    )
                     cost = None
                 else:
                     state.finish_request(reservation, cost)

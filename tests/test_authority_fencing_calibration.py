@@ -336,7 +336,7 @@ def openrouter_generation(
     output_tokens: int = 3,
     native_input_tokens: int | None = None,
     native_output_tokens: int | None = None,
-    cancelled: bool = False,
+    cancelled: bool | None = False,
     finish_reason: str | None = "tool_calls",
 ) -> bytes:
     return json.dumps(
@@ -2215,6 +2215,7 @@ def test_openrouter_empty_stream_polls_nonterminal_generation_until_terminal() -
                 openrouter_generation(
                     response_id="empty-generation-1",
                     model="z-ai/glm-5.3-flash-20260826",
+                    cancelled=None,
                     finish_reason=None,
                 ),
             ),
@@ -2252,6 +2253,66 @@ def test_openrouter_empty_stream_polls_nonterminal_generation_until_terminal() -
     assert ledger.cost == Decimal("0.00007")
     assert ledger.reserved == 0
     assert ledger.fatal is None
+
+
+def test_openrouter_empty_stream_does_not_retry_cancelled_generation() -> None:
+    with fake_upstream(
+        headers=[
+            ("Content-Type", "text/event-stream"),
+            ("X-Generation-Id", "empty-generation-1"),
+        ],
+        body=b"",
+        queued_get_responses=[
+            (
+                HTTPStatus.OK,
+                [("Content-Type", "application/json")],
+                openrouter_generation(
+                    response_id="empty-generation-1",
+                    model="z-ai/glm-5.3-flash-20260826",
+                    cancelled=True,
+                    finish_reason=None,
+                ),
+            ),
+            (
+                HTTPStatus.OK,
+                [("Content-Type", "application/json")],
+                openrouter_generation(
+                    response_id="empty-generation-1",
+                    model="z-ai/glm-5.3-flash-20260826",
+                ),
+            ),
+        ],
+    ) as upstream:
+        ledger = calibration.SpendLedger()
+        with running_broker(
+            upstream,
+            ledger=ledger,
+            backend=calibration.OPENROUTER_BACKEND,
+            model="z-ai/glm-5.3-flash",
+            canonical_model="z-ai/glm-5.3-flash-20260826",
+        ) as broker:
+            assert (
+                request(
+                    broker,
+                    path="/v1/chat/completions",
+                    document={
+                        "messages": [{"content": "redacted", "role": "user"}],
+                        "model": "z-ai/glm-5.3-flash",
+                        "stream": True,
+                    },
+                )[0]
+                == 502
+            )
+            deadline = time.monotonic() + 2
+            while not broker.state.records and time.monotonic() < deadline:
+                time.sleep(0.01)
+            assert broker.state.records[0].settlement_failure == (
+                "generation_terminal_mismatch"
+            )
+    assert sum("body" not in item for item in upstream.requests) == 1
+    assert ledger.cost == 0
+    assert ledger.reserved > 0
+    assert ledger.fatal == "authoritative settlement unavailable"
 
 
 def test_openrouter_empty_responses_stream_settles_cost_and_allows_retry(
