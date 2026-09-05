@@ -3870,6 +3870,9 @@ def test_invalid_responses_stream_retains_unknown_and_blocks_retry(body: bytes) 
             assert ledger.reserved > 0
             assert request(broker)[0] == 400
             assert len(upstream.requests) == 1
+            deadline = time.monotonic() + 2
+            while not broker.state.records and time.monotonic() < deadline:
+                time.sleep(0.01)
             assert broker.state.records[0].settlement == "retained_unknown"
 
 

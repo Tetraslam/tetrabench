@@ -3,10 +3,10 @@
 ## Status
 
 - Project state: P0 through P6 are complete for their local/static contracts. Live Tigris/Modal evidence includes cancellation, forced controller interruption/recovery, and the E-046 Single-region `iad` cutover. Current live provider IAM/privacy/encryption state, AWS behavior, and true provider preemption remain `unproven`.
-- Current action: Retry 65 passed the exact two target and two alternate attempts from clean commit `103b54c` with `$0.346635650` current known cost, zero current retained exposure, complete native evidence, cleanup, and an admissible proof. `systems-design/authority-fencing` is in the production catalog with binary reward policy, and full local/packaging/security validation passes.
-- Next action: push the two adjudicated PR 27 review fixes, resolve both threads after hosted CI reruns, merge, then verify `master`. The exact E-021/E-023 live IAM/privacy/encryption probes, AWS consistency probe, and real provider-initiated Modal preemption remain optional evidence gaps for the current Tigris/Modal user path.
+- Current action: `systems-design/authority-fencing` is admitted on `master` through merged PR 27 after complete local, detached, reward-forgery, exact-four calibration, review, and post-merge CI evidence. PR 28 finalizes that state and includes one bounded-observation test-race fix from its hosted run.
+- Next action: push the PR 28 race fix, rerun hosted CI, merge the final record, and verify `master`. `atomic-outbox` is the next planned systems-design candidate. The exact E-021/E-023 live IAM/privacy/encryption probes, AWS consistency probe, and real provider-initiated Modal preemption remain optional evidence gaps for the current Tigris/Modal user path.
 - Task-catalog gate: E-132's corrected-byte local/detached execution and audit gates and E-143's exact-four calibration all pass. `authority-fencing` is admitted in `benchmarks/catalog.toml`; later systems and GitHub-workflow tasks remain absent pending their own complete gates.
-- Authoring UX: D-127 is implemented on the current branch with focused local and real-Docker evidence. It creates user-owned starter projects and tasks without changing the repository catalog or the `authority-fencing` admission gate.
+- Authoring UX: D-127 is merged through PR 26 with focused local and real-Docker evidence. It creates user-owned starter projects and tasks independently of the repository catalog.
 - Canonical record updated: 2026-09-04.
 
 ### Local authoring working record
@@ -378,7 +378,7 @@ runs/<run-id>/terminals/<terminal-sha>.json
 - [ ] [U-009] `unproven`: live AWS `PutObject` conditional create/update behavior. AWS documents the required 200/404/409/412 semantics, but no AWS mutation was run.
 - [x] [U-010] Resolved by E-046: a new private Tigris Single-region `iad` bucket passed the live consistency probe and became the authoritative coordination baseline without modifying or copying the retained Global bucket.
 - [ ] [U-011] `unproven`: current live Tigris/AWS IAM denials, bucket privacy, and effective encryption. Retained E-046 evidence records the Tigris bucket and policies at cutover, but renewed credentials are required for the E-021/E-023 probes.
-- [x] [U-012] Resolved by E-124 for the candidate path: automatic selected-fixture sealing, materialized-path resolution, Harbor 0.22 separate verification, forge collection, and clean-verifier handoff passed detached Modal. Production catalog admission remains separately blocked on exact-four calibration.
+- [x] [U-012] Resolved by E-124 for the candidate path: automatic selected-fixture sealing, materialized-path resolution, Harbor 0.22 separate verification, forge collection, and clean-verifier handoff passed detached Modal. E-143 completes exact-four calibration and production catalog admission.
 - [x] [U-013] Resolved by E-124: two detached binary gold samples produced exact reward `1`, and the detached reward-forgery audit produced exact reward `0`, with validated native summaries and terminal inventories.
 
 ## Planned Package Tree
@@ -510,16 +510,16 @@ live IAM, privacy, and encryption checks.
   admission and binary section pass-rate summaries passed E-068 locally;
   `authority-fencing` has strict task-local manifests and referential checks;
   E-124 passes detached binary reward authority.
-- [ ] [P7-05] Implement the fixed admission repetitions, mutant cap, exploit
+- [x] [P7-05] Implement the fixed admission repetitions, mutant cap, exploit
   audits, calibration records, runtime limits, model-spend cap, wall-clock cap,
   and task/native-artifact budgets in D-069. E-077 passes the local gold
   repetition, no-op, mutant, and exploit gates. E-118 passes the source-only
   detached driver contract with provider fakes, and E-124 passes two detached
-  repetitions plus the detached audit. Two-profile calibration, budget
-  completion, and catalog admission remain `unproven`.
+  repetitions plus the detached audit. E-143 passes two-profile calibration,
+  budget completion, and catalog admission.
 
-Acceptance: E-124 resolves U-012 and U-013 locally and in detached Modal. The
-candidate fixture remains outside the production catalog until P7-05 completes.
+Acceptance: E-124 resolves U-012 and U-013 locally and in detached Modal. E-143
+completes P7-05 and admits the candidate fixture to the production catalog.
 
 ## Evidence Table
 
@@ -670,7 +670,7 @@ candidate fixture remains outside the production catalog until P7-05 completes.
 | E-140 | Retry 62 rejects another early generation row before bounded polling | Clean commit `9aca8ad`; two successful target attempts; exact zero-byte GLM broker record; short attempt duration; authenticated terminal reread; exact cost; cleanup; incomplete-row regression | failure bounded; D-138 passed locally | Target attempts completed with rewards zero and one across 13 settled requests each, costing `$0.1620028` and `$0.1263113`. GLM's first request returned HTTP 200 with zero bytes, retained `$3.84121`, and failed in under a minute rather than consuming the five-minute poll. Its later row is exact canonical GLM, streamed uncancelled terminal `tool_calls`, and cost `$0.0010917`; that cost supersedes the reservation. D-138 proves an exact-ID intermediate row may omit model and stream while finish reason and cancellation remain null, then must satisfy every strict field at terminal settlement. Retry 62's exact cost is `$0.2894058`; historical accounting is `$27.730117390` known plus `$117.044363975` unknown. No proof or labeled residue exists. All 481 non-Docker calibration tests, Ruff, formatting, ty, and diff checks pass. |
 | E-141 | Retry 63 exposes broker deletion before failed-attempt ledger finalization | Clean commit `805d295`; two successful target attempts; bounded alternate native failure; conservative fallback; source lifecycle inspection; drain and final-ledger regressions; full local and real-Docker parity | failure bounded; D-139 passed locally; clean exact-four pending | Target attempts completed with reward zero across 12 and 11 settled Responses requests, costing `$0.1316784` and `$0.1423359`. Alternate attempt one completed two agent steps and six tool uses before one `APIError`, but its retained report has zero authoritative broker requests and the full `$12.50` fallback. The prior failure path removed every exact-owned attempt container, including the broker, before waiting for request completion; no final request record could then survive. D-139 preserves the broker, drains new admission, permits existing authenticated settlement, and waits for request-count/record equality before cleanup. All 1,268 non-Docker tests and 11 required Docker tests pass, with Ruff, formatting, ty, Bandit, actionlint, lock, build, dependency audit, and diff checks. Retry 63 adds `$0.2740143` known cost and `$12.50` unknown exposure; historical accounting is `$28.004131690` known plus `$129.544363975` unknown. No proof or labeled residue exists. |
 | E-142 | Retry 64 proves drain finalization and exposes a longer valid GLM generation | Clean commit `32a2705`; two successful target attempts; four final alternate broker records; authenticated cancelled generation reread; exact cost reconciliation; cleanup | failure bounded; D-139 live-proven; D-140 passed locally | Target attempts completed with reward zero across 12 and ten settled Responses requests, costing `$0.1350771` and `$0.1553485`. Alternate attempt one settled three GLM requests at `$0.008930815`, then OpenCode returned one `APIError`. D-139 preserved the broker through drain and retained request four as an exact `$4.07135` unknown reservation instead of losing the ledger. Its authenticated generation record reports exact GLM identity, streamed cancellation, 770.097-second generation time, equal `$0.0084432` billed `usage` and `total_cost`, and equal bounded normalized/native token counts. That exact cost supersedes the retained reservation in historical accounting but does not make the cancelled output valid. Retry 64's exact cost is `$0.307799615`; historical accounting is `$28.311931305` known plus `$129.544363975` unknown. D-140 raises only the child response-header timeout from 360 to 960 seconds. All 484 non-Docker calibration tests, Ruff, formatting, ty, and diff checks pass. No proof or labeled residue exists. |
-| E-143 | Retry 65 completes exact-four calibration and catalog admission | Clean commit `103b54c`; two target and two alternate attempts; exact broker/native/spend evidence; private proof; zero retained exposure; cleanup; catalog/fixture/plan validation; full local parity | passed live and locally; catalog admitted; hosted PR review active | Both GPT-5.6 Sol attempts completed with reward zero across ten and 13 settled requests, costing `$0.1441168` and `$0.1839501`. Both GLM-5.3 Flash attempts completed with reward zero across four and three settled requests, costing `$0.00925897` and `$0.009309780`. All attempts passed native structure, identity, token, spend, and cleanup gates. Current exact cost is `$0.346635650` with zero retained exposure; historical accounting is `$28.658566955` known plus `$129.544363975` unknown. The clean source revision, four-attempt shape, model profiles, per-attempt `$12.50` allocations, and total `$50` cap are bound by one admissible mode-0600 proof. The production catalog selects the binary `authority-fencing` fixture; offline doctor, one-trial plan, sealed fixture validation, 1,270 non-Docker tests, 11 Docker tests, packaging, dependency, and static/security checks pass. Initial PR 27 CI passed. Both Codex findings are valid and fixed locally: strict singleton cancellation validation and current retry-65 benchmark prose. |
+| E-143 | Retry 65 completes exact-four calibration and catalog admission | Clean commit `103b54c`; two target and two alternate attempts; exact broker/native/spend evidence; private proof; zero retained exposure; cleanup; catalog/fixture/plan validation; full local and hosted parity; review adjudication; merge and post-merge validation | passed and merged | Both GPT-5.6 Sol attempts completed with reward zero across ten and 13 settled requests, costing `$0.1441168` and `$0.1839501`. Both GLM-5.3 Flash attempts completed with reward zero across four and three settled requests, costing `$0.00925897` and `$0.009309780`. All attempts passed native structure, identity, token, spend, and cleanup gates. Current exact cost is `$0.346635650` with zero retained exposure; historical accounting is `$28.658566955` known plus `$129.544363975` unknown. The clean source revision, four-attempt shape, model profiles, per-attempt `$12.50` allocations, and total `$50` cap are bound by one admissible mode-0600 proof. The production catalog selects the binary `authority-fencing` fixture; offline doctor, one-trial plan, sealed fixture validation, 1,270 non-Docker tests, 11 Docker tests, packaging, dependency, and static/security checks pass. Codex's strict singleton cancellation and stale benchmark-prose findings were fixed, replied to, and resolved. PR 27 merged as `9c0dc98`; reviewed-head run `33943113421` and post-merge run `33943684409` passed both Python 3.12 and full-history Gitleaks. |
 
 ## Deferred Capabilities
 
@@ -689,10 +689,10 @@ These are tracked capabilities, not v1 implementation tasks.
 [D-066..D-071] [`benchmarks/README.md`](benchmarks/README.md) is the accepted v1
 task-family and admission contract for five systems-design-through-implementation
 tasks and five local Git/forge workflow tasks. It is not a fixture-local
-manifest. Both catalog task lists remain empty.
+manifest. The systems-design catalog contains `authority-fencing`; the GitHub
+workflow catalog remains empty.
 
-The explicitly requested `authority-fencing` local candidate now exists under
-`benchmarks/tasks/` but remains absent from both catalog task lists. E-132 passes
-the local and detached handoff, network, sealing, reward, repetition, and exploit
-gates on D-133's corrected 1 GiB candidate bytes. Exact-four calibration and
-budget completion still block catalog admission.
+E-132 passes the local and detached handoff, network, sealing, reward,
+repetition, and exploit gates on D-133's corrected 1 GiB `authority-fencing`
+bytes. E-143 passes exact-four calibration and budget completion and admits that
+fixture with binary reward policy. `atomic-outbox` is the next planned candidate.
