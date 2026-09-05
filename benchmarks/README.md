@@ -216,14 +216,11 @@ agent-owned event files, post-seal API writes, recomputed snapshot tampering,
 missing artifacts, and shared-environment verifier assumptions.
 
 The Python 3.12 suite and every required real-Docker test pass.
-Wheels contain neither catalog nor source-only fixture files; source
-distributions retain the two prerequisite fixtures. The unadmitted
-`authority-fencing` candidate, its hidden verifier, mutants, gold solution,
-candidate-only admission tool, and candidate-only project test are absent from
-both wheel and source distribution. The candidate-specific detached sequence
-passes two gold runs and one reward-forgery audit with terminal authority and
-cleanup. Automatic catalog admission remains blocked on exact-four model
-calibration, so the catalogs stay empty.
+Wheels contain neither catalog nor fixture files. Source distributions retain
+the prerequisite fixtures and admitted `authority-fencing` task, but exclude its
+admission/calibration tools and project-only tests. The detached sequence passes
+two gold runs and one reward-forgery audit with terminal authority and cleanup;
+retry 65 passes exact-four model calibration and completes catalog admission.
 
 ## Systems design through implementation
 

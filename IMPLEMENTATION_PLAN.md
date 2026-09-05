@@ -378,7 +378,7 @@ runs/<run-id>/terminals/<terminal-sha>.json
 - [ ] [U-009] `unproven`: live AWS `PutObject` conditional create/update behavior. AWS documents the required 200/404/409/412 semantics, but no AWS mutation was run.
 - [x] [U-010] Resolved by E-046: a new private Tigris Single-region `iad` bucket passed the live consistency probe and became the authoritative coordination baseline without modifying or copying the retained Global bucket.
 - [ ] [U-011] `unproven`: current live Tigris/AWS IAM denials, bucket privacy, and effective encryption. Retained E-046 evidence records the Tigris bucket and policies at cutover, but renewed credentials are required for the E-021/E-023 probes.
-- [x] [U-012] Resolved by E-124 for the candidate path: automatic selected-fixture sealing, materialized-path resolution, Harbor 0.22 separate verification, forge collection, and clean-verifier handoff passed detached Modal. Production catalog admission remains separately blocked on exact-four calibration.
+- [x] [U-012] Resolved by E-124 for the candidate path: automatic selected-fixture sealing, materialized-path resolution, Harbor 0.22 separate verification, forge collection, and clean-verifier handoff passed detached Modal. E-143 completes exact-four calibration and production catalog admission.
 - [x] [U-013] Resolved by E-124: two detached binary gold samples produced exact reward `1`, and the detached reward-forgery audit produced exact reward `0`, with validated native summaries and terminal inventories.
 
 ## Planned Package Tree
@@ -510,16 +510,16 @@ live IAM, privacy, and encryption checks.
   admission and binary section pass-rate summaries passed E-068 locally;
   `authority-fencing` has strict task-local manifests and referential checks;
   E-124 passes detached binary reward authority.
-- [ ] [P7-05] Implement the fixed admission repetitions, mutant cap, exploit
+- [x] [P7-05] Implement the fixed admission repetitions, mutant cap, exploit
   audits, calibration records, runtime limits, model-spend cap, wall-clock cap,
   and task/native-artifact budgets in D-069. E-077 passes the local gold
   repetition, no-op, mutant, and exploit gates. E-118 passes the source-only
   detached driver contract with provider fakes, and E-124 passes two detached
-  repetitions plus the detached audit. Two-profile calibration, budget
-  completion, and catalog admission remain `unproven`.
+  repetitions plus the detached audit. E-143 passes two-profile calibration,
+  budget completion, and catalog admission.
 
-Acceptance: E-124 resolves U-012 and U-013 locally and in detached Modal. The
-candidate fixture remains outside the production catalog until P7-05 completes.
+Acceptance: E-124 resolves U-012 and U-013 locally and in detached Modal. E-143
+completes P7-05 and admits the candidate fixture to the production catalog.
 
 ## Evidence Table
 
@@ -689,10 +689,10 @@ These are tracked capabilities, not v1 implementation tasks.
 [D-066..D-071] [`benchmarks/README.md`](benchmarks/README.md) is the accepted v1
 task-family and admission contract for five systems-design-through-implementation
 tasks and five local Git/forge workflow tasks. It is not a fixture-local
-manifest. Both catalog task lists remain empty.
+manifest. The systems-design catalog contains `authority-fencing`; the GitHub
+workflow catalog remains empty.
 
-The explicitly requested `authority-fencing` local candidate now exists under
-`benchmarks/tasks/` but remains absent from both catalog task lists. E-132 passes
-the local and detached handoff, network, sealing, reward, repetition, and exploit
-gates on D-133's corrected 1 GiB candidate bytes. Exact-four calibration and
-budget completion still block catalog admission.
+E-132 passes the local and detached handoff, network, sealing, reward,
+repetition, and exploit gates on D-133's corrected 1 GiB `authority-fencing`
+bytes. E-143 passes exact-four calibration and budget completion and admits that
+fixture with binary reward policy. `atomic-outbox` is the next planned candidate.

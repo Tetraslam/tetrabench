@@ -1934,3 +1934,11 @@ Correction: `current....` in the preceding entry means `current retry-65 account
 Provenance: PR 27; reviewed head `e91a77c`; squash merge `9c0dc9887b23f54c76069185a1850191651388ba`; GitHub Actions runs `33943113421` and `33943684409`; fresh `origin/master` inspection.
 
 The reviewed-head rerun passed Python 3.12 and full-history Gitleaks. No second Codex finding appeared, and both first-round threads remained resolved. PR 27 merged into `master`. Post-merge CI again passed both jobs. Fresh remote inspection found merge commit `9c0dc98` at `origin/master`, one binary `authority-fencing` production-catalog entry, retry-65 proven calibration text, and the admitted implementation status. The authority-fencing admission loop is complete.
+
+## 2026-09-04T21:32:15-07:00: PR 28 current-state review correction
+
+Provenance: Codex review on PR 28; complete plan and benchmark-document search.
+
+Codex correctly found that P7-05 and the Task Catalogs section still described calibration and admission as pending. P7-05 is now complete through E-143, its acceptance text names catalog admission, and Task Catalogs names the one admitted binary task and `atomic-outbox` as next. The same search found equivalent stale current-state prose in the benchmark contract and both copies of the task README; those now record the completed local, detached, calibration, and catalog gates while preserving the public-source contamination caveat. Historical evidence rows and append-only notes remain unchanged.
+
+Correction: the task-local README and its seeded workspace copy are calibrated fixture bytes and remain unchanged. Current admission status belongs to the canonical plan and repository-level benchmark contract, which are corrected here.
