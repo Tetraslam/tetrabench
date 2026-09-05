@@ -1734,6 +1734,11 @@ def _validate_openrouter_delivery_failure_generation(
     generation = document["data"]
     if generation.get("id") != expected_id:
         raise OpenRouterSettlementError("generation_id_mismatch")
+    finish_reason = generation.get("finish_reason")
+    if finish_reason is None:
+        if generation.get("cancelled") not in {None, False}:
+            raise OpenRouterSettlementError("generation_terminal_mismatch")
+        raise OpenRouterSettlementError("generation_nonterminal")
     try:
         generation_model = _response_identifier(generation.get("model"))
     except ValueError as error:
@@ -1742,11 +1747,6 @@ def _validate_openrouter_delivery_failure_generation(
         raise OpenRouterSettlementError("generation_model_mismatch")
     if generation.get("streamed") is not expected_streamed:
         raise OpenRouterSettlementError("generation_stream_mismatch")
-    finish_reason = generation.get("finish_reason")
-    if finish_reason is None:
-        if generation.get("cancelled") not in {None, False}:
-            raise OpenRouterSettlementError("generation_terminal_mismatch")
-        raise OpenRouterSettlementError("generation_nonterminal")
     if generation.get("cancelled") is not False:
         raise OpenRouterSettlementError("generation_terminal_mismatch")
     if finish_reason not in {"content_filter", "length", "stop", "tool_calls"}:

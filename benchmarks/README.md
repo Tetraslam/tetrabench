@@ -344,8 +344,10 @@ tokens normalize separately, then a bounded authenticated `/generation?id=...`
 cross-check requires exact ID, model, stream shape, cost, and token counts before
 bytes reach the child. A present `X-Generation-Id` header must match the terminal
 and remains bounded failure evidence if body validation fails. Generation 404
-and an exact matching HTTP 200 row with no finish reason and null-or-false
-cancellation retry only inside that settlement window and the attempt deadline. Streaming
+and an exact-ID HTTP 200 row with no finish reason and null-or-false cancellation
+retry only inside that settlement window and the attempt deadline. Intermediate
+rows need not yet contain model, stream, cost, or token fields; terminal rows
+require the complete strict contract. Streaming
 chat for every other profile remains unsupported. Any ambiguity
 retains the full reservation. Direct compatible endpoints require explicit
 pricing and settlement adapters.
@@ -399,7 +401,7 @@ reported IPAM gateway and `Internal` value are recorded as topology only;
 authenticated pricing and later forwarding prove actual egress. This transport
 requires no host reachability or firewall change. No real calibration has
 completed, so difficulty calibration remains unproven. Historical accounting
-after retry 61 is `$27.440711590` known cost plus `$117.044363975` conservatively
+after retry 62 is `$27.730117390` known cost plus `$117.044363975` conservatively
 retained unknown exposure; it does not consume the next invocation's `$50` cap.
 A
 separate direct OpenRouter contract probe cost `$0.00007`; it is not benchmark

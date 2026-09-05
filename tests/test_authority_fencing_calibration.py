@@ -330,7 +330,7 @@ def openrouter_generation(
     response_id: str = "gen-test-1",
     upstream_id: str | None = None,
     model: Any = "openai/gpt-5.6-sol",
-    streamed: bool = True,
+    streamed: bool | None = True,
     cost: str = "0.00007",
     input_tokens: int = 2,
     output_tokens: int = 3,
@@ -2214,7 +2214,8 @@ def test_openrouter_empty_stream_polls_nonterminal_generation_until_terminal() -
                 [("Content-Type", "application/json")],
                 openrouter_generation(
                     response_id="empty-generation-1",
-                    model="z-ai/glm-5.3-flash-20260826",
+                    model=None,
+                    streamed=None,
                     cancelled=None,
                     finish_reason=None,
                 ),
