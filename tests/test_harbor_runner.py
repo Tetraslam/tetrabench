@@ -8,6 +8,7 @@ from types import SimpleNamespace
 from typing import cast
 
 import pytest
+from harbor.agents.factory import AgentFactory
 from harbor.models.job.lock import JobLock
 from harbor.models.job.result import JobResult
 from harbor.models.task.config import ArtifactConfig
@@ -15,6 +16,7 @@ from harbor.models.trial.artifact_manifest import ArtifactManifest
 from harbor.models.trial.config import TaskConfig, TrialConfig
 
 import tetrabench.harbor_api as harbor_api_module
+from tetrabench.calibration_opencode import CalibrationOpenCode
 from tetrabench.controller_runtime import attempt_paths
 from tetrabench.harbor import (
     ATTEMPT_LABEL,
@@ -190,6 +192,19 @@ def test_compilation_constructs_the_pinned_real_harbor_022_models(
     assert config.environment.kwargs["labels"] == labels
     assert config.agents[0].name == "opaque-agent"
     assert config.agents[0].model_name == "opaque/provider-model"
+
+
+def test_calibration_opencode_uses_fixed_title_and_harbor_import_path(
+    tmp_path: Path,
+) -> None:
+    config = Harbor022Api.agent_config(
+        name="tetrabench.calibration_opencode:CalibrationOpenCode",
+        model_name="zai/z-ai/glm-5.3-flash",
+    )
+    agent = AgentFactory.create_agent_from_config(config, logs_dir=tmp_path)
+    assert config.name == "tetrabench.calibration_opencode:CalibrationOpenCode"
+    assert isinstance(agent, CalibrationOpenCode)
+    assert agent.build_cli_flags() == "--title tetrabench-calibration"
 
 
 def test_exact_job_config_comparison_does_not_use_harbor_relaxed_equality() -> None:

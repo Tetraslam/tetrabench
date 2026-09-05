@@ -3,7 +3,7 @@ schema_version = 1
 [sections.systems-design]
 description = "Implement compact systems, then verify lifecycle, consistency, migration, and authorization invariants from clean state under fixed fault schedules."
 readme = "systems-design/README.md"
-tasks = []
+tasks = [{ id = "authority-fencing", harbor_task = "benchmarks/tasks/systems-design/authority-fencing", reward_policy = "binary" }]
 
 [sections.github-workflow]
 description = "Complete single-pull-request workflows in real local Git against a deterministic task-local forge, then reconstruct and verify them from clean snapshots."

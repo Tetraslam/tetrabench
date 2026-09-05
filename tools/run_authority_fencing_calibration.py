@@ -136,6 +136,7 @@ LITELLM_KEY_ENV = "TETRABENCH_LITELLM_API_KEY"
 LEGACY_LITELLM_KEY_ENV = "TETRABENCH_CALIBRATION_GATEWAY_KEY"
 PARENT_KEY_ENV = LEGACY_LITELLM_KEY_ENV
 TASK_ID = "systems-design/authority-fencing"
+CALIBRATION_AGENT = "tetrabench.calibration_opencode:CalibrationOpenCode"
 MAX_ATTEMPT_SECONDS = 35 * 60
 MAX_TOTAL_COST = Decimal("50")
 MAX_INPUT_OR_CACHE_COST_PER_TOKEN = Decimal("10") / Decimal(1_000_000)
@@ -143,7 +144,7 @@ MAX_OUTPUT_COST_PER_TOKEN = Decimal("50") / Decimal(1_000_000)
 RESERVATION_SAFETY_MARGIN = Decimal("0.25")
 MAX_OUTPUT_TOKENS = 65536
 MAX_REQUESTS = 64
-DENY_UPSTREAM_EXPECTED_REQUESTS = 6
+DENY_UPSTREAM_EXPECTED_REQUESTS = {"alternate": 6, "target": 6}
 MAX_CONCURRENCY = 2
 MAX_WORKERS = 4
 DEFAULT_BROKER_PORT = 62017
@@ -162,7 +163,9 @@ MAX_RESPONSE_BYTES = 64 << 20
 MODEL_INFO_MAX_RESPONSE_BYTES = 4 << 20
 GENERATION_MAX_RESPONSE_BYTES = 1 << 20
 SETTLEMENT_WINDOW_SECONDS = 30.0
+DELIVERY_FAILURE_SETTLEMENT_WINDOW_SECONDS = 300.0
 SETTLEMENT_POLL_SECONDS = 0.1
+OPENCODE_HEADER_TIMEOUT_MS = 960_000
 MIN_PARENT_KEY_LENGTH = 16
 MAX_PARENT_KEY_LENGTH = 512
 MIN_BROKER_TOKEN_LENGTH = 32
@@ -215,6 +218,9 @@ class BackendContract:
 @dataclasses.dataclass(frozen=True, slots=True)
 class ProfileContract:
     name: str
+    opencode_provider: str
+    opencode_npm: str | None
+    credential_env: str
     child_model: str
     broker_model: str
     upstream_model: str
@@ -261,6 +267,9 @@ BROKER_DNS = LITELLM_BACKEND.broker_dns
 PROFILE_CONTRACTS = (
     ProfileContract(
         name="target",
+        opencode_provider="openai",
+        opencode_npm=None,
+        credential_env="OPENAI_API_KEY",
         child_model="openai/gpt-5.6-sol",
         broker_model="openai/gpt-5.6-sol",
         upstream_model="openai/gpt-5.6-sol",
@@ -268,10 +277,13 @@ PROFILE_CONTRACTS = (
     ),
     ProfileContract(
         name="alternate",
-        child_model="anthropic/claude-sonnet-5",
-        broker_model="anthropic/claude-sonnet-5",
-        upstream_model="anthropic/claude-sonnet-5",
-        harbor_model="openai/anthropic/claude-sonnet-5",
+        opencode_provider="zai",
+        opencode_npm="@ai-sdk/openai-compatible",
+        credential_env="ZAI_API_KEY",
+        child_model="z-ai/glm-5.3-flash",
+        broker_model="z-ai/glm-5.3-flash",
+        upstream_model="z-ai/glm-5.3-flash",
+        harbor_model="zai/z-ai/glm-5.3-flash",
     ),
 )
 PROFILES = tuple((profile.name, profile.broker_model) for profile in PROFILE_CONTRACTS)
@@ -764,6 +776,7 @@ class BrokerState:
         self.locked_endpoint: str | None = None
         self.active = token is not None
         self.activated = token is not None
+        self.draining = False
         self.activation_token_sha256 = (
             hashlib.sha256(token.encode()).hexdigest() if token is not None else None
         )
@@ -785,6 +798,7 @@ class BrokerState:
                     "activation_token_sha256": self.activation_token_sha256,
                     "activated": self.activated,
                     "backend": self.backend.name,
+                    "draining": self.draining,
                     "fatal": self.ledger.fatal,
                     "known_actual_cost_usd": str(self.ledger.cost),
                     "locked_endpoint": self.locked_endpoint,
@@ -832,6 +846,7 @@ class BrokerState:
     def _expired_locked(self, now: float) -> bool:
         return now >= self.deadline or bool(
             self.activated
+            and not self.draining
             and (
                 self.last_heartbeat is None
                 or now - self.last_heartbeat >= HEARTBEAT_LEASE_SECONDS
@@ -946,11 +961,31 @@ class BrokerState:
         if not accepted:
             raise PermissionError("broker heartbeat rejected")
 
+    def drain(self, channel_identity: tuple[int, int]) -> None:
+        expired = False
+        with self.lock:
+            if self._expired_locked(time.monotonic()):
+                self._invalidate_locked()
+                expired = True
+            elif (
+                not self.active
+                or not self.activated
+                or self.lease_channel_identity != channel_identity
+            ):
+                raise PermissionError("broker drain rejected")
+            else:
+                self.active = False
+                self._token = None
+                self.draining = True
+        self.write_evidence()
+        if expired:
+            raise PermissionError("broker drain expired")
+
     def lease_expired(self) -> bool:
         with self.lock:
-            return (self.activated and not self.active) or self._expired_locked(
-                time.monotonic()
-            )
+            return (
+                self.activated and not self.active and not self.draining
+            ) or self._expired_locked(time.monotonic())
 
     def upstream_io_timeout(self) -> float:
         expired = False
@@ -1107,7 +1142,7 @@ class BrokerState:
                 expired = True
                 accepted = False
             else:
-                accepted = self.active and bool(self.parent_key)
+                accepted = (self.active or self.draining) and bool(self.parent_key)
             if accepted:
                 parent_key = self.parent_key
                 if upstream.sock is None:
@@ -1517,6 +1552,143 @@ def _parse_openrouter_responses_stream(
     return terminal
 
 
+def _parse_openrouter_chat_stream(
+    body: bytes, *, expected_models: frozenset[str]
+) -> SettlementResult:
+    try:
+        text = body.decode("utf-8")
+    except UnicodeDecodeError as error:
+        raise ValueError("OpenRouter chat stream is not UTF-8") from error
+    normalized = text.replace("\r\n", "\n")
+    if "\r" in normalized or not normalized.endswith("\n\n"):
+        raise ValueError("OpenRouter chat stream framing is malformed")
+    frames: list[str] = []
+    for block in normalized[:-2].split("\n\n"):
+        if not block:
+            continue
+        data_values: list[str] = []
+        for line in block.split("\n"):
+            if line.startswith(":"):
+                continue
+            if line.startswith("data: "):
+                data_values.append(line[6:])
+            else:
+                raise ValueError("OpenRouter chat stream framing is malformed")
+        if data_values:
+            if len(data_values) != 1:
+                raise ValueError("OpenRouter chat stream framing is ambiguous")
+            frames.append(data_values[0])
+    if not frames or frames[-1] != "[DONE]":
+        raise ValueError("OpenRouter chat stream completion marker is missing")
+
+    response_id: str | None = None
+    response_model: str | None = None
+    finish_reason: str | None = None
+    terminal: SettlementResult | None = None
+    allowed_top_fields = {
+        "choices",
+        "created",
+        "id",
+        "model",
+        "object",
+        "provider",
+        "service_tier",
+        "usage",
+    }
+    allowed_choice_fields = {"delta", "finish_reason", "index", "native_finish_reason"}
+    allowed_delta_fields = {
+        "content",
+        "reasoning",
+        "reasoning_content",
+        "reasoning_details",
+        "refusal",
+        "role",
+        "tool_calls",
+    }
+    for index, data in enumerate(frames[:-1]):
+        if data == "[DONE]":
+            raise ValueError("OpenRouter chat completion marker is ambiguous")
+        document = _strict_json_decimal(data.encode())
+        if (
+            not isinstance(document, dict)
+            or not set(document) <= allowed_top_fields
+            or document.get("object") != "chat.completion.chunk"
+        ):
+            raise ValueError("OpenRouter chat stream event is malformed")
+        current_id = _response_identifier(document.get("id"))
+        current_model = _response_identifier(document.get("model"))
+        if current_model not in expected_models:
+            raise ValueError("OpenRouter response model mismatch")
+        if response_id is None:
+            response_id = current_id
+            response_model = current_model
+        elif current_id != response_id or current_model != response_model:
+            raise ValueError("OpenRouter chat stream identity changed")
+        choices = document.get("choices")
+        if not isinstance(choices, list) or len(choices) != 1:
+            raise ValueError("OpenRouter chat stream choice count is invalid")
+        choice = choices[0]
+        if (
+            not isinstance(choice, dict)
+            or not set(choice) <= allowed_choice_fields
+            or choice.get("index") != 0
+            or not isinstance(choice.get("delta"), dict)
+            or not set(choice["delta"]) <= allowed_delta_fields
+        ):
+            raise ValueError("OpenRouter chat stream choice is malformed")
+        delta = choice["delta"]
+        for field in ("content", "reasoning", "reasoning_content", "refusal"):
+            if (
+                field in delta
+                and delta[field] is not None
+                and not isinstance(delta[field], str)
+            ):
+                raise ValueError("OpenRouter chat stream delta is malformed")
+        if "role" in delta and delta["role"] not in {None, "assistant"}:
+            raise ValueError("OpenRouter chat stream role is invalid")
+        for field in ("reasoning_details", "tool_calls"):
+            if (
+                field in delta
+                and delta[field] is not None
+                and not isinstance(delta[field], list)
+            ):
+                raise ValueError("OpenRouter chat stream delta is malformed")
+
+        current_finish = choice.get("finish_reason")
+        if current_finish is not None and current_finish not in {
+            "content_filter",
+            "length",
+            "stop",
+            "tool_calls",
+        }:
+            raise ValueError("OpenRouter chat stream finish reason is invalid")
+        usage = document.get("usage")
+        if usage is not None:
+            if index != len(frames) - 2 or current_finish is None:
+                raise ValueError("OpenRouter chat stream usage is misplaced")
+            if finish_reason is not None and current_finish != finish_reason:
+                raise ValueError("OpenRouter chat stream finish reason changed")
+            cost, bounded_usage = _normalized_usage(
+                usage, endpoint="/v1/chat/completions", cost_required=False
+            )
+            terminal = SettlementResult(
+                response_id=current_id,
+                model=current_model,
+                cost=cost,
+                usage=bounded_usage,
+            )
+            finish_reason = current_finish
+        elif current_finish is not None:
+            if finish_reason is not None:
+                raise ValueError("OpenRouter chat stream terminal is ambiguous")
+            finish_reason = current_finish
+        elif finish_reason is not None:
+            raise ValueError("OpenRouter chat stream has post-terminal data")
+    if terminal is None or response_id is None or response_model is None:
+        raise ValueError("OpenRouter chat stream terminal usage is missing")
+    return terminal
+
+
 def _validate_openrouter_generation(
     body: bytes,
     *,
@@ -1572,19 +1744,78 @@ def _validate_openrouter_generation(
     return total_cost
 
 
+def _validate_openrouter_delivery_failure_generation(
+    body: bytes,
+    *,
+    expected_id: str,
+    expected_models: frozenset[str],
+    expected_streamed: bool,
+) -> Decimal:
+    document = _strict_json_decimal(body)
+    if not isinstance(document, dict) or not isinstance(document.get("data"), dict):
+        raise OpenRouterSettlementError("generation_schema")
+    generation = document["data"]
+    if generation.get("id") != expected_id:
+        raise OpenRouterSettlementError("generation_id_mismatch")
+    finish_reason = generation.get("finish_reason")
+    if finish_reason is None:
+        cancelled = generation.get("cancelled")
+        if cancelled is not None and cancelled is not False:
+            raise OpenRouterSettlementError("generation_terminal_mismatch")
+        raise OpenRouterSettlementError("generation_nonterminal")
+    try:
+        generation_model = _response_identifier(generation.get("model"))
+    except ValueError as error:
+        raise OpenRouterSettlementError("generation_model_malformed") from error
+    if generation_model not in expected_models:
+        raise OpenRouterSettlementError("generation_model_mismatch")
+    if generation.get("streamed") is not expected_streamed:
+        raise OpenRouterSettlementError("generation_stream_mismatch")
+    if generation.get("cancelled") is not False:
+        raise OpenRouterSettlementError("generation_terminal_mismatch")
+    if finish_reason not in {"content_filter", "length", "stop", "tool_calls"}:
+        raise OpenRouterSettlementError("generation_terminal_mismatch")
+    try:
+        total_cost = _stream_cost(generation.get("total_cost"))
+        usage_cost = _stream_cost(generation.get("usage"))
+    except ValueError as error:
+        raise OpenRouterSettlementError("generation_cost_malformed") from error
+    if usage_cost != total_cost:
+        raise OpenRouterSettlementError("generation_cost_mismatch")
+    try:
+        _usage_token_count(generation.get("tokens_prompt"))
+        _usage_token_count(generation.get("tokens_completion"))
+        _usage_token_count(generation.get("native_tokens_prompt"))
+        _usage_token_count(generation.get("native_tokens_completion"))
+    except ValueError as error:
+        raise OpenRouterSettlementError("generation_native_tokens_malformed") from error
+    return total_cost
+
+
 def _poll_openrouter_generation(
     state: BrokerState,
     *,
-    settlement: SettlementResult,
+    settlement: SettlementResult | None,
     generation_id: str | None,
     streamed: bool,
+    settlement_window_seconds: float | None = None,
 ) -> Decimal:
     generation_path = state.backend.generation_path
     if generation_path is None:
         raise ValueError("backend generation adapter is missing")
     parsed = _parse_upstream_url(state.upstream_url)
-    deadline = min(state.deadline, time.monotonic() + SETTLEMENT_WINDOW_SECONDS)
-    lookup_id = generation_id or settlement.response_id
+    window = (
+        SETTLEMENT_WINDOW_SECONDS
+        if settlement_window_seconds is None
+        else settlement_window_seconds
+    )
+    deadline = min(state.deadline, time.monotonic() + window)
+    if generation_id is not None:
+        lookup_id = generation_id
+    elif settlement is not None:
+        lookup_id = settlement.response_id
+    else:
+        raise ValueError("OpenRouter generation identity is missing")
     path = (
         _join_upstream_path(parsed.path, generation_path)
         + "?"
@@ -1623,14 +1854,30 @@ def _poll_openrouter_generation(
                 if time.monotonic() + SETTLEMENT_POLL_SECONDS >= deadline:
                     raise TimeoutError("OpenRouter generation settlement timed out")
             elif response.status == HTTPStatus.OK:
-                return _validate_openrouter_generation(
-                    body,
-                    expected_id=lookup_id,
-                    expected_models=state.response_models,
-                    expected_streamed=streamed,
-                    expected_cost=settlement.cost,
-                    expected_usage=settlement.usage,
-                )
+                if settlement is None:
+                    try:
+                        return _validate_openrouter_delivery_failure_generation(
+                            body,
+                            expected_id=lookup_id,
+                            expected_models=state.response_models,
+                            expected_streamed=streamed,
+                        )
+                    except OpenRouterSettlementError as error:
+                        if error.code != "generation_nonterminal":
+                            raise
+                        if time.monotonic() + SETTLEMENT_POLL_SECONDS >= deadline:
+                            raise TimeoutError(
+                                "OpenRouter generation settlement timed out"
+                            ) from error
+                else:
+                    return _validate_openrouter_generation(
+                        body,
+                        expected_id=lookup_id,
+                        expected_models=state.response_models,
+                        expected_streamed=streamed,
+                        expected_cost=settlement.cost,
+                        expected_usage=settlement.usage,
+                    )
             else:
                 raise ValueError("OpenRouter generation request failed")
         finally:
@@ -1867,14 +2114,14 @@ def _openrouter_pricing_values(pricing: Any) -> dict[str, Decimal]:
         price = _nonnegative_decimal(value, field)
         if field in OPENROUTER_REACHABLE_UNRESERVED_PRICE_FIELDS and price != 0:
             raise ValueError("OpenRouter unsupported paid pricing is nonzero")
-    required = ("prompt", "completion", "input_cache_read", "input_cache_write")
+    required = ("prompt", "completion", "input_cache_read")
     values = {field: _positive_decimal(pricing.get(field), field) for field in required}
     write_tiers = [
         _positive_decimal(value, field)
         for field, value in pricing.items()
         if field.startswith("input_cache_write")
     ]
-    values["input_cache_write"] = max(write_tiers)
+    values["input_cache_write"] = max(write_tiers, default=values["prompt"])
     return values
 
 
@@ -2333,7 +2580,9 @@ def _wait_resource_absent(kind: str, name: str, timeout: float = 5.0) -> bool:
     return _docker([kind, "inspect", name], check=False).returncode != 0
 
 
-def _remove_owned_attempt_containers(names: DockerAttemptNames) -> None:
+def _remove_owned_attempt_containers(
+    names: DockerAttemptNames, *, preserve_broker: bool = False
+) -> None:
     result = _docker(
         [
             "ps",
@@ -2351,6 +2600,8 @@ def _remove_owned_attempt_containers(names: DockerAttemptNames) -> None:
         inspected = _inspect_one("container", container_id)
         labels = _resource_labels("container", inspected)
         if all(labels.get(key) == value for key, value in names.labels.items()):
+            if preserve_broker and inspected.get("Name") == f"/{names.broker}":
+                continue
             _docker(["rm", "--force", container_id], check=False)
 
 
@@ -2447,7 +2698,11 @@ def sweep_calibration_run(run_id: str) -> dict[str, int]:
     return {"containers": removed_containers, "networks": removed_networks}
 
 
-def _compose_bytes(names: DockerAttemptNames, candidate_manifest_sha256: str) -> bytes:
+def _compose_bytes(
+    names: DockerAttemptNames,
+    candidate_manifest_sha256: str,
+    opencode_config_content: str | None = None,
+) -> bytes:
     network = names.network
     _safe_docker_name(network, "network name")
     main_labels = {
@@ -2459,6 +2714,12 @@ def _compose_bytes(names: DockerAttemptNames, candidate_manifest_sha256: str) ->
         for key, value in main_labels.items()
     )
     dns = "".join(f"      - {resolver}\n" for resolver in MAIN_DNS)
+    environment = (
+        "    environment:\n"
+        f"      OPENCODE_CONFIG_CONTENT: {json.dumps(opencode_config_content)}\n"
+        if opencode_config_content is not None
+        else ""
+    )
     return (
         "services:\n"
         "  main:\n"
@@ -2479,6 +2740,7 @@ def _compose_bytes(names: DockerAttemptNames, candidate_manifest_sha256: str) ->
         "      timeout: 2s\n"
         "      retries: 1800\n"
         "      start_period: 1s\n"
+        f"{environment}"
         "    dns:\n"
         f"{dns}"
         "    networks:\n"
@@ -2491,7 +2753,11 @@ def _compose_bytes(names: DockerAttemptNames, candidate_manifest_sha256: str) ->
 
 
 def create_task_overlay(
-    candidate: Path, destination: Path, names: DockerAttemptNames | str
+    candidate: Path,
+    destination: Path,
+    names: DockerAttemptNames | str,
+    *,
+    opencode_config_content: str | None = None,
 ) -> TaskOverlay:
     if isinstance(names, str):
         # Retained only for focused overlay tests. Production always binds all labels.
@@ -2502,7 +2768,9 @@ def create_task_overlay(
     candidate_manifest_sha256 = manifest_digest(candidate_manifest)
     _copy_verified_tree(candidate, destination)
     compose = destination / "environment/docker-compose.yaml"
-    compose.write_bytes(_compose_bytes(names, candidate_manifest_sha256))
+    compose.write_bytes(
+        _compose_bytes(names, candidate_manifest_sha256, opencode_config_content)
+    )
     compose.chmod(0o644)
     overlay_manifest = tree_manifest(destination)
     compose_relative = "environment/docker-compose.yaml"
@@ -2771,7 +3039,7 @@ def _validate_request(
             raise ValueError("broker responses multiplicity/background rejected")
         _validate_responses_content(document)
     else:
-        if stream:
+        if stream and state.model != "z-ai/glm-5.3-flash":
             raise ValueError("broker streaming chat is unsupported")
         allowed_limit_fields = {"max_completion_tokens", "max_tokens"}
         injected_field = "max_completion_tokens"
@@ -2915,6 +3183,7 @@ class CalibrationBrokerHandler(BaseHTTPRequestHandler):
                 self, state
             )
             ordinal, reservation = state.begin_request(endpoint, reservation_amount)
+            state.write_evidence()
         except PermissionError:
             self._reject(HTTPStatus.UNAUTHORIZED, "authorization rejected")
             return
@@ -2938,6 +3207,8 @@ class CalibrationBrokerHandler(BaseHTTPRequestHandler):
         settlement = "unforwarded"
         settlement_failure: str | None = None
         response: http.client.HTTPResponse | None = None
+        response_body = b""
+        response_body_read = False
         forwarding = ForwardingAdmission()
         upstream_opened = False
         try:
@@ -3001,11 +3272,17 @@ class CalibrationBrokerHandler(BaseHTTPRequestHandler):
                 response_body = _read_bounded_response(
                     response, upstream, state, declared_length
                 )
+                response_body_read = True
                 if stream:
                     if state.backend.name == OPENROUTER_BACKEND.name:
-                        openrouter_settlement = _parse_openrouter_responses_stream(
-                            response_body, expected_models=state.response_models
-                        )
+                        if endpoint == "/v1/chat/completions":
+                            openrouter_settlement = _parse_openrouter_chat_stream(
+                                response_body, expected_models=state.response_models
+                            )
+                        else:
+                            openrouter_settlement = _parse_openrouter_responses_stream(
+                                response_body, expected_models=state.response_models
+                            )
                         cost = _poll_openrouter_generation(
                             state,
                             settlement=openrouter_settlement,
@@ -3014,6 +3291,12 @@ class CalibrationBrokerHandler(BaseHTTPRequestHandler):
                         )
                         request_id = request_id or openrouter_settlement.response_id
                         usage = openrouter_settlement.usage
+                    elif endpoint == "/v1/chat/completions":
+                        chat_settlement = _parse_openrouter_chat_stream(
+                            response_body, expected_models=state.response_models
+                        )
+                        cost = _parse_cost(response.headers)
+                        usage = chat_settlement.usage
                     else:
                         cost, usage = _parse_responses_stream(response_body)
                 elif state.backend.name == OPENROUTER_BACKEND.name:
@@ -3053,6 +3336,43 @@ class CalibrationBrokerHandler(BaseHTTPRequestHandler):
             if isinstance(error, OpenRouterSettlementError):
                 settlement_failure = error.code
             potentially_paid = potentially_paid or forwarding.started
+            recovered_delivery_cost = False
+            if (
+                state.backend.name == OPENROUTER_BACKEND.name
+                and endpoint in ALLOWED_PATHS
+                and status == HTTPStatus.OK
+                and request_id is not None
+                and response_body_read
+                and not response_body
+            ):
+                try:
+                    cost = _poll_openrouter_generation(
+                        state,
+                        settlement=None,
+                        generation_id=request_id,
+                        streamed=stream,
+                        settlement_window_seconds=(
+                            DELIVERY_FAILURE_SETTLEMENT_WINDOW_SECONDS
+                        ),
+                    )
+                except (
+                    OSError,
+                    http.client.HTTPException,
+                    RuntimeError,
+                    ValueError,
+                ) as recovery_error:
+                    settlement_failure = (
+                        recovery_error.code
+                        if isinstance(recovery_error, OpenRouterSettlementError)
+                        else "generation_settlement_unavailable"
+                    )
+                    cost = None
+                else:
+                    state.finish_request(reservation, cost)
+                    settlement = "settled"
+                    settlement_failure = "empty_stream_delivery"
+                    settlement_finalized = True
+                    recovered_delivery_cost = True
             if reservation is not None and not settlement_finalized:
                 try:
                     if cost is not None:
@@ -3069,7 +3389,7 @@ class CalibrationBrokerHandler(BaseHTTPRequestHandler):
                         settlement = "released_unforwarded"
                 finally:
                     settlement_finalized = True
-            if state.ledger.fatal is None:
+            if state.ledger.fatal is None and not recovered_delivery_cost:
                 state.ledger.fail("broker upstream response invalid")
             self._reject(HTTPStatus.BAD_GATEWAY, "upstream rejected")
         finally:
@@ -3324,6 +3644,8 @@ def _broker_child_main(argv: list[str]) -> int:
                     if type(sequence) is not int or sequence < 0:
                         raise ValueError("broker heartbeat sequence rejected")
                     broker.state.heartbeat(channel_identity)
+                elif message == {"op": "drain"}:
+                    broker.state.drain(channel_identity)
                 else:
                     raise ValueError("broker control message rejected")
         except BaseException:
@@ -3390,6 +3712,7 @@ class DockerBrokerSidecar:
         self.heartbeat_thread: threading.Thread | None = None
         self.control_pipe_identity: tuple[int, int] | None = None
         self.activated = False
+        self.drained = False
         self.network_allocation: DockerNetworkAllocation | None = None
 
     def start(self) -> None:
@@ -3545,6 +3868,24 @@ class DockerBrokerSidecar:
             target=heartbeat, name="calibration-broker-heartbeat"
         )
         self.heartbeat_thread.start()
+
+    def drain(self) -> None:
+        if not self.activated or self.drained:
+            raise RuntimeError("broker sidecar drain ordering rejected")
+        self.heartbeat_stop.set()
+        if self.heartbeat_thread is not None:
+            self.heartbeat_thread.join(timeout=2)
+            if self.heartbeat_thread.is_alive():
+                raise RuntimeError("heartbeat thread survived drain")
+        self._write_control({"op": "drain"})
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            ledger = self.read_ledger()
+            if ledger.get("active") is False and ledger.get("draining") is True:
+                self.drained = True
+                return
+            time.sleep(0.05)
+        raise RuntimeError("broker drain did not complete")
 
     def _wait_for_container(self) -> None:
         deadline = time.monotonic() + 20
@@ -3707,9 +4048,15 @@ class DockerBrokerSidecar:
         ):
             raise RuntimeError("Docker sidecar probe reached model forwarding")
 
-    def read_ledger(self, *, minimum_requests: int = 0) -> dict[str, Any]:
+    def read_ledger(
+        self,
+        *,
+        minimum_requests: int = 0,
+        require_complete: bool = False,
+        timeout_seconds: float = 5.0,
+    ) -> dict[str, Any]:
         path = self.evidence_root / "ledger.json"
-        deadline = time.monotonic() + 5
+        deadline = time.monotonic() + timeout_seconds
         while time.monotonic() < deadline:
             if path.exists():
                 document = strict_json(path.read_bytes())
@@ -3721,10 +4068,33 @@ class DockerBrokerSidecar:
                 if document.get("pricing_sha256") != self.pricing.sha256:
                     raise ValueError("broker pricing evidence mismatch")
                 request_count = document.get("request_count")
-                if type(request_count) is int and request_count >= minimum_requests:
+                requests = document.get("requests")
+                if (
+                    type(request_count) is int
+                    and request_count >= minimum_requests
+                    and (
+                        not require_complete
+                        or (
+                            isinstance(requests, list)
+                            and len(requests) == request_count
+                        )
+                    )
+                ):
                     return document
             time.sleep(0.05)
         raise RuntimeError("broker evidence did not reach expected request count")
+
+    def await_final_ledger(self) -> dict[str, Any]:
+        if not self.drained:
+            raise RuntimeError("broker final ledger requires drain")
+        document = self.read_ledger(
+            minimum_requests=0,
+            require_complete=True,
+            timeout_seconds=DELIVERY_FAILURE_SETTLEMENT_WINDOW_SECONDS + 5,
+        )
+        if document.get("active") is not False or document.get("draining") is not True:
+            raise RuntimeError("broker final ledger drain authority is stale")
+        return document
 
     def cleanup(self) -> dict[str, Any]:
         errors: list[str] = []
@@ -3997,8 +4367,11 @@ def child_environment(
     private_home: Path,
     token: str,
     base_url: str,
+    credential_env: str = "OPENAI_API_KEY",
     ambient: Mapping[str, str] | None = None,
 ) -> dict[str, str]:
+    if credential_env not in {"OPENAI_API_KEY", "ZAI_API_KEY"}:
+        raise ValueError("child credential environment is unsupported")
     source = os.environ if ambient is None else ambient
     environment = {
         "PATH": "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
@@ -4008,15 +4381,16 @@ def child_environment(
         "XDG_CONFIG_HOME": str(config_root),
         "XDG_DATA_HOME": str(private_home / "data"),
         "XDG_STATE_HOME": str(private_home / "state"),
-        "OPENAI_API_KEY": token,
-        "OPENAI_BASE_URL": base_url,
+        credential_env: token,
     }
+    if credential_env == "OPENAI_API_KEY":
+        environment["OPENAI_BASE_URL"] = base_url
     for name in ("DOCKER_HOST", "DOCKER_CONTEXT", "LANG", "LC_ALL", "TZ"):
         if value := source.get(name):
             environment[name] = value
     for name in environment:
         upper = name.upper()
-        if name not in {"OPENAI_API_KEY", "OPENAI_BASE_URL"} and any(
+        if name not in {credential_env, "OPENAI_BASE_URL"} and any(
             marker in upper for marker in PROVIDER_ENV_MARKERS
         ):
             raise ValueError("child environment allowlist admitted a credential")
@@ -4056,8 +4430,8 @@ kind = "modal"
     config = config_root / "tetrabench/config.toml"
     config.parent.mkdir(parents=True)
     lines = ["schema_version = 1"]
-    for profile, model_group in PROFILES:
-        model = f"openai/{model_group}"
+    for profile_contract in PROFILE_CONTRACTS:
+        profile = profile_contract.name
         lines.extend(
             [
                 f"[profiles.{profile}.controller]",
@@ -4067,14 +4441,72 @@ kind = "modal"
                 f"[profiles.{profile}.selection]",
                 'include = ["authority-fencing"]',
                 f"[profiles.{profile}.harbor]",
-                'agent_name = "opencode"',
-                f'model_name = "{model}"',
+                f'agent_name = "{CALIBRATION_AGENT}"',
+                f'model_name = "{profile_contract.harbor_model}"',
                 "attempts = 1",
                 "concurrency = 1",
             ]
         )
     config.write_text("\n".join(lines) + "\n")
     return project, config_root
+
+
+def _opencode_provider_config_content(
+    *,
+    profile: ProfileContract,
+    base_url: str,
+    max_input_tokens: int,
+    max_output_tokens: int,
+) -> str | None:
+    if profile.opencode_npm is None:
+        if profile.opencode_provider != "openai":
+            raise ValueError("calibration OpenCode provider is unsupported")
+        return canonical(
+            {
+                "$schema": "https://opencode.ai/config.json",
+                "provider": {
+                    profile.opencode_provider: {
+                        "options": {
+                            "headerTimeout": OPENCODE_HEADER_TIMEOUT_MS,
+                        }
+                    }
+                },
+            }
+        )
+    if (
+        profile.opencode_provider != "zai"
+        or profile.opencode_npm != "@ai-sdk/openai-compatible"
+    ):
+        raise ValueError("calibration OpenCode provider is unsupported")
+    return canonical(
+        {
+            "$schema": "https://opencode.ai/config.json",
+            "model": profile.harbor_model,
+            "small_model": profile.harbor_model,
+            "provider": {
+                profile.opencode_provider: {
+                    "models": {
+                        profile.child_model: {
+                            "limit": {
+                                "context": max_input_tokens,
+                                "output": min(max_output_tokens, MAX_OUTPUT_TOKENS),
+                            },
+                            "name": "GLM-5.3 Flash calibration",
+                            "reasoning": True,
+                            "tool_call": True,
+                        }
+                    },
+                    "name": "tetrabench calibration",
+                    "npm": profile.opencode_npm,
+                    "options": {
+                        "apiKey": f"{{env:{profile.credential_env}}}",
+                        "baseURL": base_url,
+                        "headerTimeout": OPENCODE_HEADER_TIMEOUT_MS,
+                    },
+                }
+            },
+        }
+    )
 
 
 def _validate_metrics(record: dict[str, Any]) -> dict[str, Any]:
@@ -4085,15 +4517,17 @@ def _validate_metrics(record: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(metrics, dict):
         raise ValueError("OpenCode ATIF token metrics are missing")
     retained: dict[str, Any] = {}
-    for name in (
-        "total_prompt_tokens",
-        "total_completion_tokens",
-        "total_cached_tokens",
-    ):
+    for name in ("total_prompt_tokens", "total_completion_tokens"):
         value = metrics.get(name)
         if type(value) is not int or value < 0:
             raise ValueError("OpenCode ATIF metrics are invalid")
         retained[name] = value
+    cached_value = metrics.get("total_cached_tokens")
+    if cached_value is None:
+        cached_value = 0
+    if type(cached_value) is not int or cached_value < 0:
+        raise ValueError("OpenCode ATIF metrics are invalid")
+    retained["total_cached_tokens"] = cached_value
     prompt = retained["total_prompt_tokens"]
     completion = retained["total_completion_tokens"]
     cached = retained["total_cached_tokens"]
@@ -4817,12 +5251,15 @@ def _fallback_attempt_spend(
     }
 
 
-def _validate_deny_upstream_ledger(document: Mapping[str, Any]) -> None:
+def _validate_deny_upstream_ledger(
+    document: Mapping[str, Any], *, profile: str
+) -> None:
+    expected_requests = DENY_UPSTREAM_EXPECTED_REQUESTS[profile]
     requests = document.get("requests")
     if (
-        document.get("request_count") != DENY_UPSTREAM_EXPECTED_REQUESTS
+        document.get("request_count") != expected_requests
         or not isinstance(requests, list)
-        or len(requests) != DENY_UPSTREAM_EXPECTED_REQUESTS
+        or len(requests) != expected_requests
         or document.get("known_actual_cost_usd") != "0"
         or Decimal(document.get("retained_unknown_reservation_usd", "-1")) != 0
     ):
@@ -4872,7 +5309,8 @@ def _validate_native_attempt(
             ordinal=ordinal,
             expected_task_checksum=expected_task_checksum,
             expected_task_digest=expected_task_digest,
-            expected_agent_name="opencode",
+            expected_agent_name=CALIBRATION_AGENT,
+            expected_agent_info_name="opencode",
             expected_model_name=harbor_model,
             expected_reward=int(document["reward"]),
             expected_exception_type=(
@@ -4984,7 +5422,19 @@ def _run_attempt(
     attempt_root = private_root / f"attempt-{ordinal}"
     attempt_root.mkdir(mode=0o700)
     names = _docker_names(run_id, ordinal)
-    overlay = create_task_overlay(snapshot.task, attempt_root / "task-overlay", names)
+    base_url = f"http://{names.alias}:{DEFAULT_BROKER_PORT}/v1"
+    opencode_config_content = _opencode_provider_config_content(
+        profile=profile_contract,
+        base_url=base_url,
+        max_input_tokens=model_pricing["max_input_tokens"],
+        max_output_tokens=model_pricing["max_output_tokens"],
+    )
+    overlay = create_task_overlay(
+        snapshot.task,
+        attempt_root / "task-overlay",
+        names,
+        opencode_config_content=opencode_config_content,
+    )
     project, config_root = _write_project(attempt_root / "execution", overlay.task)
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", DeprecationWarning)
@@ -5040,7 +5490,8 @@ def _run_attempt(
                 config_root=config_root,
                 private_home=home,
                 token=attempt_token,
-                base_url=f"http://{names.alias}:{DEFAULT_BROKER_PORT}/v1",
+                base_url=base_url,
+                credential_env=profile_contract.credential_env,
             )
             executor = ThreadPoolExecutor(max_workers=1)
             command_future: Future[CommandResult] | None = None
@@ -5094,7 +5545,10 @@ def _run_attempt(
 
                 result, document = _run_phase(attempt_record, "cli_wait", wait_for_cli)
             except BaseException:
-                _remove_owned_attempt_containers(names)
+                _remove_owned_attempt_containers(names, preserve_broker=True)
+                if getattr(sidecar, "activated", False):
+                    with suppress(BaseException):
+                        sidecar.drain()
                 if command_future is not None:
                     try:
                         completed_result = command_future.result(timeout=30)
@@ -5123,6 +5577,9 @@ def _run_attempt(
                                 )
                             )
                             attempt_record["command_outcome"] = command_evidence
+                if getattr(sidecar, "drained", False):
+                    with suppress(BaseException):
+                        ledger_document = sidecar.await_final_ledger()
                 raise
             finally:
                 executor.shutdown(wait=True, cancel_futures=True)
@@ -5149,7 +5606,7 @@ def _run_attempt(
                 if ledger["fatal"] is not None:
                     raise ValueError("calibration attempt ledger is fatal")
                 if debug_deny_upstream:
-                    _validate_deny_upstream_ledger(ledger)
+                    _validate_deny_upstream_ledger(ledger, profile=profile)
                 return security, ledger
 
             security_evidence, ledger_document = _run_phase(
@@ -5347,10 +5804,9 @@ def _failure(
     )
     prior_known = args.prior_known_cost_usd
     prior_unknown = args.prior_unknown_exposure_usd
-    prior_total = prior_known + prior_unknown
     backend = BACKENDS[args.backend]
     planned_allocations = _deterministic_budget_split(
-        MAX_TOTAL_COST - prior_total,
+        MAX_TOTAL_COST,
         args.attempts_per_profile * len(PROFILE_CONTRACTS),
     )
     return {
@@ -5360,7 +5816,7 @@ def _failure(
         "attempts_per_profile": args.attempts_per_profile,
         "budget": {
             "attempt_allocations_usd": [str(item) for item in planned_allocations],
-            "available_budget_usd": str(MAX_TOTAL_COST - prior_total),
+            "available_budget_usd": str(MAX_TOTAL_COST),
             "total_cap_usd": str(MAX_TOTAL_COST),
         },
         "diagnostic": {
@@ -5378,7 +5834,7 @@ def _failure(
             "current_retained_exposure_usd": str(retained),
             "known_actual_cost_usd": str(prior_known + known),
             "retained_unknown_reservation_usd": str(prior_unknown + retained),
-            "total_usd": str(prior_total + known + retained),
+            "total_usd": str(prior_known + prior_unknown + known + retained),
         },
         "task_id": TASK_ID,
         "total_authoritative_cost_usd": str(prior_known + known),
@@ -5422,10 +5878,8 @@ def _nonnegative_usd(value: str) -> Decimal:
         raise argparse.ArgumentTypeError(
             "must be a finite nonnegative decimal"
         ) from error
-    if not parsed.is_finite() or parsed < 0 or parsed > MAX_TOTAL_COST:
-        raise argparse.ArgumentTypeError(
-            f"must be a finite nonnegative decimal at most {MAX_TOTAL_COST}"
-        )
+    if not parsed.is_finite() or parsed < 0:
+        raise argparse.ArgumentTypeError("must be a finite nonnegative decimal")
     return parsed
 
 
@@ -5447,10 +5901,6 @@ def parse_arguments(argv: list[str]) -> argparse.Namespace:
         default=Decimal(0),
     )
     args = parser.parse_args(argv)
-    if args.prior_known_cost_usd + args.prior_unknown_exposure_usd > MAX_TOTAL_COST:
-        parser.error(
-            f"combined prior cost and exposure must be at most {MAX_TOTAL_COST}"
-        )
     expected_attempts = 1 if args.debug else 2
     if args.attempts_per_profile is None:
         args.attempts_per_profile = expected_attempts
@@ -5482,7 +5932,7 @@ def main(argv: list[str] | None = None) -> int:
             authority = open_proof_output_authority(args.output)
         parent_key = _take_backend_credential(backend, os.environ)
         prior_total = args.prior_known_cost_usd + args.prior_unknown_exposure_usd
-        available_budget = MAX_TOTAL_COST - prior_total
+        available_budget = MAX_TOTAL_COST
         attempt_allocations = _allocate_attempt_budgets(
             available_budget, attempts_per_profile=args.attempts_per_profile
         )
@@ -5575,7 +6025,7 @@ def main(argv: list[str] | None = None) -> int:
                 and snapshot.source_state == "clean"
                 and exact_four
                 and source_unchanged
-                and prior_total + total_cost <= MAX_TOTAL_COST
+                and total_cost <= MAX_TOTAL_COST
                 and recorded_cost == total_cost
                 and actual_within_reservations
             )
@@ -5629,7 +6079,8 @@ def main(argv: list[str] | None = None) -> int:
                     "prior_unknown_exposure_usd": str(args.prior_unknown_exposure_usd),
                     "current_known_cost_usd": str(total_cost),
                     "current_retained_exposure_usd": "0",
-                    "total_cap_exposure_usd": str(prior_total + total_cost),
+                    "current_run_cap_exposure_usd": str(total_cost),
+                    "historical_total_exposure_usd": str(prior_total + total_cost),
                     "total_authoritative_cost_usd": str(
                         args.prior_known_cost_usd + total_cost
                     ),

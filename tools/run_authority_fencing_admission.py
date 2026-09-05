@@ -1384,11 +1384,14 @@ def _native_run_record(
     expected_task_checksum: str,
     expected_task_digest: str,
     expected_agent_name: str = "oracle",
+    expected_agent_info_name: str | None = None,
     expected_model_name: str | None = None,
     expected_reward: int = 1,
     expected_exception_type: str | None = None,
     require_atif: bool = False,
 ) -> dict[str, Any]:
+    if expected_agent_info_name is None:
+        expected_agent_info_name = expected_agent_name
     job_prefix = "harbor-job"
     root_entries = [
         (item["path"], item["type"])
@@ -1497,7 +1500,7 @@ def _native_run_record(
     if expected_model_name is not None:
         expected_provider, expected_native_model = expected_model_name.split("/", 1)
     if (
-        trial.agent_info.name != expected_agent_name
+        trial.agent_info.name != expected_agent_info_name
         or (expected_model_name is None and trial.agent_info.model_info is not None)
         or (
             expected_model_name is not None

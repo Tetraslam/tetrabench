@@ -1684,3 +1684,247 @@ Provenance: two valid Codex findings on PR 26; focused and complete non-Docker t
 `task add` now rejects any configured catalog or sibling writer lock located inside the fixture being added. This check runs before initial fixture validation or lock creation, so catalog replacement cannot mutate bytes inside the just-validated task tree. A regression places the catalog beneath the starter fixture and proves rejection without creating the lock or changing the catalog. Twenty-four focused authoring tests and all 1,255 non-Docker tests pass.
 
 The concise README now lists `sections`, `controller info`, and `runs` and links `docs/cli-reference.md`. The reference restores current exit codes, error redaction, provider-read boundaries, local evidence retention, detached authority, cancellation/recovery behavior, and artifact limits without moving those details ahead of the quickstart. Vale reports zero errors; remaining experimental warnings do not identify a factual or structural problem.
+
+## 2026-09-03T12:22:47-07:00: Calibration cap scope correction
+
+Provenance: explicit user clarification; executable budget-boundary review; focused local Python 3.12 validation. No provider or paid model call occurred while making this correction.
+
+D-128 corrects the earlier cumulative-budget interpretation. The user-authorized `$50` cap applies independently to one exact-four calibration invocation. Historical known spend and retained unknown exposure remain accounting evidence, but they do not reduce a later invocation's budget or affect its admissibility. Every clean invocation therefore receives four exact `$12.50` attempt allocations, each above the `$5.49288` worst-case single-request reservation. Once a calibration budget is authorized, paid retries continue without another cost confirmation until success or another recorded hard boundary.
+
+The runner now separates historical accounting from current-run budget authority. Allocation and admissibility use only the current invocation's broker-enforced `$50` cap; failure and success evidence still report historical totals. All 474 focused calibration tests, Ruff check/format, ty, and `git diff --check` pass.
+
+## 2026-09-03T18:19:56-07:00: Per-run retries expose Harbor no-cache mismatch
+
+Provenance: clean commit `6540c14`; exact-four OpenRouter runner; retained private reports; pinned Harbor 0.22 source; focused local Python 3.12 validation; Docker residue inspection. Full request and generation identifiers remain private.
+
+Retries 25 and 25b failed before pricing with zero attempts because the launcher used a nonexistent 1Password item; the corrected process-local credential passed credential, allocation, clean-snapshot, sweep, and authenticated-pricing diagnostics. Retry 25c completed both targets and an alternate run before native validation rejected the Harbor's null aggregate cache count. Retry 27 completed both targets, then retained one unsettled alternate reservation at `cli_wait`. Retry 28 again completed both targets and an alternate run before the same native validation rejection. Retries 29, 30, 31, 32b, and 33 stopped safely at bounded CLI, timeout, or harness boundaries; retry 32 was a malformed zero-attempt launcher invocation. Every executable retry used four exact `$12.50` allocations under its independent `$50` cap and left no owned Docker resource.
+
+Historical accounting after retry 33 is `$16.1873954` known cost plus `$35.074823975` conservatively retained unknown exposure. These totals remain evidence and do not consume a later invocation's cap.
+
+Pinned Harbor 0.22 proves the deterministic native mismatch: `FinalMetrics.total_cached_tokens` is optional, OpenCode emits null when total cache reads are zero, and `populate_context_post_run` records that same value as integer zero in `AgentContext.n_cache_tokens`. D-129 normalizes only this native null representation to zero before retaining exact ATIF/trial/job agreement. Prompt and completion metrics remain mandatory positive integers, and nonzero cache values remain exact. All 474 focused calibration tests, Ruff check/format, ty, and `git diff --check` pass after the correction.
+
+## 2026-09-03T22:11:07-07:00: GLM-5.3 Flash replaces the alternate profile
+
+Provenance: explicit user instruction; authenticated OpenRouter `/models`; clean D-129 retries; focused local Python 3.12 validation; Docker residue inspection. Full request and generation identifiers remain private.
+
+Retries 34 through 45 retained the exact per-invocation `$50` boundary and left no owned Docker resource. D-129 passed live when retry 36 completed both target attempts and its first alternate attempt through native validation; the fourth attempt stopped at `cli_wait`. Other retries stopped at bounded CLI or provider-settlement boundaries. Historical accounting after retry 45 is `$23.3519015` known cost plus `$79.544363975` conservatively retained unknown exposure. These totals remain evidence and do not consume later invocation caps.
+
+The user replaced the slow `anthropic/claude-sonnet-5` alternate with GLM-5.3 Flash. OpenRouter's authenticated row identifies exact model `z-ai/glm-5.3-flash`, canonical slug `z-ai/glm-5.3-flash-20260826`, context length 1,310,720, maximum completion tokens 131,072, prompt price `$0.000000075` per token, completion price `$0.00000025`, and cache-read price `$0.000000015`. It advertises no cache-write support or price. D-130 conservatively uses the positive prompt rate for cache-write reservation only when every cache-write price is absent; advertised tiers still contribute to the maximum, and exact response settlement remains mandatory.
+
+The fixed exact-four shape is now two `openai/gpt-5.6-sol` and two `z-ai/glm-5.3-flash` attempts. All 474 focused calibration tests, Ruff check/format, ty, and `git diff --check` pass.
+
+## 2026-09-04T01:13:21-07:00: GLM uses its native OpenAI-compatible wire
+
+Provenance: clean commit `fab43ba`; exact-four OpenRouter retries; bounded private reports; OpenCode provider documentation and source; two direct content-free GLM streaming-schema probes; focused local Python 3.12 validation; Docker residue inspection. Full request, generation, and model content remain private.
+
+Retries 46, 48, and 50 completed both GPT-5.6 Sol attempts, then GLM-5.3 Flash returned two successfully settled Responses calls before OpenCode ended with one `APIError`. Retry 47 stopped on the second target attempt, and retry 49 stopped on the first. No retry retained new unknown exposure, and every retry left no owned Docker resource. Historical calibration accounting after retry 50 is `$24.605893310` known cost plus `$79.544363975` conservatively retained unknown exposure. The two direct schema probes are not calibration attempts or part of that accounting.
+
+OpenCode's own GLM-5.3 Flash integration selects `@ai-sdk/openai-compatible` at `/v1/chat/completions`; the built-in `openai` provider is hard-wired to Responses. A live content-free schema probe showed one stable choice at index zero, stable response and canonical model identities, data-only SSE, one finish transition, a final usage chunk repeating the finish reason, and `[DONE]`. D-131 generates an attempt-private custom `calibration` provider with an environment reference rather than a credential value, keeps GPT on Responses, and admits streaming chat only for the exact GLM profile. The strict parser rejects ambiguous choices, changing identities or finish reasons, post-terminal data, malformed deltas, missing usage, and incomplete framing. OpenRouter generation lookup still owns exact model, stream, native token, and cost settlement before response bytes reach the child.
+
+All 479 focused calibration tests, Ruff check/format, ty, and `git diff --check` pass.
+
+## 2026-09-04T02:34:58-07:00: GLM native-wire transport correction and diagnostic
+
+Provenance: pinned Harbor 0.22 and OpenCode 1.18.27 source; OpenCode provider documentation; three retained nonpaid real-Docker diagnostics; one preserved private OpenCode error event; authenticated read-only OpenRouter pricing; focused local Python 3.12 validation; Docker residue inspection. No request was forwarded to a model provider and no model cost or retained exposure was incurred.
+
+The preceding D-131 note is superseded where it says the host-generated `calibration` provider reached Harbor. Host `XDG_CONFIG_HOME` does not cross into Harbor's `main` container, and Harbor forwards provider credentials according to the provider prefix in its model identity. The corrected path injects content-free `OPENCODE_CONFIG_CONTENT` through the task overlay before main-container inspection, uses Harbor's registered `zai` credential channel to forward only the ephemeral attempt token, and pins both primary and title work to `zai/z-ai/glm-5.3-flash`. The provider override uses `@ai-sdk/openai-compatible`, `{env:ZAI_API_KEY}`, and the attempt-local broker URL; child, broker, and upstream model identity remain exact `z-ai/glm-5.3-flash`.
+
+The final deny-upstream diagnostic passed both profiles. GPT made six authenticated `/v1/responses` requests; GLM made nine authenticated `/v1/chat/completions` requests. Every request received the synthetic 503 before an upstream connection opened or parent authorization was sent, every reservation was released unforwarded, known cost and retained exposure remained zero, and no owned Docker container or network survived. The private report `authority-fencing-calibration-2026-09-04-glm-debug7/stdout.json` is mode `0600`, 53,809 bytes, and SHA-256 `17fbd0d2241738f8dfc2729933261a34a9c1e2199dd977fe86346894d1136cab`; stderr is empty, mode `0600`, and SHA-256 `e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855`.
+
+All 480 focused calibration tests, Ruff check/format, ty, and `git diff --check` pass. Exact-four paid validation remains pending from a clean commit; `authority-fencing` remains outside the production catalog.
+
+## 2026-09-04T11:46:06-07:00: Retries 51 through 53 expose recoverable empty-stream delivery
+
+Provenance: clean commit `9207e50`; exact-four OpenRouter retries 51 and 52; bounded private reports; two authenticated read-only OpenRouter generation records; operator-stopped retry 53; exact-label Docker inspection and cleanup; focused Python 3.12 and real-Docker validation. Full request and generation identifiers remain private.
+
+Retries 51 and 52 completed both GPT attempts, then GLM completed initial Chat Completions work before a later request returned HTTP 200 with an exact generation header and a fully read zero-byte body. Retry 51 added `$0.23233885` known cost and retained `$3.84121`; retry 52 added `$0.270927125` known cost and retained `$3.84935`. Both attempts ended at `cli_wait` with one bounded `APIError`, and each cleanup removed its owned resources.
+
+Authenticated generation rereads prove both zero-byte deliveries reached streamed, uncancelled terminal `tool_calls` state under exact canonical GLM-5.3 Flash identity. Their exact costs are `$0.0010917` and `$0.000557475`. These records explain cost but contain no deliverable response body, so they cannot make either failed agent attempt successful. Retry 53 was stopped while investigating this repeated boundary; it emitted no report, and one labeled main container and its network survived the service stop until exact-label cleanup removed them. Its complete `$12.50` allocation remains conservatively unknown. Historical accounting is `$25.109159285` known plus `$99.734923975` unknown; these totals remain evidence and do not consume another invocation's `$50` cap.
+
+D-132 treats only an exact zero-byte HTTP 200 GLM chat delivery with an authenticated terminal generation record as recoverable. The broker settles the record's exact cost, records fixed `empty_stream_delivery`, returns 502 without forwarding or reconstructing model output, and keeps the ledger available for a fresh client reservation. Every missing, malformed, mismatched, cancelled, nonterminal, nonempty-invalid, or unpriced response retains the prior fail-closed behavior. A fake upstream proves one empty delivery can settle and a subsequent valid retry can succeed. All 481 focused calibration tests, Ruff check/format, ty, `git diff --check`, and the real-Docker parent-death lifecycle test pass.
+
+## 2026-09-04T11:47:44-07:00: Empty-stream accounting correction
+
+Provenance: the two authenticated terminal generation records named in the preceding entry; exact decimal arithmetic. No provider completion occurred during this correction.
+
+The preceding entry is incorrect where it leaves retries 51 and 52's full retained reservations in historical unknown exposure after their terminal generation records establish exact final costs. Costs `$0.0010917` and `$0.000557475` supersede reservations `$3.84121` and `$3.84935`. Correct historical accounting is `$25.110808460` known cost plus `$92.044363975` unknown exposure, including retry 53's complete interrupted `$12.50` allocation. These totals remain evidence and do not consume a later invocation's cap.
+
+## 2026-09-04T12:05:03-07:00: Retry 54 generalizes empty-stream recovery to Responses
+
+Provenance: clean commit `c41e3e5`; exact-four OpenRouter retry 54; bounded private report; authenticated read-only OpenRouter generation record; focused Python 3.12 validation; exact-label Docker inspection. Full request and generation identifiers remain private.
+
+Retry 54 stopped on its first GPT attempt after six settled Responses requests costing `$0.1024206`. Request seven returned HTTP 200 with an exact generation header but delivered zero bytes, retained `$4.56861`, and ended at `cli_wait` with one bounded `APIError`. The authenticated generation record proves exact canonical GPT-5.6 Sol identity, streamed and uncancelled terminal `stop` state, bounded native token counts, and exact cost `$0.01299`. That exact cost supersedes the reservation without making the missing output valid. No owned Docker resource survived. The private report is mode `0600`, 8,692 bytes, SHA-256 `4b38228f88d7c9ada2a580274a85c8b083cddd50326b8698f494da046691b896`; stderr is empty, mode `0600`, and SHA-256 `e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855`.
+
+D-132 now applies the same exact terminal-generation cost settlement and bounded retry behavior to both admitted OpenRouter streaming endpoints. Separate regressions prove an empty Responses or GLM Chat Completions delivery settles, returns 502 without output, leaves the ledger nonfatal, and permits a subsequent valid request to succeed. All 482 focused calibration tests, Ruff check/format, ty, and `git diff --check` pass. Historical accounting is `$25.226219060` known cost plus `$92.044363975` unknown exposure; these totals do not consume another invocation's cap.
+
+## 2026-09-04T12:26:14-07:00: Retry 55 proves the agent memory limit is insufficient
+
+Provenance: clean commit `c41e3e5`; exact-four OpenRouter retry 55; bounded private report; native Harbor status; host kernel memory-cgroup OOM record; candidate task resource inspection; exact-label Docker cleanup. Full request and generation identifiers remain private.
+
+Retry 55 completed target attempt one with reward zero across ten settled requests costing `$0.1310561`. Target attempt two settled two Responses requests costing `$0.0525770`, emitted no OpenCode error event, and completed one agent step with four tool calls before Harbor recorded process status 137. The host kernel identifies the exact cause: OpenCode invoked the OOM killer inside its Docker memory cgroup and was killed at roughly 503 MiB RSS. The candidate's native task contract capped the agent environment at 512 MiB. No request remained unsettled and no owned Docker resource survived. The private report is mode `0600`, 26,085 bytes, SHA-256 `85d9b39361fb88dad81020507164957ffe962fe44767e17ca6ec422bd6044271`; stderr is empty and mode `0600`.
+
+D-133 raises the candidate's native agent memory limit to 1 GiB and leaves the separate verifier at 384 MiB. This changes sealed candidate bytes, so the earlier local and detached proofs cannot authorize the corrected candidate; both must rerun before exact-four calibration and catalog admission. Historical accounting is `$25.409852160` known cost plus `$92.044363975` unknown exposure. No paid retry is permitted until the corrected current-byte admission proofs pass.
+
+## 2026-09-04T12:49:56-07:00: Corrected 1 GiB candidate passes local and detached admission
+
+Provenance: clean commit `5f196b2`; clean local authority-fencing admission driver; source-only detached admission driver; retained Modal/Tigris baseline profile; three fresh detached projects; terminal result validation; cleanup sweeps; retained private proofs. Full run, call, attempt, and terminal identifiers remain private.
+
+The local proof is admissible on the corrected bytes. All 17 gold/no-op/mutant/exploit matrix entries passed, followed by exactly three distinct unretried production CLI runs with native reward one, no surviving descendants, and clean source revision `5f196b22e39cd8a68e6256306e0c03110f1c8187`. Subject SHA-256 is `316d9ad4a5273e0be264abe989141ba60c2489adabf9d08af6e6dc1deff0f132`. The mode-0600 proof is 53,475 bytes with SHA-256 `cb8bfa2e0fa04b886161bccbe67fae3dc26dcfe4cd71973aa0d647445de7262d`.
+
+The detached proof is also admissible on the same clean revision and candidate manifest `aa59b2f3d309571987ea6864ca2299557e86029cd037aa4e3dfef08b6fe66f0b`. Both gold cases reached reward one with 19 artifacts; the solution-only reward-forgery audit reached reward zero with 20 artifacts. Every case reached terminal admission with a succeeded controller and two cleanup sweeps. The mode-0600 proof is 2,956 bytes with SHA-256 `aff84ef04a5030b3d1e3b95c701bc22efef73e0fce116c26c1ed806ae3d291de`.
+
+D-133's current-byte local and detached gates are complete. Exact-four calibration is the sole remaining catalog blocker.
+
+## 2026-09-04T13:17:30-07:00: Retry 56 extends failed-delivery settlement polling
+
+Provenance: clean commit `ec98021`; exact-four OpenRouter retry 56; bounded private report; authenticated read-only OpenRouter generation record; focused Python 3.12 validation; exact-label Docker cleanup. Full request and generation identifiers remain private.
+
+Both 1 GiB target attempts completed without an OOM, returning reward zero across 14 and nine settled Responses requests. GLM attempt one settled one request at `$0.00024733`; a concurrent HTTP 200 request delivered zero bytes, and the 30-second D-132 recovery lookup did not observe a terminal generation before retaining `$3.55818`. The attempt ended at `cli_wait` with one bounded `APIError`, and no owned Docker resource survived.
+
+The authenticated generation record later proved exact canonical GLM-5.3 Flash identity, streamed and uncancelled terminal `stop` state, bounded native usage, and exact cost `$0.00019275`. This cost supersedes the retained reservation without making the missing output valid. D-132 now gives only the zero-byte delivery-recovery lookup a five-minute settlement window; normal successful-response settlement remains 30 seconds, and both remain inside the 35-minute attempt deadline. Focused timeout tests prove dynamically shortened deadlines still apply, and separate empty-stream regressions prove both endpoints settle and permit a subsequent valid retry. All 482 focused calibration tests, Ruff check/format, ty, and `git diff --check` pass.
+
+Retry 56's exact current cost is `$0.29328798`. Historical accounting is `$25.703140140` known cost plus `$92.044363975` unknown exposure. The private report is mode `0600`, 47,120 bytes, SHA-256 `e943c5dea771ad2e1983d6daacd53f66c430e38d3780b593fb35018f61ebf5e7`; stderr is empty and mode `0600`.
+
+## 2026-09-04T13:57:55-07:00: Retry 57 corrects reconciliation/client timeout ordering
+
+Provenance: clean commit `cc72ad8`; exact-four OpenRouter retry 57; bounded private report; pinned OpenCode provider timeout behavior; focused Python 3.12 timeout validation; exact-label Docker cleanup. Full request and generation identifiers remain private.
+
+Both 1 GiB target attempts completed with reward zero across 16 and 11 settled Responses requests, costing `$0.2352343` and `$0.1376216`. GLM completed two tool-bearing steps before one bounded `APIError`. Its broker ledger did not reach a final retained record before cleanup, so failure evidence conservatively retains the complete `$12.50` attempt allocation. No owned Docker resource survived.
+
+The failed-delivery broker reconciliation window and OpenCode response-header timeout were both five minutes. A zero-byte handler could therefore still be polling the authenticated generation record when OpenCode abandoned the request, returned nonzero, and caused cleanup to revoke the broker before its final ledger write. D-132 now injects a six-minute header timeout for both built-in GPT Responses and custom GLM Chat Completions while retaining the five-minute failed-delivery lookup and 35-minute attempt deadline. The enforced order is `300 seconds < 360 seconds < 2,100 seconds`. Normal successful-response settlement remains bounded at 30 seconds.
+
+All 483 focused calibration tests, Ruff check/format, ty, and `git diff --check` pass. Retry 57 added `$0.3728559` known cost and `$12.50` conservative unknown exposure. Historical accounting is `$26.075996040` known plus `$104.544363975` unknown. The private report is mode `0600`, 48,096 bytes, SHA-256 `48172ca38d08b3e78e2bee61c4be9f4080be4c9d29ce034add8b0e2f7cc073a9`; stderr is empty and mode `0600`.
+
+## 2026-09-04T15:11:37-07:00: Retry 58 disproves the timeout-only diagnosis
+
+Provenance: clean commit `7b4ebd6`; exact-four OpenRouter retry 58; bounded private report; native Harbor/OpenCode structural evidence; exact-label Docker inspection and cleanup. Full request, generation, session, and native artifact identifiers remain private.
+
+Both target attempts completed with rewards zero and one across eight settled Responses requests each, costing `$0.1107755` and `$0.1243511`. GLM completed two agent steps and six tool uses before OpenCode emitted one `APIError` and the production CLI returned status one at `cli_wait`. No authoritative final broker ledger survived cleanup. The report's zero request count is conservative fallback evidence rather than proof that no request reached the broker, so the complete `$12.50` allocation remains unknown. No fourth attempt ran, no proof was created, and no labeled Docker resource survived.
+
+Retry 58 added `$0.2351266` known cost and `$12.50` conservative unknown exposure. Historical accounting is `$26.311122640` known plus `$117.044363975` unknown, totaling `$143.355486615`; it does not consume a later invocation's `$50` cap. The private report is mode `0600`, 42,919 bytes, SHA-256 `e212383e74031723850d12938df33467578fde891a7534188e755b17807524b9`; stderr is empty, mode `0600`, and SHA-256 `e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855`.
+
+## 2026-09-04T15:11:37-07:00: D-134 removes concurrent OpenCode title generation
+
+Provenance: Harbor 0.22 public custom-agent factory and installed OpenCode adapter; exact OpenCode 1.18.28 `run --title` and non-default-title source behavior; wheel-contained tetrabench subclass; focused Python 3.12 validation; three real-Docker denied-upstream diagnostics; exact-label Docker inspection. No request was forwarded to a model provider and no model cost or retained exposure was incurred.
+
+The calibration profile now names `tetrabench.calibration_opencode:CalibrationOpenCode`. The subclass adds only fixed `--title tetrabench-calibration` to Harbor's existing command, causing OpenCode to skip its concurrent three-attempt title-generation operation while preserving runtime agent identity `opencode`. Native validation now distinguishes the configured custom import path from that inherited runtime identity instead of weakening either check.
+
+The final nonpaid diagnostic passed both profiles on OpenCode 1.18.28. GPT made six authenticated denied `/v1/responses` requests; GLM made six authenticated denied `/v1/chat/completions` requests, down from the previous nine. Six is the exact native boundary for one main request plus five 503 retries. Every request was rejected before upstream connection or parent authorization, every reservation was released, cost and retained exposure remained zero, and no labeled container or network survived. The combined 518 non-Docker calibration and Harbor-runner tests pass; Ruff check/format and ty pass. A clean commit and exact-four paid validation remain pending.
+
+## 2026-09-04T15:27:12-07:00: D-134 full local validation
+
+Provenance: final local source; Python 3.12; real Docker daemon; authenticated pricing with denied upstream forwarding; package build and inspection; dependency, source, workflow, diff, and full-history secret checks. No request was forwarded to a model provider and no model cost or retained exposure was incurred.
+
+All 1,263 non-Docker tests and all 11 required Docker tests pass. Ruff check and format, ty, Bandit, `uv lock --check`, wheel/sdist build, all-groups pip-audit, actionlint, `git diff --check`, and full-history Gitleaks over 97 commits pass. The built wheel contains `tetrabench/calibration_opencode.py`. The real-Docker denied-upstream diagnostic passed both profiles at six requests each with zero forwarding, zero cost or retained exposure, and no labeled residue. A clean commit and exact-four paid validation remain pending.
+
+## 2026-09-04T15:49:25-07:00: Retry 59 proves five-minute reconciliation is insufficient
+
+Provenance: clean commit `bf4ba2c`; exact-four OpenRouter retry 59; bounded private report; exact broker record; authenticated read-only OpenRouter generation record; exact settlement arithmetic; exact-label Docker inspection. Full request, generation, session, and native artifact identifiers remain private.
+
+Both target attempts completed with reward zero across 12 settled Responses requests each, costing `$0.1395741` and `$0.1511167`. GLM's first request returned HTTP 200 with an exact generation header and a fully read zero-byte body. The five-minute failed-delivery lookup expired before terminal provider state, retained `$3.84121`, and OpenCode ended with one `APIError`; no fourth attempt or proof followed. Cleanup left no labeled Docker resource.
+
+The later authenticated generation record proves exact canonical GLM-5.3 Flash identity, streamed and uncancelled terminal `tool_calls`, bounded native usage, 627-second generation time, and exact cost `$0.0010932`. That cost supersedes the retained reservation without making the missing response body valid. Retry 59's exact cost is `$0.2917840`. Historical accounting is `$26.602906640` known cost plus `$117.044363975` unknown exposure; it does not consume a later invocation's cap. The mode-0600 report is 46,877 bytes with SHA-256 `61c9a2025ce8c2268e2a7a147371c31a01c6fc2f88a6980222e242830c29a49c`; stderr is empty, mode `0600`, and SHA-256 `e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855`. The mode-0600 generation record is 1,447 bytes with SHA-256 `b884eed34e09326a62ded72172e7a121266436f5ebf3669a5106813160873186`.
+
+D-135 gives only exact HTTP 200 zero-byte delivery reconciliation a 900-second window and raises both OpenCode response-header timeouts to 960 seconds. Normal successful-response settlement remains 30 seconds and the attempt remains 2,100 seconds, preserving `900 seconds < 960 seconds < 2,100 seconds` and at least one full retry window. Focused validation is pending; no further paid retry is permitted before it passes and the change is committed.
+
+## 2026-09-04T15:55:33-07:00: D-135 focused validation
+
+Provenance: final local source; Python 3.12 focused tests; lint, formatting, types, diff, and changed-content secret checks. No provider call occurred.
+
+All 479 non-Docker calibration tests pass, including exact assertions for the 900-second reconciliation, 960-second client timeout, and 2,100-second attempt ordering. Ruff check and format, ty, `git diff --check`, and redacted changed-content Gitleaks pass. A clean commit remains required before the next exact-four invocation.
+
+## 2026-09-04T16:23:37-07:00: Retry 60 supersedes D-135's timeout diagnosis
+
+Provenance: clean commit `e748c03`; exact-four OpenRouter retry 60; bounded private report; exact broker record; authenticated read-only OpenRouter generation record; source inspection; exact-label Docker inspection. Full request, generation, session, and native artifact identifiers remain private.
+
+Both target attempts completed with reward zero. They settled 25 and nine Responses requests at `$0.3707552` and `$0.1314611`. GLM's first request returned HTTP 200 with an exact generation header and a fully read zero-byte body, then retained `$3.84121` and ended at `cli_wait` with one `APIError`. The alternate attempt ended well before D-135's 900-second reconciliation bound, so an insufficient timeout did not cause this failure. No fourth attempt or proof followed, and no labeled Docker resource survived.
+
+The later authenticated generation row proves exact canonical GLM-5.3 Flash identity, streamed and uncancelled terminal `tool_calls`, bounded native usage, and exact cost `$0.0010952`. Its `generation_time` and `latency` values do not establish generation-record visibility delay; the preceding note's interpretation of retry 59's `generation_time=627` as 627 seconds is unsupported. Retry 60's exact cost is `$0.5033115`. Historical accounting is `$27.106218140` known plus `$117.044363975` unknown. The mode-0600 report is 51,559 bytes with SHA-256 `8dae78517a57e221bfd3cf456e550b850d24ee666cbee6bf1888ddc03d35cabc`; stderr is empty, mode `0600`, and SHA-256 `e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855`. The mode-0600 generation record is 1,453 bytes with SHA-256 `e5ce8ef54b0e59149bac6175023e3901489e5a62e5eaddf6a3b70cdd22a2939d`.
+
+Source inspection identifies the actual gap. Failed-delivery generation polling retries HTTP 404, but an HTTP 200 row with null `finish_reason` exits the poll immediately. D-136 restores the 300-second reconciliation and 360-second client timeout, gives only that exact matching nonterminal row the existing bounded retry, and leaves cancelled, malformed, mismatched, unsupported-terminal, and unpriced rows fail-closed. Focused validation is pending; no paid retry is permitted before it passes and the correction is committed.
+
+## 2026-09-04T16:36:59-07:00: D-136 focused validation
+
+Provenance: final local source; fake OpenRouter nonterminal-to-terminal generation sequence; Python 3.12 focused tests; lint, formatting, types, diff, and changed-content secret checks. No provider call occurred.
+
+The regression returns an exact HTTP 200 generation row with null `finish_reason`, then an exact terminal row. The broker retries once, settles exact cost, releases the reservation, records `empty_stream_delivery`, and remains nonfatal for the next model request. All 480 non-Docker calibration tests pass. Ruff check and format, ty, `git diff --check`, and redacted changed-content Gitleaks pass. A clean commit remains required before another exact-four invocation.
+
+## 2026-09-04T17:02:19-07:00: Retry 61 narrows nonterminal cancellation state
+
+Provenance: clean commit `f0b1983`; exact-four OpenRouter retry 61; bounded private report; one delivered and one zero-byte GLM broker record; authenticated read-only generation reread; exact settlement arithmetic; exact-label Docker inspection; fake nonterminal and cancelled generation regressions. Full request, generation, session, and native artifact identifiers remain private.
+
+Both target attempts completed with reward zero. They settled 12 and 15 Responses requests at `$0.1531784` and `$0.1791126`. GLM request one delivered 3,535 response bytes and settled at `$0.0010887`; request two returned HTTP 200 with an exact generation header and zero bytes, retained `$3.84802`, and ended at `cli_wait` with one `APIError`. This proves D-136 did not yet cover the early row's complete nonterminal shape. No fourth attempt or proof followed, and no labeled Docker resource survived.
+
+The later authenticated row proves exact canonical GLM-5.3 Flash identity, streamed and uncancelled terminal `tool_calls`, bounded native usage, and exact cost `$0.00111375`. That cost supersedes the retained reservation. Retry 61's exact cost is `$0.33449345`; historical accounting is `$27.440711590` known plus `$117.044363975` unknown. The mode-0600 report is 48,990 bytes with SHA-256 `c01357b032b93240989b78b1a9807439d2731979d54221080efa7a6d6a2879d8`; stderr is empty, mode `0600`, and SHA-256 `e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855`. The mode-0600 generation record is 1,451 bytes with SHA-256 `5839a494d5ff084aa090fb99f3d7188b79f2c7b364a084a4a8e8e003262a9380`.
+
+D-137 accepts only null or false cancellation while an exact generation row has no finish reason; either remains nonterminal rather than authoritative. Cancelled true and malformed cancellation remain immediate failures. Failed reconciliation now retains a closed settlement failure code. One regression advances null/nonterminal to exact terminal settlement; another proves cancelled true does not consume a queued terminal response. All 481 non-Docker calibration tests, Ruff check/format, ty, and `git diff --check` pass. A clean commit remains required before another paid retry.
+
+## 2026-09-04T17:35:07-07:00: Retry 62 narrows intermediate generation identity
+
+Provenance: clean commit `9aca8ad`; exact-four OpenRouter retry 62; bounded private report; zero-byte GLM broker record; authenticated read-only generation reread; exact settlement arithmetic; exact-label Docker inspection; incomplete-to-terminal fake generation regression. Full request, generation, session, and native artifact identifiers remain private.
+
+Both target attempts completed with rewards zero and one. Each settled 13 Responses requests, costing `$0.1620028` and `$0.1263113`. GLM's first request returned HTTP 200 with an exact generation header and zero bytes, retained `$3.84121`, and ended at `cli_wait` with one `APIError`. The alternate attempt took less than one minute after 718 seconds of target work, so it again did not consume the five-minute reconciliation window. No fourth attempt or proof followed, and no labeled Docker resource survived.
+
+The later authenticated row proves exact canonical GLM-5.3 Flash identity, streamed and uncancelled terminal `tool_calls`, bounded native usage, and exact cost `$0.0010917`. That cost supersedes the retained reservation. Retry 62's exact cost is `$0.2894058`; historical accounting is `$27.730117390` known plus `$117.044363975` unknown. The mode-0600 report is 47,811 bytes with SHA-256 `5a6810f8de89adf2bdfcb0754cd887dda26d1b794f6cf59a1acfd0d7a07b4a8c`; stderr is empty, mode `0600`, and SHA-256 `e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855`. The mode-0600 generation record is 1,453 bytes with SHA-256 `31424a071bd7b7e8ca7d9bd30fe5b820bbb51084c7ce781ed67b714e8a9fc74f`.
+
+D-138 requires the exact generation ID before classifying an HTTP 200 row as nonterminal, but permits model, stream, cost, and token fields to remain absent until a finish reason appears. Terminal settlement still requires every strict field. The regression advances an exact-ID row with null model, stream, cancellation, and finish reason to a complete terminal record and exact settlement. All 481 non-Docker calibration tests, Ruff check/format, ty, and `git diff --check` pass. A clean commit remains required before another paid retry.
+
+## 2026-09-04T18:25:19-07:00: Retry 63 exposes cleanup before ledger finalization
+
+Provenance: clean commit `805d295`; exact-four OpenRouter retry 63; bounded private report; source lifecycle inspection; exact-label Docker inspection. Full request, generation, session, and native artifact identifiers remain private.
+
+Both target attempts completed with reward zero. They settled 12 and 11 Responses requests at `$0.1316784` and `$0.1423359`. Alternate attempt one completed two agent steps and six tool uses before one native `APIError` at `cli_wait`. Its report retained no authoritative broker request record, so the full `$12.50` allocation remains conservative unknown exposure. No fourth attempt or proof followed, and no labeled Docker container or network survived. Retry 63 adds `$0.2740143` known cost; historical accounting is `$28.004131690` known plus `$129.544363975` unknown. The mode-0600 report is 46,220 bytes with SHA-256 `35d24748093c179f33f0996eb0d574e07418132027a7b956dc002420cf03b8e9`; stderr is empty, mode `0600`, and SHA-256 `e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855`.
+
+Observation: the failed-attempt path removed every exact-owned attempt container before waiting for the command future and before its fallback ledger read. Inference: when a broker handler was still reconciling, this ordering destroyed the only owner capable of appending its terminal request record. The retry report alone does not prove the missing request's provider state or exact cost.
+
+## 2026-09-04T18:25:19-07:00: D-139 drains broker admission before failed-attempt cleanup
+
+Provenance: source inspection; deterministic broker-state, exact-container, final-ledger, and failed-attempt lifecycle regressions; real-Docker sidecar control and cleanup test.
+
+D-139 adds an authenticated drain operation to the existing anonymous stdin control channel. Drain stops heartbeat leasing and new request admission without revoking the parent key from already admitted response/settlement work; the hard attempt deadline remains authoritative. Failed `cli_wait` cleanup first removes exact-owned containers except the exact broker, drains it, and accepts final ledger authority only after `active = false`, `draining = true`, and `request_count == len(requests)`. Ordinary cleanup then removes the broker and network. Unavailable drain or final evidence retains the existing complete-allocation fallback. All 484 non-Docker calibration tests, the real-Docker sidecar lifecycle test, Ruff check/format, ty, and `git diff --check` pass. A clean commit remains required before another paid retry.
+
+## 2026-09-04T18:38:11-07:00: D-139 full local validation
+
+Provenance: current worktree; full repository validation commands.
+
+All 1,268 non-Docker tests and all 11 required Docker tests pass. Ruff check/format, ty, Bandit, actionlint, `uv lock --check`, wheel/sdist build, all-groups pip-audit, and `git diff --check` pass. The Docker set includes the real sidecar drain, complete final-ledger read, and exact cleanup boundary.
+
+## 2026-09-04T19:17:36-07:00: Retry 64 proves drain finalization and a longer GLM generation
+
+Provenance: clean commit `32a2705`; exact-four OpenRouter retry 64; bounded private report; authenticated read-only generation reread; OpenRouter generation metadata contract; exact-label Docker inspection. Full request, generation, session, and native artifact identifiers remain private.
+
+Both target attempts completed with reward zero. They settled 12 and ten Responses requests at `$0.1350771` and `$0.1553485`. Alternate attempt one settled three Chat Completions requests at `$0.00024808`, `$0.000267325`, and `$0.00841541`, then one further HTTP 200 request ended with an OpenCode `APIError` at `cli_wait`. D-139 preserved the broker through drain and retained all four final records: request four kept its exact `$4.07135` reservation rather than falling back to the complete attempt allocation. No fourth attempt or proof followed, and no labeled Docker resource survived.
+
+The later authenticated generation record proves exact canonical GLM-5.3 Flash identity, streamed cancellation, 770.097-second generation time, matching `$0.0084432` `usage` and `total_cost`, and equal bounded normalized/native token counts. That exact billed cost supersedes request four's reservation in historical accounting without making its cancelled output valid. Retry 64's exact cost is `$0.307799615`; historical accounting is `$28.311931305` known plus `$129.544363975` unknown. The mode-0600 report is 47,554 bytes with SHA-256 `e0c181d19e8882caba3eaf808b8d0285ca0e7e9096334d6ba0802c6323c775ce`; stderr is empty, mode `0600`, and SHA-256 `e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855`. The mode-0600 generation record is 1,466 bytes with SHA-256 `048e8f3ae080156b71097dc959ba4babe42fac25da4ee87d349011c2a991435a`.
+
+D-140 supersedes D-136 only for the client timeout. Because the broker validates the whole stream before returning child response headers, OpenCode's 360-second header timeout cancelled this otherwise bounded 770.097-second provider generation. Both profiles return to the already regression-tested 960-second response-header timeout. Failed-delivery reconciliation remains 300 seconds and the attempt remains 2,100 seconds. Focused validation is pending; no paid retry is permitted before it passes and the change is committed.
+
+## 2026-09-04T19:21:58-07:00: D-140 focused validation
+
+Provenance: current worktree; focused calibration tests and static checks.
+
+All 484 non-Docker calibration tests pass, including the exact 300-second reconciliation, 960-second client timeout, and 2,100-second attempt ordering. Ruff check/format, ty, and `git diff --check` pass. A clean commit remains required before another paid retry.
+
+## 2026-09-04T20:18:42-07:00: Retry 65 passes exact-four calibration
+
+Provenance: clean commit `103b54c`; exact-four OpenRouter retry 65; retained private proof and report; exact-label Docker inspection. Full request, generation, session, and native artifact identifiers remain private.
+
+Both target attempts completed with reward zero. They settled ten and 13 Responses requests at `$0.1441168` and `$0.1839501`. Both alternate attempts completed with reward zero. They settled four and three Chat Completions requests at `$0.00925897` and `$0.009309780`. Every attempt passed native structure, identity, token, spend, and cleanup validation. Current exact cost is `$0.346635650` with zero retained exposure. Historical accounting is `$28.658566955` known plus `$129.544363975` unknown; it does not consume another invocation's cap. No labeled Docker container or network survived.
+
+The exact clean source revision, two attempts per fixed profile, four `$12.50` allocations, `$50` invocation cap, and complete broker/native evidence are bound by one admissible proof. The mode-0600 proof and stdout are identical 93,718-byte canonical JSON with SHA-256 `cc378ce9e34b739ff3e3d5fbf71e28073e7f3e510dfb6b796cfd61c97bf661d5`; stderr is empty, mode `0600`, and SHA-256 `e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855`.
+
+`systems-design/authority-fencing` is now selected once in the production catalog with binary reward policy. The admitted fixture moves into the source distribution while the wheel remains code-only. Offline doctor, the runnable one-trial systems-design plan, and sealed 27-file fixture validation pass. Full local, packaging, security, hosted CI, review, merge, and post-merge validation remain pending.
+
+## 2026-09-04T20:33:15-07:00: Catalog admission full local validation
+
+Provenance: current worktree; production catalog; full repository validation and package build.
+
+All 1,268 non-Docker tests and all 11 required Docker tests pass against the admitted catalog. Offline doctor, the canonical runnable one-trial systems-design plan, sealed fixture validation, Ruff check/format, ty, Bandit, actionlint, `uv lock --check`, wheel/sdist build, package-content checks, all-groups pip-audit, and `git diff --check` pass. The source distribution contains the admitted task fixture and the wheel remains code-only. Hosted CI, review, merge, and post-merge validation remain pending.
+
+## 2026-09-04T20:52:56-07:00: PR 27 first review adjudication
+
+Provenance: GitHub Actions run `33942304718`; Codex review on PR 27; focused and full local regressions.
+
+Both hosted jobs passed. Codex reported two valid findings. Python equality made numeric zero and false collide in the nonterminal cancellation set, contrary to D-137's exact null-or-false contract; explicit singleton checks now reject integer and float zero. The benchmark README also retained retry-64 unproven prose after retry-65 admission; it now records the successful proof and current.... Historical accounting is unchanged. The focused four-case cancellation matrix, all 1,270 non-Docker tests, Ruff check/format, ty, and `git diff --check` pass. Both fixes await push, hosted rerun, and thread resolution.
+
+Correction: `current....` in the preceding entry means `current retry-65 accounting`.

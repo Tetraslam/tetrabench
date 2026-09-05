@@ -269,7 +269,7 @@ def test_plan_json_uses_stable_stdout(monkeypatch) -> None:
 
 def test_plan_human_output_calls_empty_section_not_runnable(monkeypatch) -> None:
     monkeypatch.chdir(ROOT)
-    result = runner.invoke(app, ["plan", "systems-design"])
+    result = runner.invoke(app, ["plan", "github-workflow"])
 
     assert result.exit_code == 0
     assert "Trials: 0" in result.stdout
@@ -939,7 +939,7 @@ def test_submit_empty_section_has_zero_s3_or_modal_side_effects(monkeypatch) -> 
             pytest.fail("empty submit constructed Modal adapter")
 
     monkeypatch.setattr("tetrabench.cli.ModalControllerClient", ForbiddenModal)
-    result = runner.invoke(app, ["submit", "systems-design"])
+    result = runner.invoke(app, ["submit", "github-workflow"])
     assert result.exit_code == 2
     assert result.stdout == ""
     assert "plan is not runnable" in result.stderr
@@ -947,7 +947,7 @@ def test_submit_empty_section_has_zero_s3_or_modal_side_effects(monkeypatch) -> 
 
 def test_submit_empty_section_json_error_is_canonical_stderr(monkeypatch) -> None:
     monkeypatch.chdir(ROOT)
-    result = runner.invoke(app, ["submit", "systems-design", "--json"])
+    result = runner.invoke(app, ["submit", "github-workflow", "--json"])
     assert result.exit_code == 2
     assert result.stdout == ""
     report = loads_canonical_json(result.stderr.removesuffix("\n").encode())

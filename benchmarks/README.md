@@ -286,17 +286,22 @@ provenance, and no surviving child or current-run Docker residue.
 
 The source-only calibration runner fixes the ordered profiles `target`
 (`openai/openai/gpt-5.6-sol`) and `alternate`
-(`openai/anthropic/claude-sonnet-5`) at two unretried attempts each. Immutable
+(`zai/z-ai/glm-5.3-flash`) at two unretried attempts each. Immutable
 profile records separately bind Harbor, child, broker, and upstream model
 identities. OpenRouter is the default personal backend; LiteLLM is an explicit
 optional work backend. Calibration runs the topology probe first, reads the
 selected backend's authenticated pricing second, and starts attempts last.
+The calibration-only Harbor adapter gives every OpenCode session the fixed
+non-default title `tetrabench-calibration`, so OpenCode does not launch its
+concurrent title-generation model request.
 OpenRouter `/models` pricing takes conservative maxima across every flat
 conditional override, including prompt thresholds and UTC windows, and every
 cache-write tier. Unknown override conditions or pricing keys fail closed.
-LiteLLM retains `/model/info`. Both require finite
-positive input, output, cache-read, and cache-write rates plus positive model
-limits for exactly the selected models. Input and cache rates above `$10` per
+LiteLLM retains `/model/info`. Both require finite positive input, output, and
+cache-read rates plus positive model limits for exactly the selected models. An
+OpenRouter model with no advertised cache-write price reserves cache writes at
+its positive prompt rate; advertised cache-write tiers remain part of the
+conservative maximum. Input and cache rates above `$10` per
 million tokens or output rates above `$50` per million make calibration fail.
 Nonzero per-request or internal-reasoning charges also fail. Known media/search
 rates are accepted only where request admission makes their triggers unreachable.
@@ -325,18 +330,25 @@ a fixed safety margin. Before attempts begin, the available budget is divided
 deterministically into four clean allocations, or two debug allocations. They
 sum exactly, each covers one worst-case request, each broker receives only its
 allocation, and unused allocation is not spend. LiteLLM preserves its
-response-cost settlement behavior. OpenRouter Responses SSE accepts data-only
-frames and optional matching event lines while ignoring comments and blank
-separators. It accepts the documented `response.completed` and `response.done`
-successful terminals followed only by `[DONE]`.
+response-cost settlement behavior. GPT-5.6 Sol uses OpenRouter Responses SSE,
+which accepts data-only frames and optional matching event lines while ignoring
+comments and blank separators. It accepts the documented `response.completed`
+and `response.done` successful terminals followed only by `[DONE]`. GLM-5.3
+Flash uses OpenCode's documented `@ai-sdk/openai-compatible` adapter and
+streaming Chat Completions through the same broker. That parser requires one
+stable choice and identity, one finish transition, an optional final usage
+chunk repeating that finish reason, then `[DONE]`.
 Terminal usage cost is optional; when present it must equal authoritative
 generation `total_cost`. Responses input/output tokens and chat prompt/completion
 tokens normalize separately, then a bounded authenticated `/generation?id=...`
 cross-check requires exact ID, model, stream shape, cost, and token counts before
 bytes reach the child. A present `X-Generation-Id` header must match the terminal
 and remains bounded failure evidence if body validation fails. Generation 404
-retries only inside that settlement window
-and the attempt deadline. Streaming chat remains unsupported. Any ambiguity
+and an exact-ID HTTP 200 row with no finish reason and null-or-false cancellation
+retry only inside that settlement window and the attempt deadline. Intermediate
+rows need not yet contain model, stream, cost, or token fields; terminal rows
+require the complete strict contract. Streaming
+chat for every other profile remains unsupported. Any ambiguity
 retains the full reservation. Direct compatible endpoints require explicit
 pricing and settlement adapters.
 
@@ -350,13 +362,19 @@ expired. Expiry is checked under the token lock, rejects without consuming the
 token, and permanently invalidates the broker. One attempt per profile is debug
 mode only, while retained proof requires all four attempts from a clean committed
 snapshot. Native ATIF aggregate prompt and completion tokens must both be
-positive, cached tokens may
-be zero, and all three must agree with Harbor's native trial and job metrics.
-After the production CLI returns, command classification precedes the positive
+positive. Harbor 0.22's native null aggregate cache count is normalized to zero;
+nonzero cached tokens remain exact integers. All three totals must agree with
+Harbor's native trial and job metrics.
+The `$50` budget applies independently to each exact-four invocation and is
+split into four `$12.50` allocations. Historical known spend and retained
+unknown exposure remain accounting evidence but do not reduce a later
+invocation's budget. After the production CLI returns, command classification precedes the positive
 broker-request gate. Every attempt retains only return code, stream sizes and
 digests, safe canonical schema/outcome/reward fields, and bounded native
 structural status/counts/digests/exception class names. A nonzero or malformed
-CLI result cleans up and reads zero-request broker evidence without retaining
+CLI result removes exact-owned workload containers while preserving the broker,
+drains new admission over the private control pipe, waits for one terminal
+record per admitted request, then performs final cleanup without retaining
 raw output, paths, exception messages, prompts, model content, logs, or tool
 output. If broker ledger authority is missing, malformed, or unreadable after
 activation may have begun, the full attempt allocation is retained as
@@ -378,21 +396,23 @@ through the private broker pipe. A post-activation half-second heartbeat leases
 authority. Authorization checks that lease under the token lock, treats equality
 as expired, revokes parent-key authority immediately, and signals listener
 shutdown without waiting for watchdog polling. The broker is absent within five
-seconds. Final cleanup reconciles exact names and labels and proves
+seconds. Failed-attempt drain leaves the hard attempt deadline active and
+preserves the parent key only for settlement reads by already admitted handlers.
+Final cleanup reconciles exact names and labels and proves
 authority and owned resources absent. Docker daemon/root is trusted. Network
 peers and unrelated host containers are not containment evidence. Docker's
 reported IPAM gateway and `Internal` value are recorded as topology only;
 authenticated pricing and later forwarding prove actual egress. This transport
-requires no host reachability or firewall change. No real calibration has
-completed, so difficulty calibration remains unproven. Current accounting after
-retry 24c is `$6.0126436` known cost plus `$17.807213975` conservatively retained
-against the user-authorized `$50` cap. Four-way allocation is `$6.54503560625`,
-above the `$5.49288` worst-case request reservation. A
+requires no host reachability or firewall change. Retry 65 completed the exact
+four-run calibration and proved the admission gate. Historical accounting
+after retry 65 is `$28.658566955` known cost plus `$129.544363975` conservatively
+retained unknown exposure; it does not consume the next invocation's `$50` cap.
+A
 separate direct OpenRouter contract probe cost `$0.00007`; it is not benchmark
 calibration. `--debug-deny-upstream` is
 a non-admissible one-attempt-per-profile diagnostic with no proof output. It
 performs normal authenticated pricing, then requires exactly six locally denied
-OpenCode retries per profile, released reservations, native errored-trial
+OpenCode requests per profile (one initial request plus five retries), released reservations, native errored-trial
 evidence, zero usage/exposure, and complete cleanup. It proves OpenCode
 installation, configuration, and endpoint routing at zero completion cost.
 Attempt diagnostics retain ordered boolean status for every sidecar, topology,
@@ -662,7 +682,7 @@ most 8 distinct fault schedules.
 
 | Candidate | Status |
 | --- | --- |
-| `systems-design/authority-fencing` | Local candidate implemented under `benchmarks/tasks/`; intentionally unlisted and excluded from wheel/sdist. The clean local proof passed all 17 gold/no-op/mutant/exploit matrix entries and exactly three ordered unretried production CLI runs. The detached proof passed two gold runs and one reward-forgery audit with terminal authority and cleanup. Two-profile calibration, budget completion, and catalog admission remain `unproven`. |
+| `systems-design/authority-fencing` | Admitted to the production catalog with binary reward policy. Its corrected 1 GiB bytes passed the clean 17-case local matrix, three production CLI runs, detached gold/gold/reward-forgery proof, and two attempts each on GPT-5.6 Sol and GLM-5.3 Flash. The source distribution includes the fixture; the wheel remains code-only. |
 | Remaining v1 candidates | Absent. |
 
 1. Run the locally proven E-064 separate-verifier and forge-sidecar prototype in
@@ -673,13 +693,12 @@ most 8 distinct fault schedules.
    complete. Prove them through detached Modal, then freeze the pinned agent and
    verifier images, manifest schemas, fault
    scheduler, exploit-audit checks, budgets, and admission evidence format.
-3. Implement and admit systems tasks in this order: `authority-fencing`,
+3. Implement and admit the remaining systems tasks in this order:
    `atomic-outbox`, `lifecycle-reconciliation`, `online-migration`, then
    `tenant-authorization`.
 4. Author and freeze the three dependency-free Git repositories and the local
    forge state machine.
 5. Implement and admit workflow tasks in this order: `pr-submit`, `ci-repair`,
    `review-adjudication`, `release-backport`, then `merge-queue-recovery`.
-6. Add a task to `benchmarks/catalog.toml` only after its complete admission
-   evidence passes locally and in detached Modal. Until then both task lists
-   remain empty.
+6. Add each later task to `benchmarks/catalog.toml` only after its complete
+   admission evidence passes locally and in detached Modal.

@@ -103,7 +103,9 @@ def test_authority_fencing_contract_and_hidden_cases_are_frozen() -> None:
     hidden_digest = hashlib.sha256(canonical(hidden_input)).hexdigest()
     assert hidden_digest == cases["input_manifest_sha256"]
     assert hidden_digest == contract["hidden_case_input_sha256"]
-    assert "authority-fencing" not in (ROOT / "benchmarks/catalog.toml").read_text()
+    assert (ROOT / "benchmarks/catalog.toml").read_text().count(
+        'id = "authority-fencing"'
+    ) == 1
 
 
 @pytest.mark.parametrize(

@@ -264,17 +264,80 @@ def openrouter_responses_sse(
     return f"{comment}{event}data: {json.dumps(document)}\n\ndata: [DONE]\n\n".encode()
 
 
+def openrouter_chat_sse(
+    *,
+    response_id: str = "chat-test-1",
+    model: str = "z-ai/glm-5.3-flash",
+    finish_reason: str = "tool_calls",
+    usage_finish_reason: str | None = None,
+    choices: int = 1,
+) -> bytes:
+    base = {
+        "created": 1,
+        "id": response_id,
+        "model": model,
+        "object": "chat.completion.chunk",
+        "provider": "test",
+    }
+    documents = [
+        {
+            **base,
+            "choices": [
+                {
+                    "delta": {"content": "", "role": "assistant"},
+                    "finish_reason": None,
+                    "index": index,
+                    "native_finish_reason": None,
+                }
+                for index in range(choices)
+            ],
+        },
+        {
+            **base,
+            "choices": [
+                {
+                    "delta": {"content": "", "role": "assistant"},
+                    "finish_reason": finish_reason,
+                    "index": 0,
+                    "native_finish_reason": finish_reason,
+                }
+            ],
+        },
+        {
+            **base,
+            "choices": [
+                {
+                    "delta": {"content": "", "role": "assistant"},
+                    "finish_reason": usage_finish_reason or finish_reason,
+                    "index": 0,
+                    "native_finish_reason": usage_finish_reason or finish_reason,
+                }
+            ],
+            "usage": {
+                "completion_tokens": 3,
+                "cost": "0.00007",
+                "prompt_tokens": 2,
+                "total_tokens": 5,
+            },
+        },
+    ]
+    frames = "".join(f"data: {json.dumps(document)}\n\n" for document in documents)
+    return f"{frames}data: [DONE]\n\n".encode()
+
+
 def openrouter_generation(
     *,
     response_id: str = "gen-test-1",
     upstream_id: str | None = None,
     model: Any = "openai/gpt-5.6-sol",
-    streamed: bool = True,
+    streamed: bool | None = True,
     cost: str = "0.00007",
     input_tokens: int = 2,
     output_tokens: int = 3,
     native_input_tokens: int | None = None,
     native_output_tokens: int | None = None,
+    cancelled: bool | None = False,
+    finish_reason: str | None = "tool_calls",
 ) -> bytes:
     return json.dumps(
         {
@@ -283,6 +346,8 @@ def openrouter_generation(
                 "upstream_id": upstream_id or response_id,
                 "model": model,
                 "streamed": streamed,
+                "cancelled": cancelled,
+                "finish_reason": finish_reason,
                 "total_cost": cost,
                 "usage": cost,
                 "tokens_prompt": input_tokens,
@@ -466,6 +531,14 @@ def openrouter_pricing_document() -> dict[str, Any]:
             "input_cache_write": "0.0000045",
         },
     ]
+    alternate = {
+        **base,
+        "prompt": "0.000000075",
+        "completion": "0.00000025",
+        "input_cache_read": "0.000000015",
+    }
+    alternate.pop("input_cache_write")
+    alternate.pop("input_cache_write_1h")
     return {
         "data": [
             {
@@ -476,11 +549,11 @@ def openrouter_pricing_document() -> dict[str, Any]:
                 "pricing": target,
             },
             {
-                "id": "anthropic/claude-sonnet-5",
-                "canonical_slug": "anthropic/claude-sonnet-5-20260630",
-                "context_length": 1000000,
-                "top_provider": {"max_completion_tokens": 128000},
-                "pricing": base,
+                "id": "z-ai/glm-5.3-flash",
+                "canonical_slug": "z-ai/glm-5.3-flash-20260826",
+                "context_length": 1310720,
+                "top_provider": {"max_completion_tokens": 131072},
+                "pricing": alternate,
             },
             {"id": "unrelated", "pricing": {"prompt": "99"}},
         ]
@@ -547,17 +620,92 @@ def test_profiles_are_exact_ordered_and_candidate_only(tmp_path: Path) -> None:
     config = (config_root / "tetrabench/config.toml").read_text()
     assert calibration.PROFILES == (
         ("target", "openai/gpt-5.6-sol"),
-        ("alternate", "anthropic/claude-sonnet-5"),
+        ("alternate", "z-ai/glm-5.3-flash"),
     )
     assert config.count("[profiles.") == 8
     assert 'model_name = "openai/openai/gpt-5.6-sol"' in config
-    assert 'model_name = "openai/anthropic/claude-sonnet-5"' in config
-    assert config.count('agent_name = "opencode"') == 2
+    assert 'model_name = "zai/z-ai/glm-5.3-flash"' in config
+    assert config.count(f'agent_name = "{calibration.CALIBRATION_AGENT}"') == 2
     assert config.count("attempts = 1") == 2
     assert config.count("concurrency = 1") == 2
     catalog = (project / "benchmarks/catalog.toml").read_text()
     assert catalog.count('id = "authority-fencing"') == 1
     assert 'reward_policy = "binary"' in catalog
+
+
+def test_glm_profile_produces_content_free_openai_compatible_config() -> None:
+    profile = calibration.PROFILE_CONTRACTS[1]
+    content = calibration._opencode_provider_config_content(
+        profile=profile,
+        base_url="http://broker:62017/v1",
+        max_input_tokens=1_245_184,
+        max_output_tokens=131_072,
+    )
+    assert content is not None
+    document = json.loads(content)
+    provider = document["provider"]["zai"]
+    assert provider["npm"] == "@ai-sdk/openai-compatible"
+    assert provider["options"] == {
+        "apiKey": "{env:ZAI_API_KEY}",
+        "baseURL": "http://broker:62017/v1",
+        "headerTimeout": calibration.OPENCODE_HEADER_TIMEOUT_MS,
+    }
+    assert provider["models"]["z-ai/glm-5.3-flash"]["limit"] == {
+        "context": 1_245_184,
+        "output": calibration.MAX_OUTPUT_TOKENS,
+    }
+    assert document["model"] == "zai/z-ai/glm-5.3-flash"
+    assert document["small_model"] == "zai/z-ai/glm-5.3-flash"
+    assert "secret" not in json.dumps(document).lower()
+
+
+def test_target_profile_header_timeout_exceeds_delivery_reconciliation() -> None:
+    content = calibration._opencode_provider_config_content(
+        profile=calibration.PROFILE_CONTRACTS[0],
+        base_url="http://broker:62017/v1",
+        max_input_tokens=984_464,
+        max_output_tokens=128_000,
+    )
+    assert content is not None
+    document = json.loads(content)
+    assert document == {
+        "$schema": "https://opencode.ai/config.json",
+        "provider": {
+            "openai": {
+                "options": {
+                    "headerTimeout": calibration.OPENCODE_HEADER_TIMEOUT_MS,
+                }
+            }
+        },
+    }
+    assert calibration.DELIVERY_FAILURE_SETTLEMENT_WINDOW_SECONDS == 300
+    assert calibration.OPENCODE_HEADER_TIMEOUT_MS == 960_000
+    assert calibration.OPENCODE_HEADER_TIMEOUT_MS > (
+        calibration.DELIVERY_FAILURE_SETTLEMENT_WINDOW_SECONDS * 1000
+    )
+    assert calibration.MAX_ATTEMPT_SECONDS > (
+        calibration.OPENCODE_HEADER_TIMEOUT_MS / 1000
+    )
+
+
+def test_glm_config_is_injected_into_harbor_main_environment(tmp_path: Path) -> None:
+    content = calibration._opencode_provider_config_content(
+        profile=calibration.PROFILE_CONTRACTS[1],
+        base_url="http://broker:62017/v1",
+        max_input_tokens=1_245_184,
+        max_output_tokens=131_072,
+    )
+    assert content is not None
+    overlay = calibration.create_task_overlay(
+        calibration.TASK,
+        tmp_path / "overlay",
+        "tb-cal-safe-1",
+        opencode_config_content=content,
+    )
+    compose = (overlay.task / "environment/docker-compose.yaml").read_text()
+    assert "    environment:\n" in compose
+    assert f"      OPENCODE_CONFIG_CONTENT: {json.dumps(content)}\n" in compose
+    assert TEST_OPENROUTER_KEY not in content
 
 
 def test_backend_and_profile_contracts_are_immutable_and_separate() -> None:
@@ -667,10 +815,8 @@ def test_openrouter_models_pricing_preserves_base_path_and_takes_override_maxima
         "output_cost_per_token": "0.000015",
         "pricing_source": "/models",
     }
-    assert snapshot.models[1]["cache_creation_input_token_cost"] == "0.000004"
-    assert snapshot.models[1]["canonical_model"] == (
-        "anthropic/claude-sonnet-5-20260630"
-    )
+    assert snapshot.models[1]["cache_creation_input_token_cost"] == "7.5E-8"
+    assert snapshot.models[1]["canonical_model"] == "z-ai/glm-5.3-flash-20260826"
 
 
 @pytest.mark.parametrize("model_index", [0, 1])
@@ -1050,15 +1196,18 @@ def test_atif_token_metrics_are_mandatory_coherent_and_nonzero() -> None:
         }
     }
     assert calibration._validate_metrics(record)["total_tokens"] == 15
-    for field in (
-        "total_prompt_tokens",
-        "total_completion_tokens",
-        "total_cached_tokens",
-    ):
+    no_cache = json.loads(json.dumps(record))
+    no_cache["trajectory"]["final_metrics"]["total_cached_tokens"] = None
+    assert calibration._validate_metrics(no_cache)["total_cached_tokens"] == 0
+    for field in ("total_prompt_tokens", "total_completion_tokens"):
         invalid = json.loads(json.dumps(record))
         invalid["trajectory"]["final_metrics"][field] = None
         with pytest.raises(ValueError, match="ATIF metrics"):
             calibration._validate_metrics(invalid)
+    invalid = json.loads(json.dumps(record))
+    invalid["trajectory"]["final_metrics"]["total_cached_tokens"] = "0"
+    with pytest.raises(ValueError, match="ATIF metrics"):
+        calibration._validate_metrics(invalid)
     invalid = json.loads(json.dumps(record))
     invalid["trajectory"]["final_metrics"].update(
         total_prompt_tokens=0, total_completion_tokens=0
@@ -1079,7 +1228,7 @@ def test_atif_token_metrics_are_mandatory_coherent_and_nonzero() -> None:
     ("profile", "model"),
     [
         ("target", "openai/openai/gpt-5.6-sol"),
-        ("alternate", "openai/anthropic/claude-sonnet-5"),
+        ("alternate", "zai/z-ai/glm-5.3-flash"),
     ],
 )
 def test_production_cli_compiles_each_calibration_profile_without_model_access(
@@ -1111,7 +1260,7 @@ def test_production_cli_compiles_each_calibration_profile_without_model_access(
     document = json.loads(result.stdout)
     assert result.stderr == b""
     assert document["harbor"] == {
-        "agent_name": "opencode",
+        "agent_name": calibration.CALIBRATION_AGENT,
         "attempts": 1,
         "concurrency": 1,
         "model_name": model,
@@ -1788,10 +1937,7 @@ def test_openrouter_stream_accepts_data_only_or_matching_event_with_comments(
     ("model", "canonical_model"),
     [
         ("openai/gpt-5.6-sol", "openai/gpt-5.6-sol-20260709"),
-        (
-            "anthropic/claude-sonnet-5",
-            "anthropic/claude-sonnet-5-20260630",
-        ),
+        ("z-ai/glm-5.3-flash", "z-ai/glm-5.3-flash-20260826"),
     ],
 )
 def test_openrouter_stream_settles_provider_declared_canonical_model(
@@ -1940,6 +2086,340 @@ def test_openrouter_nonstream_settles_from_body_and_generation() -> None:
         "/api/v1/responses",
         "/api/v1/generation?id=gen-test-1",
     ]
+
+
+def test_openrouter_glm_streaming_chat_settles_exact_generation() -> None:
+    body = openrouter_chat_sse(model="z-ai/glm-5.3-flash-20260826")
+    with fake_upstream(
+        headers=[
+            ("Content-Type", "text/event-stream"),
+            ("X-Generation-Id", "chat-generation-1"),
+        ],
+        body=body,
+        queued_get_responses=[
+            (
+                HTTPStatus.OK,
+                [("Content-Type", "application/json")],
+                openrouter_generation(
+                    response_id="chat-generation-1",
+                    model="z-ai/glm-5.3-flash-20260826",
+                ),
+            )
+        ],
+    ) as upstream:
+        ledger = calibration.SpendLedger()
+        with running_broker(
+            upstream,
+            ledger=ledger,
+            backend=calibration.OPENROUTER_BACKEND,
+            model="z-ai/glm-5.3-flash",
+            canonical_model="z-ai/glm-5.3-flash-20260826",
+        ) as broker:
+            status, _headers, returned = request(
+                broker,
+                path="/v1/chat/completions",
+                document={
+                    "messages": [{"content": "redacted", "role": "user"}],
+                    "model": "z-ai/glm-5.3-flash",
+                    "stream": True,
+                },
+            )
+    assert status == 200
+    assert returned == body
+    assert ledger.cost == Decimal("0.00007")
+
+
+def test_openrouter_empty_glm_stream_settles_cost_and_allows_retry() -> None:
+    generation_headers = [
+        ("Content-Type", "text/event-stream"),
+        ("X-Generation-Id", "empty-generation-1"),
+    ]
+    with fake_upstream(
+        headers=generation_headers,
+        body=b"",
+        queued_get_responses=[
+            (
+                HTTPStatus.OK,
+                [("Content-Type", "application/json")],
+                openrouter_generation(
+                    response_id="empty-generation-1",
+                    model="z-ai/glm-5.3-flash-20260826",
+                ),
+            )
+        ],
+    ) as upstream:
+        ledger = calibration.SpendLedger()
+        with running_broker(
+            upstream,
+            ledger=ledger,
+            backend=calibration.OPENROUTER_BACKEND,
+            model="z-ai/glm-5.3-flash",
+            canonical_model="z-ai/glm-5.3-flash-20260826",
+        ) as broker:
+            document = {
+                "messages": [{"content": "redacted", "role": "user"}],
+                "model": "z-ai/glm-5.3-flash",
+                "stream": True,
+            }
+            assert (
+                request(broker, path="/v1/chat/completions", document=document)[0]
+                == 502
+            )
+            assert ledger.cost == Decimal("0.00007")
+            assert ledger.reserved == 0
+            assert ledger.fatal is None
+            deadline = time.monotonic() + 2
+            while not broker.state.records and time.monotonic() < deadline:
+                time.sleep(0.01)
+            assert broker.state.records[0].settlement == "settled"
+            assert broker.state.records[0].settlement_failure == "empty_stream_delivery"
+
+            upstream.body = openrouter_chat_sse(
+                response_id="chat-generation-2",
+                model="z-ai/glm-5.3-flash-20260826",
+            )
+            upstream.response_headers = [
+                ("Content-Type", "text/event-stream"),
+                ("X-Generation-Id", "chat-generation-2"),
+            ]
+            upstream.queued_get_responses.append(
+                (
+                    HTTPStatus.OK,
+                    [("Content-Type", "application/json")],
+                    openrouter_generation(
+                        response_id="chat-generation-2",
+                        model="z-ai/glm-5.3-flash-20260826",
+                    ),
+                )
+            )
+            assert (
+                request(broker, path="/v1/chat/completions", document=document)[0]
+                == 200
+            )
+            assert ledger.cost == Decimal("0.00014")
+            assert ledger.reserved == 0
+            assert ledger.fatal is None
+
+
+def test_openrouter_empty_stream_polls_nonterminal_generation_until_terminal() -> None:
+    with fake_upstream(
+        headers=[
+            ("Content-Type", "text/event-stream"),
+            ("X-Generation-Id", "empty-generation-1"),
+        ],
+        body=b"",
+        queued_get_responses=[
+            (
+                HTTPStatus.OK,
+                [("Content-Type", "application/json")],
+                openrouter_generation(
+                    response_id="empty-generation-1",
+                    model=None,
+                    streamed=None,
+                    cancelled=None,
+                    finish_reason=None,
+                ),
+            ),
+            (
+                HTTPStatus.OK,
+                [("Content-Type", "application/json")],
+                openrouter_generation(
+                    response_id="empty-generation-1",
+                    model="z-ai/glm-5.3-flash-20260826",
+                ),
+            ),
+        ],
+    ) as upstream:
+        ledger = calibration.SpendLedger()
+        with running_broker(
+            upstream,
+            ledger=ledger,
+            backend=calibration.OPENROUTER_BACKEND,
+            model="z-ai/glm-5.3-flash",
+            canonical_model="z-ai/glm-5.3-flash-20260826",
+        ) as broker:
+            assert (
+                request(
+                    broker,
+                    path="/v1/chat/completions",
+                    document={
+                        "messages": [{"content": "redacted", "role": "user"}],
+                        "model": "z-ai/glm-5.3-flash",
+                        "stream": True,
+                    },
+                )[0]
+                == 502
+            )
+    assert sum("body" not in item for item in upstream.requests) == 2
+    assert ledger.cost == Decimal("0.00007")
+    assert ledger.reserved == 0
+    assert ledger.fatal is None
+
+
+@pytest.mark.parametrize("cancelled", [True, 0, 0.0])
+def test_openrouter_empty_stream_does_not_retry_invalid_cancelled_generation(
+    cancelled: Any,
+) -> None:
+    with fake_upstream(
+        headers=[
+            ("Content-Type", "text/event-stream"),
+            ("X-Generation-Id", "empty-generation-1"),
+        ],
+        body=b"",
+        queued_get_responses=[
+            (
+                HTTPStatus.OK,
+                [("Content-Type", "application/json")],
+                openrouter_generation(
+                    response_id="empty-generation-1",
+                    model="z-ai/glm-5.3-flash-20260826",
+                    cancelled=cancelled,
+                    finish_reason=None,
+                ),
+            ),
+            (
+                HTTPStatus.OK,
+                [("Content-Type", "application/json")],
+                openrouter_generation(
+                    response_id="empty-generation-1",
+                    model="z-ai/glm-5.3-flash-20260826",
+                ),
+            ),
+        ],
+    ) as upstream:
+        ledger = calibration.SpendLedger()
+        with running_broker(
+            upstream,
+            ledger=ledger,
+            backend=calibration.OPENROUTER_BACKEND,
+            model="z-ai/glm-5.3-flash",
+            canonical_model="z-ai/glm-5.3-flash-20260826",
+        ) as broker:
+            assert (
+                request(
+                    broker,
+                    path="/v1/chat/completions",
+                    document={
+                        "messages": [{"content": "redacted", "role": "user"}],
+                        "model": "z-ai/glm-5.3-flash",
+                        "stream": True,
+                    },
+                )[0]
+                == 502
+            )
+            deadline = time.monotonic() + 2
+            while not broker.state.records and time.monotonic() < deadline:
+                time.sleep(0.01)
+            assert broker.state.records[0].settlement_failure == (
+                "generation_terminal_mismatch"
+            )
+    assert sum("body" not in item for item in upstream.requests) == 1
+    assert ledger.cost == 0
+    assert ledger.reserved > 0
+    assert ledger.fatal == "authoritative settlement unavailable"
+
+
+def test_openrouter_empty_responses_stream_settles_cost_and_allows_retry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    settlement_windows: list[float] = []
+    poll_generation = calibration._poll_openrouter_generation
+
+    def capture_settlement_window(*args: Any, **kwargs: Any) -> Decimal:
+        settlement_windows.append(
+            kwargs.get(
+                "settlement_window_seconds", calibration.SETTLEMENT_WINDOW_SECONDS
+            )
+        )
+        return poll_generation(*args, **kwargs)
+
+    monkeypatch.setattr(
+        calibration, "_poll_openrouter_generation", capture_settlement_window
+    )
+    with fake_upstream(
+        headers=[
+            ("Content-Type", "text/event-stream"),
+            ("X-Generation-Id", "empty-generation-1"),
+        ],
+        body=b"",
+        queued_get_responses=[
+            (
+                HTTPStatus.OK,
+                [("Content-Type", "application/json")],
+                openrouter_generation(
+                    response_id="empty-generation-1",
+                    model="openai/gpt-5.6-sol-20260709",
+                    finish_reason="stop",
+                ),
+            )
+        ],
+    ) as upstream:
+        ledger = calibration.SpendLedger()
+        with running_broker(
+            upstream,
+            ledger=ledger,
+            backend=calibration.OPENROUTER_BACKEND,
+            model="openai/gpt-5.6-sol",
+            canonical_model="openai/gpt-5.6-sol-20260709",
+        ) as broker:
+            document = {
+                "input": "redacted",
+                "model": "openai/gpt-5.6-sol",
+                "stream": True,
+            }
+            assert request(broker, document=document)[0] == 502
+            assert ledger.cost == Decimal("0.00007")
+            assert ledger.reserved == 0
+            assert ledger.fatal is None
+            deadline = time.monotonic() + 2
+            while not broker.state.records and time.monotonic() < deadline:
+                time.sleep(0.01)
+            assert broker.state.records[0].settlement == "settled"
+            assert broker.state.records[0].settlement_failure == "empty_stream_delivery"
+
+            upstream.body = openrouter_responses_sse(
+                response_id="response-generation-2",
+                model="openai/gpt-5.6-sol-20260709",
+            )
+            upstream.response_headers = [
+                ("Content-Type", "text/event-stream"),
+                ("X-Generation-Id", "response-generation-2"),
+            ]
+            upstream.queued_get_responses.append(
+                (
+                    HTTPStatus.OK,
+                    [("Content-Type", "application/json")],
+                    openrouter_generation(
+                        response_id="response-generation-2",
+                        model="openai/gpt-5.6-sol-20260709",
+                    ),
+                )
+            )
+            assert request(broker, document=document)[0] == 200
+            assert ledger.cost == Decimal("0.00014")
+            assert ledger.reserved == 0
+            assert ledger.fatal is None
+    assert settlement_windows[0] == (
+        calibration.DELIVERY_FAILURE_SETTLEMENT_WINDOW_SECONDS
+    )
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        openrouter_chat_sse(choices=2),
+        openrouter_chat_sse(usage_finish_reason="stop"),
+        openrouter_chat_sse() + b'data: {"post":"terminal"}\n\n',
+    ],
+)
+def test_openrouter_glm_streaming_chat_rejects_ambiguous_terminal(body: bytes) -> None:
+    with pytest.raises(ValueError, match="OpenRouter chat"):
+        calibration._parse_openrouter_chat_stream(
+            body,
+            expected_models=frozenset(
+                {"z-ai/glm-5.3-flash", "z-ai/glm-5.3-flash-20260826"}
+            ),
+        )
 
 
 def test_openrouter_nonstream_chat_normalizes_prompt_completion_usage() -> None:
@@ -2516,7 +2996,7 @@ def test_top_level_non_text_modalities_audio_and_prediction_are_rejected(
         ({"path": "/v1/models"}, 400),
         ({"path": "/v1/../models"}, 400),
         ({"path": "/v1/responses?admin=true"}, 400),
-        ({"document": {"model": "anthropic/claude-sonnet-5"}}, 400),
+        ({"document": {"model": "z-ai/glm-5.3-flash"}}, 400),
         (
             {
                 "document": {
@@ -3591,22 +4071,20 @@ def test_prior_unknown_exposure_consumes_cap_without_becoming_cost_or_attempt() 
     assert ledger.reserved == 0
 
 
-def test_four_worst_case_reservations_plus_recorded_prior_fit_shared_cap() -> None:
-    prior = Decimal("6.9521316")
+def test_four_worst_case_reservations_fit_each_run_cap() -> None:
     worst = calibration._reservation_for_body(b"x" * calibration.MAX_BODY_BYTES)
     assert calibration.MAX_BODY_BYTES == 192 << 10
     assert calibration.MAX_OUTPUT_TOKENS == 65536
     assert worst == Decimal("5.49288")
-    assert prior + 4 * worst <= calibration.MAX_TOTAL_COST
-    assert (calibration.MAX_TOTAL_COST - prior) / 4 == Decimal("10.7619671")
+    assert 4 * worst <= calibration.MAX_TOTAL_COST
+    assert calibration.MAX_TOTAL_COST / 4 == Decimal("12.5")
 
 
 @pytest.mark.parametrize("attempts_per_profile", [1, 2])
 def test_attempt_allocations_are_deterministic_exact_and_individually_bounded(
     attempts_per_profile: int,
 ) -> None:
-    prior = Decimal("0.96086")
-    available = calibration.MAX_TOTAL_COST - prior
+    available = calibration.MAX_TOTAL_COST
     allocations = calibration._allocate_attempt_budgets(
         available, attempts_per_profile=attempts_per_profile
     )
@@ -4166,6 +4644,86 @@ def test_concurrent_authorize_vs_exact_expiry_accepts_nothing(
     assert state.parent_key == ""
 
 
+def test_drain_closes_admission_without_revoking_reserved_work() -> None:
+    token = "attempt-token-0123456789-abcdefghijklmnop"
+    channel = (1, 2)
+    ledger = calibration.SpendLedger(Decimal("2"))
+    state = calibration.BrokerState(
+        parent_key=TEST_PARENT_KEY,
+        token=token,
+        probe_token=None,
+        model="model",
+        max_input_tokens=100,
+        deadline=time.monotonic() + 30,
+        ledger=ledger,
+    )
+    state.lease_channel_identity = channel
+    _ordinal, reservation = state.begin_request("/v1/responses", Decimal("1"))
+
+    state.drain(channel)
+
+    assert state.active is False
+    assert state.draining is True
+    assert state.parent_key == TEST_PARENT_KEY
+    assert state.lease_expired() is False
+    with pytest.raises(PermissionError, match="attempt expired"):
+        state.begin_request("/v1/responses", Decimal("1"))
+    with fake_upstream() as upstream:
+        connection = http.client.HTTPConnection(
+            "127.0.0.1", upstream.server_address[1], timeout=5
+        )
+        connection.connect()
+        state.send_connected_settlement_request(
+            connection, "/generation?id=reserved", io_timeout=5
+        )
+        response = connection.getresponse()
+        response.read()
+        state.unregister_upstream(connection)
+        connection.close()
+        assert upstream.requests == [
+            {
+                "authorization": f"Bearer {TEST_PARENT_KEY}",
+                "path": "/generation?id=reserved",
+            }
+        ]
+    state.finish_request(reservation, Decimal("0.25"))
+    assert ledger.cost == Decimal("0.25")
+    assert ledger.reserved == 0
+
+
+def test_remove_attempt_containers_can_preserve_exact_broker(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    names = calibration._docker_names("cal-preserve-broker", 1)
+    removed: list[str] = []
+    inspected = {
+        "broker-id": {
+            "Name": f"/{names.broker}",
+            "Config": {"Labels": names.role_labels("broker")},
+        },
+        "main-id": {
+            "Name": "/cal-main",
+            "Config": {"Labels": names.role_labels("main")},
+        },
+    }
+
+    def docker(argv: list[str], **_kwargs: Any) -> subprocess.CompletedProcess[bytes]:
+        if argv[:2] == ["ps", "-aq"]:
+            return subprocess.CompletedProcess(argv, 0, b"broker-id\nmain-id\n", b"")
+        if argv[:2] == ["rm", "--force"]:
+            removed.append(argv[2])
+        return subprocess.CompletedProcess(argv, 0, b"", b"")
+
+    monkeypatch.setattr(calibration, "_docker", docker)
+    monkeypatch.setattr(
+        calibration, "_inspect_one", lambda _kind, name: inspected[name]
+    )
+
+    calibration._remove_owned_attempt_containers(names, preserve_broker=True)
+
+    assert removed == ["main-id"]
+
+
 def test_create_disconnect_still_reconciles_exact_owned_resources(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -4200,7 +4758,7 @@ def test_create_disconnect_still_reconciles_exact_owned_resources(
         lambda _kind, name, _labels: exists.get(name, False),
     )
     monkeypatch.setattr(
-        calibration, "_remove_owned_attempt_containers", lambda _n: None
+        calibration, "_remove_owned_attempt_containers", lambda _n, **_kwargs: None
     )
     with pytest.raises(subprocess.TimeoutExpired):
         sidecar.start()
@@ -4286,17 +4844,8 @@ def test_attach_timeout_is_terminated_and_reaped(
         ["--debug", "--debug-deny-upstream", "--attempts-per-profile", "2"],
         ["--debug", "--prior-unknown-exposure-usd", "-1"],
         ["--debug", "--prior-unknown-exposure-usd", "NaN"],
-        ["--debug", "--prior-unknown-exposure-usd", "50.01"],
         ["--debug", "--prior-known-cost-usd", "-1"],
         ["--debug", "--prior-known-cost-usd", "NaN"],
-        ["--debug", "--prior-known-cost-usd", "50.01"],
-        [
-            "--debug",
-            "--prior-known-cost-usd",
-            "0.01",
-            "--prior-unknown-exposure-usd",
-            "50",
-        ],
     ],
 )
 def test_parser_rejects_noncanonical_attempt_or_listener_contract(
@@ -4305,6 +4854,25 @@ def test_parser_rejects_noncanonical_attempt_or_listener_contract(
     with pytest.raises(SystemExit) as error:
         calibration.parse_arguments(argv)
     assert error.value.code == 2
+
+
+def test_historical_accounting_does_not_reduce_current_run_cap() -> None:
+    args = calibration.parse_arguments(
+        [
+            "--debug",
+            "--prior-known-cost-usd",
+            "60",
+            "--prior-unknown-exposure-usd",
+            "70",
+        ]
+    )
+    report = calibration._failure(args, RuntimeError("preflight failed"))
+    assert report["budget"] == {
+        "attempt_allocations_usd": ["25", "25"],
+        "available_budget_usd": "50",
+        "total_cap_usd": "50",
+    }
+    assert report["spend_exposure"]["total_usd"] == "130"
 
 
 def test_debug_two_attempts_rejects_before_pricing_or_listener(
@@ -4419,7 +4987,7 @@ def test_deny_upstream_rejects_any_forwarded_request() -> None:
             "upstream_opened": False,
             "usage": {},
         }
-        for _ in range(calibration.DENY_UPSTREAM_EXPECTED_REQUESTS)
+        for _ in range(calibration.DENY_UPSTREAM_EXPECTED_REQUESTS["target"])
     ]
     requests[-1]["upstream_opened"] = True
     with pytest.raises(
@@ -4431,7 +4999,8 @@ def test_deny_upstream_rejects_any_forwarded_request() -> None:
                 "request_count": len(requests),
                 "requests": requests,
                 "retained_unknown_reservation_usd": "0",
-            }
+            },
+            profile="target",
         )
 
 
@@ -5044,7 +5613,7 @@ def test_native_record_failures_retain_only_closed_boundary(
     attempt = calibration._started_attempt(
         ordinal=1,
         profile="alternate",
-        model_group="anthropic/claude-sonnet-5",
+        model_group="z-ai/glm-5.3-flash",
     )
 
     with pytest.raises(calibration.CalibrationStageError) as caught:
@@ -5199,11 +5768,13 @@ def test_run_attempt_captures_result_before_zero_request_ledger_after_cleanup(
     pricing = calibration._validate_pricing_document(pricing_document())
     read_minimums: list[int] = []
     cleanup_calls = 0
+    lifecycle: list[str] = []
 
     class Sidecar:
         def __init__(self, **kwargs: Any) -> None:
             self.attempt_token = kwargs["attempt_token"]
             self.activated = False
+            self.drained = False
 
         def start(self) -> None:
             pass
@@ -5219,11 +5790,10 @@ def test_run_attempt_captures_result_before_zero_request_ledger_after_cleanup(
         def cleanup(self) -> dict[str, Any]:
             nonlocal cleanup_calls
             cleanup_calls += 1
+            lifecycle.append("cleanup")
             return {"broker_absent": True, "network_absent": True}
 
-        def read_ledger(self, *, minimum_requests: int = 0) -> dict[str, Any]:
-            assert cleanup_calls == 1
-            read_minimums.append(minimum_requests)
+        def _ledger(self) -> dict[str, Any]:
             if ledger_mode in {"missing", "read_error"}:
                 raise OSError("private ledger read failure")
             if ledger_mode == "malformed":
@@ -5251,6 +5821,21 @@ def test_run_attempt_captures_result_before_zero_request_ledger_after_cleanup(
                 "retained_unknown_reservation_usd": "0",
                 "schema_version": 2,
             }
+
+        def drain(self) -> None:
+            lifecycle.append("drain")
+            self.drained = True
+
+        def await_final_ledger(self) -> dict[str, Any]:
+            lifecycle.append("await_final_ledger")
+            if ledger_mode != "valid":
+                raise OSError("private final ledger read failure")
+            return self._ledger()
+
+        def read_ledger(self, *, minimum_requests: int = 0) -> dict[str, Any]:
+            assert cleanup_calls == 1
+            read_minimums.append(minimum_requests)
+            return self._ledger()
 
     class Authority:
         def __init__(self, *_args: Any) -> None:
@@ -5284,7 +5869,7 @@ def test_run_attempt_captures_result_before_zero_request_ledger_after_cleanup(
     monkeypatch.setattr(calibration, "DockerMainAuthority", Authority)
     monkeypatch.setattr(calibration, "_bounded_command", command)
     monkeypatch.setattr(
-        calibration, "_remove_owned_attempt_containers", lambda _n: None
+        calibration, "_remove_owned_attempt_containers", lambda _n, **_kwargs: None
     )
     snapshot = calibration.SourceSnapshot(
         root=ROOT,
@@ -5324,7 +5909,12 @@ def test_run_attempt_captures_result_before_zero_request_ledger_after_cleanup(
             else {"cause_class": "RuntimeError", "failed_stage": "cli_wait"}
         )
     )
-    assert read_minimums == [0]
+    assert read_minimums == ([] if ledger_mode == "valid" else [0])
+    assert lifecycle == (
+        ["drain", "await_final_ledger", "cleanup"]
+        if failure_point == "postactivation"
+        else ["cleanup"]
+    )
     assert cleanup_calls == 1
     assert attempt["broker"]["request_count"] == 0
     assert attempt["spend"]["exposure_authority"] == exposure_authority
@@ -5364,6 +5954,28 @@ def _docker_sidecar(
         backend=backend,
         fake_response_cost=Decimal("0.125"),
     )
+
+
+def test_final_ledger_requires_every_admitted_request_record(tmp_path: Path) -> None:
+    sidecar = _docker_sidecar(tmp_path)
+    ledger_path = sidecar.evidence_root / "ledger.json"
+    document = {
+        "active": False,
+        "draining": True,
+        "pricing_sha256": sidecar.pricing.sha256,
+        "request_count": 1,
+        "requests": [],
+        "schema_version": 2,
+    }
+    ledger_path.write_text(calibration.canonical(document) + "\n")
+
+    with pytest.raises(RuntimeError, match="expected request count"):
+        sidecar.read_ledger(require_complete=True, timeout_seconds=0.01)
+
+    document["requests"] = [{}]
+    ledger_path.write_text(calibration.canonical(document) + "\n")
+    sidecar.drained = True
+    assert sidecar.await_final_ledger() == document
 
 
 def _archive_mounted_source(tmp_path: Path) -> Path:
@@ -5717,6 +6329,11 @@ def test_sidecar_network_probe_simulated_client_inspect_and_cleanup(
         assert ledger["request_count"] == 1
         assert ledger["requests"][0]["model"] == "openai/gpt-5.6-sol"
         assert ledger["requests"][0]["cost"] == "0.125"
+        sidecar.drain()
+        final_ledger = sidecar.await_final_ledger()
+        assert final_ledger["active"] is False
+        assert final_ledger["draining"] is True
+        assert final_ledger["request_count"] == len(final_ledger["requests"]) == 1
         network = calibration._inspect_one("network", sidecar.names.network)
         peers = {item["Name"] for item in network["Containers"].values()}
         assert sidecar.names.broker in peers
@@ -5923,7 +6540,10 @@ def test_harbor_main_is_inspected_and_activated_before_agent_setup(
     )
     config = config_root / "tetrabench/config.toml"
     config.write_text(
-        config.read_text().replace('agent_name = "opencode"', 'agent_name = "oracle"')
+        config.read_text().replace(
+            f'agent_name = "{calibration.CALIBRATION_AGENT}"',
+            'agent_name = "oracle"',
+        )
     )
     home = tmp_path / "home"
     home.mkdir(mode=0o700)
