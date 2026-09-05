@@ -405,7 +405,7 @@ reported IPAM gateway and `Internal` value are recorded as topology only;
 authenticated pricing and later forwarding prove actual egress. This transport
 requires no host reachability or firewall change. No real calibration has
 completed, so difficulty calibration remains unproven. Historical accounting
-after retry 63 is `$28.004131690` known cost plus `$129.544363975` conservatively
+after retry 64 is `$28.311931305` known cost plus `$129.544363975` conservatively
 retained unknown exposure; it does not consume the next invocation's `$50` cap.
 A
 separate direct OpenRouter contract probe cost `$0.00007`; it is not benchmark

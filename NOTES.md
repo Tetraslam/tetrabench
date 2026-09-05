@@ -1888,3 +1888,19 @@ D-139 adds an authenticated drain operation to the existing anonymous stdin cont
 Provenance: current worktree; full repository validation commands.
 
 All 1,268 non-Docker tests and all 11 required Docker tests pass. Ruff check/format, ty, Bandit, actionlint, `uv lock --check`, wheel/sdist build, all-groups pip-audit, and `git diff --check` pass. The Docker set includes the real sidecar drain, complete final-ledger read, and exact cleanup boundary.
+
+## 2026-09-04T19:17:36-07:00: Retry 64 proves drain finalization and a longer GLM generation
+
+Provenance: clean commit `32a2705`; exact-four OpenRouter retry 64; bounded private report; authenticated read-only generation reread; OpenRouter generation metadata contract; exact-label Docker inspection. Full request, generation, session, and native artifact identifiers remain private.
+
+Both target attempts completed with reward zero. They settled 12 and ten Responses requests at `$0.1350771` and `$0.1553485`. Alternate attempt one settled three Chat Completions requests at `$0.00024808`, `$0.000267325`, and `$0.00841541`, then one further HTTP 200 request ended with an OpenCode `APIError` at `cli_wait`. D-139 preserved the broker through drain and retained all four final records: request four kept its exact `$4.07135` reservation rather than falling back to the complete attempt allocation. No fourth attempt or proof followed, and no labeled Docker resource survived.
+
+The later authenticated generation record proves exact canonical GLM-5.3 Flash identity, streamed cancellation, 770.097-second generation time, matching `$0.0084432` `usage` and `total_cost`, and equal bounded normalized/native token counts. That exact billed cost supersedes request four's reservation in historical accounting without making its cancelled output valid. Retry 64's exact cost is `$0.307799615`; historical accounting is `$28.311931305` known plus `$129.544363975` unknown. The mode-0600 report is 47,554 bytes with SHA-256 `e0c181d19e8882caba3eaf808b8d0285ca0e7e9096334d6ba0802c6323c775ce`; stderr is empty, mode `0600`, and SHA-256 `e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855`. The mode-0600 generation record is 1,466 bytes with SHA-256 `048e8f3ae080156b71097dc959ba4babe42fac25da4ee87d349011c2a991435a`.
+
+D-140 supersedes D-136 only for the client timeout. Because the broker validates the whole stream before returning child response headers, OpenCode's 360-second header timeout cancelled this otherwise bounded 770.097-second provider generation. Both profiles return to the already regression-tested 960-second response-header timeout. Failed-delivery reconciliation remains 300 seconds and the attempt remains 2,100 seconds. Focused validation is pending; no paid retry is permitted before it passes and the change is committed.
+
+## 2026-09-04T19:21:58-07:00: D-140 focused validation
+
+Provenance: current worktree; focused calibration tests and static checks.
+
+All 484 non-Docker calibration tests pass, including the exact 300-second reconciliation, 960-second client timeout, and 2,100-second attempt ordering. Ruff check/format, ty, and `git diff --check` pass. A clean commit remains required before another paid retry.
