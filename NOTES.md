@@ -1948,3 +1948,9 @@ Correction: the task-local README and its seeded workspace copy are calibrated f
 Provenance: GitHub Actions run `33944891706`; failing `failed` invalid-stream parameter; focused and full local reruns.
 
 PR 28's full-history Gitleaks job passed, while Python 3.12 exposed an existing observation race: the client had received the broker's 502 before the handler appended its final request record, and the test indexed the record immediately. The production handler and ledger behaved as designed. The assertion now uses the suite's existing bounded two-second record wait before inspecting settlement. All 14 invalid-stream parameters and all 1,270 non-Docker tests pass, with Ruff check/format, ty, and `git diff --check`. The fix awaits push and hosted rerun.
+
+## 2026-09-04T22:15:41-07:00: PR 28 merged and post-merge verified
+
+Provenance: PR 28; squash merge `cdab1b5fb1ee9ffa25967e94d7f75c187d3bb59f`; GitHub Actions run `33946223622`; fresh `origin/master` inspection.
+
+The latest reviewed head passed Python 3.12 and full-history Gitleaks with the review thread resolved and no further Codex findings. PR 28 merged, and both jobs passed again on the merge commit. `origin/master` resolves to `cdab1b5`. The canonical P7-05, U-012, Task Catalogs, E-143, and repository benchmark records agree that `authority-fencing` is admitted; calibrated fixture bytes are unchanged. No authority-fencing admission work remains.
