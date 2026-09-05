@@ -4641,6 +4641,86 @@ def test_concurrent_authorize_vs_exact_expiry_accepts_nothing(
     assert state.parent_key == ""
 
 
+def test_drain_closes_admission_without_revoking_reserved_work() -> None:
+    token = "attempt-token-0123456789-abcdefghijklmnop"
+    channel = (1, 2)
+    ledger = calibration.SpendLedger(Decimal("2"))
+    state = calibration.BrokerState(
+        parent_key=TEST_PARENT_KEY,
+        token=token,
+        probe_token=None,
+        model="model",
+        max_input_tokens=100,
+        deadline=time.monotonic() + 30,
+        ledger=ledger,
+    )
+    state.lease_channel_identity = channel
+    _ordinal, reservation = state.begin_request("/v1/responses", Decimal("1"))
+
+    state.drain(channel)
+
+    assert state.active is False
+    assert state.draining is True
+    assert state.parent_key == TEST_PARENT_KEY
+    assert state.lease_expired() is False
+    with pytest.raises(PermissionError, match="attempt expired"):
+        state.begin_request("/v1/responses", Decimal("1"))
+    with fake_upstream() as upstream:
+        connection = http.client.HTTPConnection(
+            "127.0.0.1", upstream.server_address[1], timeout=5
+        )
+        connection.connect()
+        state.send_connected_settlement_request(
+            connection, "/generation?id=reserved", io_timeout=5
+        )
+        response = connection.getresponse()
+        response.read()
+        state.unregister_upstream(connection)
+        connection.close()
+        assert upstream.requests == [
+            {
+                "authorization": f"Bearer {TEST_PARENT_KEY}",
+                "path": "/generation?id=reserved",
+            }
+        ]
+    state.finish_request(reservation, Decimal("0.25"))
+    assert ledger.cost == Decimal("0.25")
+    assert ledger.reserved == 0
+
+
+def test_remove_attempt_containers_can_preserve_exact_broker(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    names = calibration._docker_names("cal-preserve-broker", 1)
+    removed: list[str] = []
+    inspected = {
+        "broker-id": {
+            "Name": f"/{names.broker}",
+            "Config": {"Labels": names.role_labels("broker")},
+        },
+        "main-id": {
+            "Name": "/cal-main",
+            "Config": {"Labels": names.role_labels("main")},
+        },
+    }
+
+    def docker(argv: list[str], **_kwargs: Any) -> subprocess.CompletedProcess[bytes]:
+        if argv[:2] == ["ps", "-aq"]:
+            return subprocess.CompletedProcess(argv, 0, b"broker-id\nmain-id\n", b"")
+        if argv[:2] == ["rm", "--force"]:
+            removed.append(argv[2])
+        return subprocess.CompletedProcess(argv, 0, b"", b"")
+
+    monkeypatch.setattr(calibration, "_docker", docker)
+    monkeypatch.setattr(
+        calibration, "_inspect_one", lambda _kind, name: inspected[name]
+    )
+
+    calibration._remove_owned_attempt_containers(names, preserve_broker=True)
+
+    assert removed == ["main-id"]
+
+
 def test_create_disconnect_still_reconciles_exact_owned_resources(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -4675,7 +4755,7 @@ def test_create_disconnect_still_reconciles_exact_owned_resources(
         lambda _kind, name, _labels: exists.get(name, False),
     )
     monkeypatch.setattr(
-        calibration, "_remove_owned_attempt_containers", lambda _n: None
+        calibration, "_remove_owned_attempt_containers", lambda _n, **_kwargs: None
     )
     with pytest.raises(subprocess.TimeoutExpired):
         sidecar.start()
@@ -5685,11 +5765,13 @@ def test_run_attempt_captures_result_before_zero_request_ledger_after_cleanup(
     pricing = calibration._validate_pricing_document(pricing_document())
     read_minimums: list[int] = []
     cleanup_calls = 0
+    lifecycle: list[str] = []
 
     class Sidecar:
         def __init__(self, **kwargs: Any) -> None:
             self.attempt_token = kwargs["attempt_token"]
             self.activated = False
+            self.drained = False
 
         def start(self) -> None:
             pass
@@ -5705,11 +5787,10 @@ def test_run_attempt_captures_result_before_zero_request_ledger_after_cleanup(
         def cleanup(self) -> dict[str, Any]:
             nonlocal cleanup_calls
             cleanup_calls += 1
+            lifecycle.append("cleanup")
             return {"broker_absent": True, "network_absent": True}
 
-        def read_ledger(self, *, minimum_requests: int = 0) -> dict[str, Any]:
-            assert cleanup_calls == 1
-            read_minimums.append(minimum_requests)
+        def _ledger(self) -> dict[str, Any]:
             if ledger_mode in {"missing", "read_error"}:
                 raise OSError("private ledger read failure")
             if ledger_mode == "malformed":
@@ -5737,6 +5818,21 @@ def test_run_attempt_captures_result_before_zero_request_ledger_after_cleanup(
                 "retained_unknown_reservation_usd": "0",
                 "schema_version": 2,
             }
+
+        def drain(self) -> None:
+            lifecycle.append("drain")
+            self.drained = True
+
+        def await_final_ledger(self) -> dict[str, Any]:
+            lifecycle.append("await_final_ledger")
+            if ledger_mode != "valid":
+                raise OSError("private final ledger read failure")
+            return self._ledger()
+
+        def read_ledger(self, *, minimum_requests: int = 0) -> dict[str, Any]:
+            assert cleanup_calls == 1
+            read_minimums.append(minimum_requests)
+            return self._ledger()
 
     class Authority:
         def __init__(self, *_args: Any) -> None:
@@ -5770,7 +5866,7 @@ def test_run_attempt_captures_result_before_zero_request_ledger_after_cleanup(
     monkeypatch.setattr(calibration, "DockerMainAuthority", Authority)
     monkeypatch.setattr(calibration, "_bounded_command", command)
     monkeypatch.setattr(
-        calibration, "_remove_owned_attempt_containers", lambda _n: None
+        calibration, "_remove_owned_attempt_containers", lambda _n, **_kwargs: None
     )
     snapshot = calibration.SourceSnapshot(
         root=ROOT,
@@ -5810,7 +5906,12 @@ def test_run_attempt_captures_result_before_zero_request_ledger_after_cleanup(
             else {"cause_class": "RuntimeError", "failed_stage": "cli_wait"}
         )
     )
-    assert read_minimums == [0]
+    assert read_minimums == ([] if ledger_mode == "valid" else [0])
+    assert lifecycle == (
+        ["drain", "await_final_ledger", "cleanup"]
+        if failure_point == "postactivation"
+        else ["cleanup"]
+    )
     assert cleanup_calls == 1
     assert attempt["broker"]["request_count"] == 0
     assert attempt["spend"]["exposure_authority"] == exposure_authority
@@ -5850,6 +5951,28 @@ def _docker_sidecar(
         backend=backend,
         fake_response_cost=Decimal("0.125"),
     )
+
+
+def test_final_ledger_requires_every_admitted_request_record(tmp_path: Path) -> None:
+    sidecar = _docker_sidecar(tmp_path)
+    ledger_path = sidecar.evidence_root / "ledger.json"
+    document = {
+        "active": False,
+        "draining": True,
+        "pricing_sha256": sidecar.pricing.sha256,
+        "request_count": 1,
+        "requests": [],
+        "schema_version": 2,
+    }
+    ledger_path.write_text(calibration.canonical(document) + "\n")
+
+    with pytest.raises(RuntimeError, match="expected request count"):
+        sidecar.read_ledger(require_complete=True, timeout_seconds=0.01)
+
+    document["requests"] = [{}]
+    ledger_path.write_text(calibration.canonical(document) + "\n")
+    sidecar.drained = True
+    assert sidecar.await_final_ledger() == document
 
 
 def _archive_mounted_source(tmp_path: Path) -> Path:
@@ -6203,6 +6326,11 @@ def test_sidecar_network_probe_simulated_client_inspect_and_cleanup(
         assert ledger["request_count"] == 1
         assert ledger["requests"][0]["model"] == "openai/gpt-5.6-sol"
         assert ledger["requests"][0]["cost"] == "0.125"
+        sidecar.drain()
+        final_ledger = sidecar.await_final_ledger()
+        assert final_ledger["active"] is False
+        assert final_ledger["draining"] is True
+        assert final_ledger["request_count"] == len(final_ledger["requests"]) == 1
         network = calibration._inspect_one("network", sidecar.names.network)
         peers = {item["Name"] for item in network["Containers"].values()}
         assert sidecar.names.broker in peers

@@ -1868,3 +1868,23 @@ Both target attempts completed with rewards zero and one. Each settled 13 Respon
 The later authenticated row proves exact canonical GLM-5.3 Flash identity, streamed and uncancelled terminal `tool_calls`, bounded native usage, and exact cost `$0.0010917`. That cost supersedes the retained reservation. Retry 62's exact cost is `$0.2894058`; historical accounting is `$27.730117390` known plus `$117.044363975` unknown. The mode-0600 report is 47,811 bytes with SHA-256 `5a6810f8de89adf2bdfcb0754cd887dda26d1b794f6cf59a1acfd0d7a07b4a8c`; stderr is empty, mode `0600`, and SHA-256 `e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855`. The mode-0600 generation record is 1,453 bytes with SHA-256 `31424a071bd7b7e8ca7d9bd30fe5b820bbb51084c7ce781ed67b714e8a9fc74f`.
 
 D-138 requires the exact generation ID before classifying an HTTP 200 row as nonterminal, but permits model, stream, cost, and token fields to remain absent until a finish reason appears. Terminal settlement still requires every strict field. The regression advances an exact-ID row with null model, stream, cancellation, and finish reason to a complete terminal record and exact settlement. All 481 non-Docker calibration tests, Ruff check/format, ty, and `git diff --check` pass. A clean commit remains required before another paid retry.
+
+## 2026-09-04T18:25:19-07:00: Retry 63 exposes cleanup before ledger finalization
+
+Provenance: clean commit `805d295`; exact-four OpenRouter retry 63; bounded private report; source lifecycle inspection; exact-label Docker inspection. Full request, generation, session, and native artifact identifiers remain private.
+
+Both target attempts completed with reward zero. They settled 12 and 11 Responses requests at `$0.1316784` and `$0.1423359`. Alternate attempt one completed two agent steps and six tool uses before one native `APIError` at `cli_wait`. Its report retained no authoritative broker request record, so the full `$12.50` allocation remains conservative unknown exposure. No fourth attempt or proof followed, and no labeled Docker container or network survived. Retry 63 adds `$0.2740143` known cost; historical accounting is `$28.004131690` known plus `$129.544363975` unknown. The mode-0600 report is 46,220 bytes with SHA-256 `35d24748093c179f33f0996eb0d574e07418132027a7b956dc002420cf03b8e9`; stderr is empty, mode `0600`, and SHA-256 `e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855`.
+
+Observation: the failed-attempt path removed every exact-owned attempt container before waiting for the command future and before its fallback ledger read. Inference: when a broker handler was still reconciling, this ordering destroyed the only owner capable of appending its terminal request record. The retry report alone does not prove the missing request's provider state or exact cost.
+
+## 2026-09-04T18:25:19-07:00: D-139 drains broker admission before failed-attempt cleanup
+
+Provenance: source inspection; deterministic broker-state, exact-container, final-ledger, and failed-attempt lifecycle regressions; real-Docker sidecar control and cleanup test.
+
+D-139 adds an authenticated drain operation to the existing anonymous stdin control channel. Drain stops heartbeat leasing and new request admission without revoking the parent key from already admitted response/settlement work; the hard attempt deadline remains authoritative. Failed `cli_wait` cleanup first removes exact-owned containers except the exact broker, drains it, and accepts final ledger authority only after `active = false`, `draining = true`, and `request_count == len(requests)`. Ordinary cleanup then removes the broker and network. Unavailable drain or final evidence retains the existing complete-allocation fallback. All 484 non-Docker calibration tests, the real-Docker sidecar lifecycle test, Ruff check/format, ty, and `git diff --check` pass. A clean commit remains required before another paid retry.
+
+## 2026-09-04T18:38:11-07:00: D-139 full local validation
+
+Provenance: current worktree; full repository validation commands.
+
+All 1,268 non-Docker tests and all 11 required Docker tests pass. Ruff check/format, ty, Bandit, actionlint, `uv lock --check`, wheel/sdist build, all-groups pip-audit, and `git diff --check` pass. The Docker set includes the real sidecar drain, complete final-ledger read, and exact cleanup boundary.

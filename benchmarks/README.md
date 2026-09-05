@@ -372,7 +372,9 @@ invocation's budget. After the production CLI returns, command classification pr
 broker-request gate. Every attempt retains only return code, stream sizes and
 digests, safe canonical schema/outcome/reward fields, and bounded native
 structural status/counts/digests/exception class names. A nonzero or malformed
-CLI result cleans up and reads zero-request broker evidence without retaining
+CLI result removes exact-owned workload containers while preserving the broker,
+drains new admission over the private control pipe, waits for one terminal
+record per admitted request, then performs final cleanup without retaining
 raw output, paths, exception messages, prompts, model content, logs, or tool
 output. If broker ledger authority is missing, malformed, or unreadable after
 activation may have begun, the full attempt allocation is retained as
@@ -394,14 +396,16 @@ through the private broker pipe. A post-activation half-second heartbeat leases
 authority. Authorization checks that lease under the token lock, treats equality
 as expired, revokes parent-key authority immediately, and signals listener
 shutdown without waiting for watchdog polling. The broker is absent within five
-seconds. Final cleanup reconciles exact names and labels and proves
+seconds. Failed-attempt drain leaves the hard attempt deadline active and
+preserves the parent key only for settlement reads by already admitted handlers.
+Final cleanup reconciles exact names and labels and proves
 authority and owned resources absent. Docker daemon/root is trusted. Network
 peers and unrelated host containers are not containment evidence. Docker's
 reported IPAM gateway and `Internal` value are recorded as topology only;
 authenticated pricing and later forwarding prove actual egress. This transport
 requires no host reachability or firewall change. No real calibration has
 completed, so difficulty calibration remains unproven. Historical accounting
-after retry 62 is `$27.730117390` known cost plus `$117.044363975` conservatively
+after retry 63 is `$28.004131690` known cost plus `$129.544363975` conservatively
 retained unknown exposure; it does not consume the next invocation's `$50` cap.
 A
 separate direct OpenRouter contract probe cost `$0.00007`; it is not benchmark

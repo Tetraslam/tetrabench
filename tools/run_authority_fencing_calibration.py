@@ -776,6 +776,7 @@ class BrokerState:
         self.locked_endpoint: str | None = None
         self.active = token is not None
         self.activated = token is not None
+        self.draining = False
         self.activation_token_sha256 = (
             hashlib.sha256(token.encode()).hexdigest() if token is not None else None
         )
@@ -797,6 +798,7 @@ class BrokerState:
                     "activation_token_sha256": self.activation_token_sha256,
                     "activated": self.activated,
                     "backend": self.backend.name,
+                    "draining": self.draining,
                     "fatal": self.ledger.fatal,
                     "known_actual_cost_usd": str(self.ledger.cost),
                     "locked_endpoint": self.locked_endpoint,
@@ -844,6 +846,7 @@ class BrokerState:
     def _expired_locked(self, now: float) -> bool:
         return now >= self.deadline or bool(
             self.activated
+            and not self.draining
             and (
                 self.last_heartbeat is None
                 or now - self.last_heartbeat >= HEARTBEAT_LEASE_SECONDS
@@ -958,11 +961,31 @@ class BrokerState:
         if not accepted:
             raise PermissionError("broker heartbeat rejected")
 
+    def drain(self, channel_identity: tuple[int, int]) -> None:
+        expired = False
+        with self.lock:
+            if self._expired_locked(time.monotonic()):
+                self._invalidate_locked()
+                expired = True
+            elif (
+                not self.active
+                or not self.activated
+                or self.lease_channel_identity != channel_identity
+            ):
+                raise PermissionError("broker drain rejected")
+            else:
+                self.active = False
+                self._token = None
+                self.draining = True
+        self.write_evidence()
+        if expired:
+            raise PermissionError("broker drain expired")
+
     def lease_expired(self) -> bool:
         with self.lock:
-            return (self.activated and not self.active) or self._expired_locked(
-                time.monotonic()
-            )
+            return (
+                self.activated and not self.active and not self.draining
+            ) or self._expired_locked(time.monotonic())
 
     def upstream_io_timeout(self) -> float:
         expired = False
@@ -1119,7 +1142,7 @@ class BrokerState:
                 expired = True
                 accepted = False
             else:
-                accepted = self.active and bool(self.parent_key)
+                accepted = (self.active or self.draining) and bool(self.parent_key)
             if accepted:
                 parent_key = self.parent_key
                 if upstream.sock is None:
@@ -2556,7 +2579,9 @@ def _wait_resource_absent(kind: str, name: str, timeout: float = 5.0) -> bool:
     return _docker([kind, "inspect", name], check=False).returncode != 0
 
 
-def _remove_owned_attempt_containers(names: DockerAttemptNames) -> None:
+def _remove_owned_attempt_containers(
+    names: DockerAttemptNames, *, preserve_broker: bool = False
+) -> None:
     result = _docker(
         [
             "ps",
@@ -2574,6 +2599,8 @@ def _remove_owned_attempt_containers(names: DockerAttemptNames) -> None:
         inspected = _inspect_one("container", container_id)
         labels = _resource_labels("container", inspected)
         if all(labels.get(key) == value for key, value in names.labels.items()):
+            if preserve_broker and inspected.get("Name") == f"/{names.broker}":
+                continue
             _docker(["rm", "--force", container_id], check=False)
 
 
@@ -3155,6 +3182,7 @@ class CalibrationBrokerHandler(BaseHTTPRequestHandler):
                 self, state
             )
             ordinal, reservation = state.begin_request(endpoint, reservation_amount)
+            state.write_evidence()
         except PermissionError:
             self._reject(HTTPStatus.UNAUTHORIZED, "authorization rejected")
             return
@@ -3615,6 +3643,8 @@ def _broker_child_main(argv: list[str]) -> int:
                     if type(sequence) is not int or sequence < 0:
                         raise ValueError("broker heartbeat sequence rejected")
                     broker.state.heartbeat(channel_identity)
+                elif message == {"op": "drain"}:
+                    broker.state.drain(channel_identity)
                 else:
                     raise ValueError("broker control message rejected")
         except BaseException:
@@ -3681,6 +3711,7 @@ class DockerBrokerSidecar:
         self.heartbeat_thread: threading.Thread | None = None
         self.control_pipe_identity: tuple[int, int] | None = None
         self.activated = False
+        self.drained = False
         self.network_allocation: DockerNetworkAllocation | None = None
 
     def start(self) -> None:
@@ -3836,6 +3867,24 @@ class DockerBrokerSidecar:
             target=heartbeat, name="calibration-broker-heartbeat"
         )
         self.heartbeat_thread.start()
+
+    def drain(self) -> None:
+        if not self.activated or self.drained:
+            raise RuntimeError("broker sidecar drain ordering rejected")
+        self.heartbeat_stop.set()
+        if self.heartbeat_thread is not None:
+            self.heartbeat_thread.join(timeout=2)
+            if self.heartbeat_thread.is_alive():
+                raise RuntimeError("heartbeat thread survived drain")
+        self._write_control({"op": "drain"})
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            ledger = self.read_ledger()
+            if ledger.get("active") is False and ledger.get("draining") is True:
+                self.drained = True
+                return
+            time.sleep(0.05)
+        raise RuntimeError("broker drain did not complete")
 
     def _wait_for_container(self) -> None:
         deadline = time.monotonic() + 20
@@ -3998,9 +4047,15 @@ class DockerBrokerSidecar:
         ):
             raise RuntimeError("Docker sidecar probe reached model forwarding")
 
-    def read_ledger(self, *, minimum_requests: int = 0) -> dict[str, Any]:
+    def read_ledger(
+        self,
+        *,
+        minimum_requests: int = 0,
+        require_complete: bool = False,
+        timeout_seconds: float = 5.0,
+    ) -> dict[str, Any]:
         path = self.evidence_root / "ledger.json"
-        deadline = time.monotonic() + 5
+        deadline = time.monotonic() + timeout_seconds
         while time.monotonic() < deadline:
             if path.exists():
                 document = strict_json(path.read_bytes())
@@ -4012,10 +4067,33 @@ class DockerBrokerSidecar:
                 if document.get("pricing_sha256") != self.pricing.sha256:
                     raise ValueError("broker pricing evidence mismatch")
                 request_count = document.get("request_count")
-                if type(request_count) is int and request_count >= minimum_requests:
+                requests = document.get("requests")
+                if (
+                    type(request_count) is int
+                    and request_count >= minimum_requests
+                    and (
+                        not require_complete
+                        or (
+                            isinstance(requests, list)
+                            and len(requests) == request_count
+                        )
+                    )
+                ):
                     return document
             time.sleep(0.05)
         raise RuntimeError("broker evidence did not reach expected request count")
+
+    def await_final_ledger(self) -> dict[str, Any]:
+        if not self.drained:
+            raise RuntimeError("broker final ledger requires drain")
+        document = self.read_ledger(
+            minimum_requests=0,
+            require_complete=True,
+            timeout_seconds=DELIVERY_FAILURE_SETTLEMENT_WINDOW_SECONDS + 5,
+        )
+        if document.get("active") is not False or document.get("draining") is not True:
+            raise RuntimeError("broker final ledger drain authority is stale")
+        return document
 
     def cleanup(self) -> dict[str, Any]:
         errors: list[str] = []
@@ -5466,7 +5544,10 @@ def _run_attempt(
 
                 result, document = _run_phase(attempt_record, "cli_wait", wait_for_cli)
             except BaseException:
-                _remove_owned_attempt_containers(names)
+                _remove_owned_attempt_containers(names, preserve_broker=True)
+                if getattr(sidecar, "activated", False):
+                    with suppress(BaseException):
+                        sidecar.drain()
                 if command_future is not None:
                     try:
                         completed_result = command_future.result(timeout=30)
@@ -5495,6 +5576,9 @@ def _run_attempt(
                                 )
                             )
                             attempt_record["command_outcome"] = command_evidence
+                if getattr(sidecar, "drained", False):
+                    with suppress(BaseException):
+                        ledger_document = sidecar.await_final_ledger()
                 raise
             finally:
                 executor.shutdown(wait=True, cancel_futures=True)
