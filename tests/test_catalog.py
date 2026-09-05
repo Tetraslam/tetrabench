@@ -10,7 +10,7 @@ from tetrabench.models import TaskSelection
 ROOT = Path(__file__).parents[1]
 
 
-def test_local_catalog_has_two_empty_sections() -> None:
+def test_local_catalog_has_admitted_authority_fencing_task() -> None:
     catalog = load_catalog(ROOT, "benchmarks/catalog.toml")
 
     systems = get_section(catalog, "systems-design")
@@ -24,15 +24,15 @@ def test_local_catalog_has_two_empty_sections() -> None:
         "deterministic task-local forge, then reconstruct and verify them from clean "
         "snapshots."
     )
-    assert len(systems.tasks) == 0
-    assert len(github.tasks) == 0
-    assert (
-        select_tasks(
-            systems,
-            TaskSelection(),
-        )
-        == ()
+    assert [task.id for task in systems.tasks] == ["authority-fencing"]
+    assert systems.tasks[0].harbor_task == (
+        "benchmarks/tasks/systems-design/authority-fencing"
     )
+    assert systems.tasks[0].reward_policy == "binary"
+    assert len(github.tasks) == 0
+    assert [task.id for task in select_tasks(systems, TaskSelection())] == [
+        "authority-fencing"
+    ]
 
 
 def test_unknown_excluded_task_fails() -> None:

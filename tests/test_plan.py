@@ -19,8 +19,8 @@ ROOT = Path(__file__).parents[1]
 
 
 def test_empty_section_plan_is_canonical_deterministic_and_not_runnable() -> None:
-    first = resolve_plan(ROOT, "systems-design")
-    second = resolve_plan(ROOT, "systems-design")
+    first = resolve_plan(ROOT, "github-workflow")
+    second = resolve_plan(ROOT, "github-workflow")
 
     assert first == second
     assert first.trials == ()
@@ -47,16 +47,17 @@ def test_plan_and_request_golden_bytes() -> None:
         b'{"context":[],"controller":{"app_name":"tetrabench","function_name":'
         b'"controller","kind":"modal","secret_name":"tetrabench-controller"},'
         b'"execution":{"kind":"modal"},"harbor":{"agent_name":"oracle","attempts"'
-        b':1,"concurrency":1,"model_name":null},"not_runnable_reasons":["section '
-        b"'systems-design' contains no selected tasks"
-        b'"],"runnable":false,'
+        b':1,"concurrency":1,"model_name":null},"not_runnable_reasons":[],'
+        b'"runnable":true,'
         b'"schema_version":1,"section":"systems-design","selection":{"exclude":'
         b'[],"include":[]},"storage":{"bucket":"replace-with-private-bucket",'
         b'"endpoint_url":"https://t3.storage.dev","prefix":"","provider":'
-        b'"tigris","region":"auto"},"trials":[]}'
+        b'"tigris","region":"auto"},"trials":[{"harbor_task":"benchmarks/tasks/'
+        b'systems-design/authority-fencing","reward_policy":"binary","task_id":'
+        b'"authority-fencing"}]}'
     )
     assert plan_digest(plan) == (
-        "af01aa14492dd6680423979437a0bb628e08cda7c2635d1d66fb867e7460f1a6"
+        "14c993f8deed243269908b3ca247b822f4bf150f8abbba6343c1a35950f9a604"
     )
     request_bytes = canonical_model_bytes(request)
     assert parse_canonical_model(request_bytes, RequestRecord) == request

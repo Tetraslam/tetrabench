@@ -28,7 +28,6 @@ packages = ["src/tetrabench"]
 
 [tool.hatch.build]
 exclude = [
-    "/benchmarks/tasks/systems-design/authority-fencing",
     "/questionnaire-meme.png",
     "/tests/test_authority_fencing_task.py",
     "/tests/test_authority_fencing_detached_admission.py",

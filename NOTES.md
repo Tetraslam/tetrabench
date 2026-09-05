@@ -1904,3 +1904,19 @@ D-140 supersedes D-136 only for the client timeout. Because the broker validates
 Provenance: current worktree; focused calibration tests and static checks.
 
 All 484 non-Docker calibration tests pass, including the exact 300-second reconciliation, 960-second client timeout, and 2,100-second attempt ordering. Ruff check/format, ty, and `git diff --check` pass. A clean commit remains required before another paid retry.
+
+## 2026-09-04T20:18:42-07:00: Retry 65 passes exact-four calibration
+
+Provenance: clean commit `103b54c`; exact-four OpenRouter retry 65; retained private proof and report; exact-label Docker inspection. Full request, generation, session, and native artifact identifiers remain private.
+
+Both target attempts completed with reward zero. They settled ten and 13 Responses requests at `$0.1441168` and `$0.1839501`. Both alternate attempts completed with reward zero. They settled four and three Chat Completions requests at `$0.00925897` and `$0.009309780`. Every attempt passed native structure, identity, token, spend, and cleanup validation. Current exact cost is `$0.346635650` with zero retained exposure. Historical accounting is `$28.658566955` known plus `$129.544363975` unknown; it does not consume another invocation's cap. No labeled Docker container or network survived.
+
+The exact clean source revision, two attempts per fixed profile, four `$12.50` allocations, `$50` invocation cap, and complete broker/native evidence are bound by one admissible proof. The mode-0600 proof and stdout are identical 93,718-byte canonical JSON with SHA-256 `cc378ce9e34b739ff3e3d5fbf71e28073e7f3e510dfb6b796cfd61c97bf661d5`; stderr is empty, mode `0600`, and SHA-256 `e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855`.
+
+`systems-design/authority-fencing` is now selected once in the production catalog with binary reward policy. The admitted fixture moves into the source distribution while the wheel remains code-only. Offline doctor, the runnable one-trial systems-design plan, and sealed 27-file fixture validation pass. Full local, packaging, security, hosted CI, review, merge, and post-merge validation remain pending.
+
+## 2026-09-04T20:33:15-07:00: Catalog admission full local validation
+
+Provenance: current worktree; production catalog; full repository validation and package build.
+
+All 1,268 non-Docker tests and all 11 required Docker tests pass against the admitted catalog. Offline doctor, the canonical runnable one-trial systems-design plan, sealed fixture validation, Ruff check/format, ty, Bandit, actionlint, `uv lock --check`, wheel/sdist build, package-content checks, all-groups pip-audit, and `git diff --check` pass. The source distribution contains the admitted task fixture and the wheel remains code-only. Hosted CI, review, merge, and post-merge validation remain pending.

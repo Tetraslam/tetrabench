@@ -47,7 +47,10 @@ def test_fixture_is_source_only_and_absent_from_installed_wheel(tmp_path: Path) 
             for name in names
         )
         assert any(name.endswith("benchmarks/catalog.toml") for name in names)
-        assert not any("authority-fencing" in name for name in names)
+        assert any(
+            name.endswith("benchmarks/tasks/systems-design/authority-fencing/task.toml")
+            for name in names
+        )
         assert not any(
             name.endswith("tests/test_authority_fencing_task.py") for name in names
         )

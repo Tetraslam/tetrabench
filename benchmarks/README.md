@@ -682,7 +682,7 @@ most 8 distinct fault schedules.
 
 | Candidate | Status |
 | --- | --- |
-| `systems-design/authority-fencing` | Local candidate implemented under `benchmarks/tasks/`; intentionally unlisted and excluded from wheel/sdist. After a kernel-confirmed OpenCode OOM raised its agent limit to 1 GiB, the corrected bytes passed the clean 17-case local matrix, three production CLI runs, and detached gold/gold/reward-forgery proof. Two-profile calibration and catalog admission remain pending. |
+| `systems-design/authority-fencing` | Admitted to the production catalog with binary reward policy. Its corrected 1 GiB bytes passed the clean 17-case local matrix, three production CLI runs, detached gold/gold/reward-forgery proof, and two attempts each on GPT-5.6 Sol and GLM-5.3 Flash. The source distribution includes the fixture; the wheel remains code-only. |
 | Remaining v1 candidates | Absent. |
 
 1. Run the locally proven E-064 separate-verifier and forge-sidecar prototype in
@@ -693,13 +693,12 @@ most 8 distinct fault schedules.
    complete. Prove them through detached Modal, then freeze the pinned agent and
    verifier images, manifest schemas, fault
    scheduler, exploit-audit checks, budgets, and admission evidence format.
-3. Implement and admit systems tasks in this order: `authority-fencing`,
+3. Implement and admit the remaining systems tasks in this order:
    `atomic-outbox`, `lifecycle-reconciliation`, `online-migration`, then
    `tenant-authorization`.
 4. Author and freeze the three dependency-free Git repositories and the local
    forge state machine.
 5. Implement and admit workflow tasks in this order: `pr-submit`, `ci-repair`,
    `review-adjudication`, `release-backport`, then `merge-queue-recovery`.
-6. Add a task to `benchmarks/catalog.toml` only after its complete admission
-   evidence passes locally and in detached Modal. Until then both task lists
-   remain empty.
+6. Add each later task to `benchmarks/catalog.toml` only after its complete
+   admission evidence passes locally and in detached Modal.
