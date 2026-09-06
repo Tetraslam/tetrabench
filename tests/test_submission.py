@@ -179,7 +179,7 @@ def test_submission_crash_boundaries_preserve_durable_admission(
 def test_explicit_recovery_spawns_for_still_prepared_admission(tmp_path: Path) -> None:
     store = _MemorySubmissionStore()
     controller = FakeDetachedController()
-    receipts = ReceiptStore(tmp_path)
+    receipts = ReceiptStore(tmp_path / "receipts")
     first = SubmissionService(
         store,
         controller,
@@ -214,7 +214,7 @@ def test_cross_host_submitters_may_spawn_against_same_prepared_record(
         receipt = SubmissionService(
             store,
             controller,
-            ReceiptStore(tmp_path / host),
+            ReceiptStore(tmp_path / host / "receipts"),
             timestamp=lambda: "2026-08-28T20:00:00Z",
         ).submit(_prepared())
         return receipt.attempts[-1].controller_calls[0].call_id
@@ -233,7 +233,7 @@ def test_cli_side_submission_never_claims_owner(tmp_path: Path) -> None:
     receipt = SubmissionService(
         store,
         FakeDetachedController(),
-        ReceiptStore(tmp_path),
+        ReceiptStore(tmp_path / "receipts"),
         timestamp=lambda: "2026-08-28T20:00:00Z",
     ).submit(_prepared())
 
@@ -246,10 +246,10 @@ def test_receipt_does_not_serialize_modal_secret_name(tmp_path: Path) -> None:
     receipt = SubmissionService(
         _MemorySubmissionStore(),
         FakeDetachedController(),
-        ReceiptStore(tmp_path),
+        ReceiptStore(tmp_path / "receipts"),
         timestamp=lambda: "2026-08-28T20:00:00Z",
     ).submit(_prepared())
-    data = ReceiptStore(tmp_path).path_for(receipt.run_id).read_bytes()
+    data = ReceiptStore(tmp_path / "receipts").path_for(receipt.run_id).read_bytes()
     assert b"secret-reference-not-value" not in data
     assert b"bucket" not in data
 
@@ -289,7 +289,7 @@ def test_unsafe_topology_rejects_before_any_submission_mutation(tmp_path: Path) 
     store = _MemorySubmissionStore()
     store.coordination_safe = False
     controller = FakeDetachedController()
-    receipts = ReceiptStore(tmp_path)
+    receipts = ReceiptStore(tmp_path / "receipts")
 
     with pytest.raises(UnsafeCoordinationTopologyError, match="unsafe topology"):
         SubmissionService(store, controller, receipts).submit(_prepared())

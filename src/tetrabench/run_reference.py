@@ -5,7 +5,10 @@ from __future__ import annotations
 import ctypes
 import os
 import socket
+import threading
 import uuid
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Literal
 
@@ -19,7 +22,9 @@ from tetrabench.models import (
     Sha256,
 )
 from tetrabench.plan import canonical_model_bytes, parse_canonical_model
-from tetrabench.receipts import ReceiptConflictError, ReceiptStore
+from tetrabench.receipts import ReceiptStore, RunIdentityConflictError
+
+_ADMISSIONS = threading.local()
 
 
 class ProcessIdentity(FrozenRecord):
@@ -147,9 +152,93 @@ def write_private_record(
 
 
 class RunReferenceStore:
-    def __init__(self, root: Path | None = None) -> None:
+    """One reference/receipt namespace, using the receipt store's admission lock.
+
+    Custom layouts must use the paired ``receipts`` store for receipt writes;
+    the default layout is sibling ``run-references`` and ``receipts`` directories.
+    """
+
+    def __init__(
+        self, root: Path | None = None, *, receipts: ReceiptStore | None = None
+    ) -> None:
         self.root = root or user_state_path("tetrabench") / "run-references"
+        self.receipts = receipts or ReceiptStore(
+            self.root.parent / "receipts", reference_root=self.root
+        )
+        if self.receipts.reference_root.resolve() != self.root.resolve():
+            raise ValueError(
+                "receipt and reference stores belong to different namespaces"
+            )
         self._files = ReceiptStore(self.root)
+
+    @contextmanager
+    def admission(
+        self,
+        run_id: str,
+        *,
+        engine: str,
+        request_sha256: str,
+        require_new: bool = False,
+        tolerate_unreadable_reference: bool = False,
+        tolerate_unreadable_receipt: bool = False,
+    ) -> Iterator[None]:
+        """Check both record families while excluding all cooperative writers.
+
+        Hold through reference publication or receipt replacement, not merely
+        through this check. Valid Modal evidence for the same request is reusable.
+        Corrupt hints may be ignored only for receipt evidence/explicit recovery;
+        they are never overwritten here and never establish execution authority.
+        """
+        with self.receipts.lock(run_id):
+            key = (
+                os.getpid(),
+                str(self.receipts.path_for(run_id).with_suffix(".lock").resolve()),
+            )
+            pending = getattr(_ADMISSIONS, "pending", None)
+            if pending is None:
+                pending = _ADMISSIONS.pending = {}
+            identity = (engine, request_sha256)
+            outer = pending.get(key)
+            if outer is not None and outer != identity:
+                raise RunIdentityConflictError(
+                    "run ID is being admitted by another engine or request"
+                )
+            try:
+                reference = self.read(run_id)
+            except (OSError, ValueError):
+                if not tolerate_unreadable_reference:
+                    raise
+                reference = None
+            if reference is not None and (
+                require_new
+                or reference.engine != engine
+                or reference.request_sha256 != request_sha256
+            ):
+                raise RunIdentityConflictError(
+                    f"run ID already has another engine binding: {run_id}"
+                )
+            try:
+                receipt = self.receipts.read(run_id)
+            except (OSError, ValueError):
+                if not tolerate_unreadable_receipt:
+                    raise
+                receipt = None
+            if receipt is not None and (
+                require_new
+                or engine != "modal"
+                or receipt.run_id != run_id
+                or receipt.request_sha256 != request_sha256
+            ):
+                raise RunIdentityConflictError(
+                    f"run ID already belongs to a Modal receipt: {run_id}"
+                )
+            if outer is None:
+                pending[key] = identity
+            try:
+                yield
+            finally:
+                if outer is None:
+                    del pending[key]
 
     def read(self, run_id: str) -> RunReference | None:
         path = self._files.path_for(run_id)
@@ -163,14 +252,19 @@ class RunReferenceStore:
         return reference
 
     def create(self, reference: RunReference) -> None:
-        with self._files.lock(reference.run_id):
+        with self.admission(
+            reference.run_id,
+            engine=reference.engine,
+            request_sha256=reference.request_sha256,
+        ):
             existing = self.read(reference.run_id)
             if existing is not None:
                 if existing != reference:
-                    raise ReceiptConflictError(
+                    raise RunIdentityConflictError(
                         "run ID already has another engine binding"
                     )
                 return
+            self._files._ensure_root()
             write_private_record(
                 self._files.path_for(reference.run_id), canonical_model_bytes(reference)
             )

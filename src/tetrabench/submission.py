@@ -37,6 +37,7 @@ from tetrabench.receipts import (
     PhysicalSubmissionAttempt,
     ReceiptConflictError,
     ReceiptStore,
+    RunIdentityConflictError,
     SubmissionReceipt,
     SubmissionTransition,
     append_submission_attempt,
@@ -270,26 +271,39 @@ class SubmissionService:
 
     def submit(self, prepared: PreparedSubmission) -> SubmissionReceipt:
         self._validate_prepared(prepared)
-        self._store.require_coordination_safe()
-        self._record_binding(prepared)
-        with self._receipts.lock(prepared.request.run_id):
+        with self._references().admission(
+            prepared.request.run_id,
+            engine="modal",
+            request_sha256=sha256_hex(canonical_model_bytes(prepared.request)),
+        ):
+            self._store.require_coordination_safe()
+            self._record_binding(prepared)
             return self._submit_locked(prepared, recovery=False)
 
     def recover(self, prepared: PreparedSubmission) -> SubmissionReceipt:
         """Explicitly spawn another call while durable admission is prepared."""
         self._validate_prepared(prepared)
-        self._store.require_coordination_safe()
-        self._record_binding(prepared)
-        with self._receipts.lock(prepared.request.run_id):
+        with self._references().admission(
+            prepared.request.run_id,
+            engine="modal",
+            request_sha256=sha256_hex(canonical_model_bytes(prepared.request)),
+        ):
+            self._store.require_coordination_safe()
+            self._record_binding(prepared)
             return self._submit_locked(prepared, recovery=True)
 
+    def _references(self):
+        from tetrabench.run_reference import RunReferenceStore
+
+        return RunReferenceStore(self._receipts.reference_root, receipts=self._receipts)
+
     def _record_binding(self, prepared: PreparedSubmission) -> None:
-        from tetrabench.run_reference import RunReference, RunReferenceStore
+        from tetrabench.run_reference import RunReference
 
         launch = prepared.controller_launch
         if launch is None:
             raise SubmissionRefusedError("missing controller endpoint")
-        RunReferenceStore(self._receipts.root.parent / "run-references").create(
+        self._references().create(
             RunReference(
                 run_id=prepared.request.run_id,
                 engine="modal",
@@ -304,6 +318,16 @@ class SubmissionService:
     def recover_request(self, request: RequestRecord) -> str:
         """Spawn from an already-published immutable request and prepared admission."""
         self._validate_recovery_request(request)
+        with self._references().admission(
+            request.run_id,
+            engine="modal",
+            request_sha256=sha256_hex(canonical_model_bytes(request)),
+            tolerate_unreadable_reference=True,
+            tolerate_unreadable_receipt=True,
+        ):
+            return self._recover_request_locked(request)
+
+    def _recover_request_locked(self, request: RequestRecord) -> str:
         self._store.require_coordination_safe()
         durable = self._store.read_admission(request.run_id)
         if durable is None:
@@ -312,6 +336,8 @@ class SubmissionService:
         receipt: SubmissionReceipt | None
         try:
             receipt = self._record_intent(request, recovery=True)
+        except RunIdentityConflictError:
+            raise
         except (OSError, ReceiptConflictError, TypeError, ValueError):
             receipt = None
         call_id = self._spawn(request)

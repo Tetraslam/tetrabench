@@ -24,7 +24,7 @@
 - [x] Verify installed-distribution deployment and local/remote release smoke tests.
 - [ ] Merge reviewed changes, publish to PyPI, and verify public tool installation.
 
-Validation: 1,396 non-Docker tests, all 11 required Docker tests, Ruff, formatting,
+Validation: 1,406 non-Docker tests, all 11 required Docker tests, Ruff, formatting,
 ty, Bandit, actionlint, lock checks, dependency audit, distribution metadata,
 sdist reproduction, and isolated installed-wheel smoke pass. Runtime review
 findings were fixed and independently rechecked. Local cancellation is a durable
@@ -35,7 +35,9 @@ environment because that field was not persisted. Deployment automatically
 resolves and verifies the installed wheel; development installs preserve its
 digest with a PEP 610 URL fragment. The live Oracle run reported $0.00320072,
 with no model calls. Exact GitHub release artifact validation and publication
-remain pending.
+remain pending. PR 30's first hosted run passed; its valid legacy-receipt/run-ID
+collision finding is fixed with shared admission locking and independently
+reviewed cross-process tests. The reviewed-head CI rerun remains pending.
 
 ### Local authoring working record
 

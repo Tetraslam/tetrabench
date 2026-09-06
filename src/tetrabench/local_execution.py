@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 import tempfile
 import threading
-from contextlib import suppress
+from contextlib import ExitStack, suppress
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
@@ -99,8 +99,11 @@ def run_prepared_local(
     ):
         raise ValueError("prepared local request and sealed context disagree")
     references = references or RunReferenceStore()
-    if references.read(request.run_id) is not None:
-        raise ValueError(f"run ID already exists: {request.run_id}")
+    request_sha256 = sha256_hex(canonical_model_bytes(request))
+    with references.admission(
+        request.run_id, engine="docker", request_sha256=request_sha256, require_new=True
+    ):
+        pass
     output_directory = output_directory.expanduser().absolute()
     if not output_directory.parent.is_dir():
         raise ValueError(
@@ -126,46 +129,57 @@ def run_prepared_local(
         raise ValueError(
             "output parent changed to a symlink ancestor during validation"
         )
-    try:
-        output_directory.mkdir(mode=0o700)
-    except FileExistsError as error:
-        raise LocalOutputExistsError(
-            f"output directory already exists: {output_directory}"
-        ) from error
-    output_directory.chmod(0o700)
-    metadata = output_directory.stat()
-    output_identity = (metadata.st_dev, metadata.st_ino)
-    paths = local_paths(output_directory)
-    write_private_record(
-        paths.request, canonical_model_bytes(request), expected_parent=output_identity
-    )
-    reference = RunReference(
-        run_id=request.run_id,
-        engine="docker",
-        request_sha256=sha256_hex(canonical_model_bytes(request)),
-        output_directory=str(output_directory),
-        output_identity=output_identity,
-        process=process_identity(os.getpid()),
-    )
-    state_path = output_directory / "execution.json"
+    with ExitStack() as lifetime:
+        # Recheck after validation, and hold the shared receipt lock through
+        # reservation and reference publication. Native execution needs only its
+        # own lifetime lock, not a long-held namespace lock.
+        with references.admission(
+            request.run_id,
+            engine="docker",
+            request_sha256=request_sha256,
+            require_new=True,
+        ):
+            try:
+                output_directory.mkdir(mode=0o700)
+            except FileExistsError as error:
+                raise LocalOutputExistsError(
+                    f"output directory already exists: {output_directory}"
+                ) from error
+            output_directory.chmod(0o700)
+            metadata = output_directory.stat()
+            output_identity = (metadata.st_dev, metadata.st_ino)
+            paths = local_paths(output_directory)
+            write_private_record(
+                paths.request,
+                canonical_model_bytes(request),
+                expected_parent=output_identity,
+            )
+            reference = RunReference(
+                run_id=request.run_id,
+                engine="docker",
+                request_sha256=request_sha256,
+                output_directory=str(output_directory),
+                output_identity=output_identity,
+                process=process_identity(os.getpid()),
+            )
+            lock_identity = lifetime.enter_context(execution_owner(output_directory))
+            initialize_owner(reference, lock_identity)
+            references.create(reference)
 
-    def record(state: str) -> None:
-        write_private_record(
-            state_path,
-            dumps_canonical_json(
-                {
-                    "schema_version": 1,
-                    "run_id": request.run_id,
-                    "request_sha256": reference.request_sha256,
-                    "state": state,
-                }
-            ),
-            expected_parent=output_identity,
-        )
+        def record(state: str) -> None:
+            write_private_record(
+                output_directory / "execution.json",
+                dumps_canonical_json(
+                    {
+                        "schema_version": 1,
+                        "run_id": request.run_id,
+                        "request_sha256": request_sha256,
+                        "state": state,
+                    }
+                ),
+                expected_parent=output_identity,
+            )
 
-    with execution_owner(output_directory) as lock_identity:
-        initialize_owner(reference, lock_identity)
-        references.create(reference)
         record("running")
         try:
             paths.context.mkdir(mode=0o700)

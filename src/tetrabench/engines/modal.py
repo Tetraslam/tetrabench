@@ -24,7 +24,7 @@ from tetrabench.plan import canonical_model_bytes
 from tetrabench.receipts import ReceiptStore
 from tetrabench.records import ConflictRunState, TerminalRunState
 from tetrabench.remote import RemoteResultService
-from tetrabench.run_reference import RunReference
+from tetrabench.run_reference import RunReference, RunReferenceStore
 from tetrabench.s3 import create_s3_store
 from tetrabench.storage import request_key
 from tetrabench.submission import (
@@ -213,10 +213,14 @@ class ModalEngine:
             function_name=launch.function_name,
             environment_name=launch.environment_name,
         )
-        store = _store(reference)
-        return SubmissionService(store, _controller(reference), ReceiptStore()).submit(
-            prepared
-        )
+        references = RunReferenceStore()
+        with references.admission(
+            reference.run_id, engine=self.kind, request_sha256=reference.request_sha256
+        ):
+            store = _store(reference)
+            return SubmissionService(
+                store, _controller(reference), references.receipts
+            ).submit(prepared)
 
     def status(self, reference: RunReference):
         return StatusService(
