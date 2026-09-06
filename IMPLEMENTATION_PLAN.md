@@ -3,8 +3,8 @@
 ## Status
 
 - Project state: P0 through P6 are complete for their local/static contracts. Live Tigris/Modal evidence includes cancellation, forced controller interruption/recovery, and the E-046 Single-region `iad` cutover. Current live provider IAM/privacy/encryption state, AWS behavior, and true provider preemption remain `unproven`.
-- Current action: Modular categories, engine-selected run/config/lifecycle behavior, MIT licensing, and distribution-safe deployment are implemented and pass local validation. An isolated installed wheel completed local Docker and detached Modal Oracle runs, verified result/artifact retrieval after configuration changes, and left no child compute running.
-- Next action: merge reviewed release changes, build the release in GitHub, repeat the remote proof with those exact distribution bytes, and publish through the protected PyPI job. Future eval selection belongs to the user; the historical candidate list is not an execution queue. Live IAM/privacy/encryption, AWS consistency, and provider-initiated Modal preemption retain their separately recorded evidence limits.
+- Current action: PR 30 is merged as `ead3f90`, post-merge CI passed, and GitHub release `v0.1.0` contains the exact validated wheel/sdist. The release wheel passed isolated local Docker and detached Modal Oracle execution, fresh-process routing, artifact verification, and child cleanup. PyPI's OIDC exchange stopped before upload with `invalid-publisher`.
+- Next action: after the user configures the pending PyPI publisher for `Tetraslam/tetrabench`, workflow `release.yml`, environment `pypi`, rerun the failed publish job of release run `34006594371`, approve the protected job, and verify a fresh public installation. Reuse artifact `9981314035`; do not rebuild or retag. Future eval selection belongs to the user. Previously recorded live IAM/privacy/encryption, AWS consistency, and provider-preemption limits remain separate.
 - Task-catalog gate: E-132's corrected-byte local/detached execution and audit gates and E-143's exact-four calibration all pass. `authority-fencing` is admitted in `benchmarks/catalog.toml`; later systems and GitHub-workflow tasks remain absent pending their own complete gates.
 - Authoring UX: D-127 is merged through PR 26 with focused local and real-Docker evidence. It creates user-owned starter projects and tasks independently of the repository catalog.
 - Canonical record updated: 2026-09-05.
@@ -34,10 +34,14 @@ owned-container evidence. Legacy remote mutation requires an explicit original
 environment because that field was not persisted. Deployment automatically
 resolves and verifies the installed wheel; development installs preserve its
 digest with a PEP 610 URL fragment. The live Oracle run reported $0.00320072,
-with no model calls. Exact GitHub release artifact validation and publication
-remain pending. PR 30's first hosted run passed; its valid legacy-receipt/run-ID
+with no model calls. PR 30's first hosted run passed; its valid legacy-receipt/run-ID
 collision finding is fixed with shared admission locking and independently
-reviewed cross-process tests. The reviewed-head CI rerun remains pending.
+reviewed cross-process tests. Reviewed-head and post-merge CI passed. Release run
+`34006594371` passed reusable CI and distribution build; the exact wheel then
+passed the remote proof. Wheel SHA-256:
+`e349be8b583b9bba8d4330f0efa0bf5972983b643b0dcf1ae8daa7fe69d6bea4`.
+Only the PyPI account-side publisher registration and public installation proof
+remain blocked; the failed token exchange uploaded no distribution.
 
 ### Local authoring working record
 
