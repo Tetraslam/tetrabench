@@ -22,6 +22,7 @@ from tetrabench.controller import ControllerInvocation, DetachedControllerClient
 from tetrabench.modal_app import controller_deployment_spec
 from tetrabench.models import (
     CatalogTask,
+    ConfigOverrides,
     ProjectConfig,
     ResolvedContextFile,
     ResolvedPlan,
@@ -91,6 +92,7 @@ class PreparedSubmission:
     sealed_context: SealedContext
     request: RequestRecord
     controller_launch: ControllerLaunchConfiguration | None
+    engine_kind: str | None = None
 
 
 def resolve_controller_launch(
@@ -114,6 +116,9 @@ def prepare_submission(
     profile: str | None = None,
     *,
     run_id: str | None = None,
+    overrides: ConfigOverrides | None = None,
+    require_remote: bool = True,
+    validate_config: Callable[[ProjectConfig], None] | None = None,
 ) -> PreparedSubmission:
     """Resolve and seal locally, refusing empty plans before cloud access."""
     root = root.absolute()
@@ -128,7 +133,10 @@ def prepare_submission(
             root,
             profile=profile,
             project_data=project_data,
+            overrides=overrides,
         )
+        if validate_config is not None:
+            validate_config(config)
         catalog_data = read_project_file(
             authority,
             config.catalog_path,
@@ -148,6 +156,7 @@ def prepare_submission(
             section,
             profile=profile,
             run_id=run_id,
+            require_remote=require_remote,
         )
     finally:
         authority.close()
@@ -162,20 +171,23 @@ def _prepare_submission_from_authority(
     *,
     profile: str | None,
     run_id: str | None,
+    require_remote: bool = True,
 ) -> PreparedSubmission:
     empty_reason = f"section {section!r} contains no selected tasks"
     if not tasks:
         raise SubmissionRefusedError(f"plan is not runnable: {empty_reason}")
 
-    if config.storage is None:
+    if require_remote and config.storage is None:
         raise SubmissionRefusedError("submission requires storage configuration")
-    if config.controller.kind != "modal" or config.execution.kind != "modal":
+    if require_remote and (
+        config.controller.kind != "modal" or config.execution.kind != "modal"
+    ):
         raise SubmissionRefusedError("submit supports detached Modal execution only")
 
     sealed = seal_context(
         root,
         config.context,
-        key_prefix=config.storage.prefix,
+        key_prefix=config.storage.prefix if config.storage is not None else "",
         fixture_roots=tuple(task.harbor_task for task in tasks),
         authority=authority,
     )
@@ -213,6 +225,28 @@ def _prepare_submission_from_authority(
         sealed_context=sealed,
         request=request,
         controller_launch=resolve_controller_launch(config, profile),
+        engine_kind=config.engine.kind if config.engine else config.execution.kind,
+    )
+
+
+def prepare_run(
+    root: Path,
+    section: SectionName,
+    profile: str | None = None,
+    *,
+    run_id: str | None = None,
+    overrides: ConfigOverrides | None = None,
+    validate_config: Callable[[ProjectConfig], None] | None = None,
+) -> PreparedSubmission:
+    """Seal exactly the same bounded task/context bytes for every engine."""
+    return prepare_submission(
+        root,
+        section,
+        profile,
+        run_id=run_id,
+        overrides=overrides,
+        require_remote=False,
+        validate_config=validate_config,
     )
 
 
@@ -237,6 +271,7 @@ class SubmissionService:
     def submit(self, prepared: PreparedSubmission) -> SubmissionReceipt:
         self._validate_prepared(prepared)
         self._store.require_coordination_safe()
+        self._record_binding(prepared)
         with self._receipts.lock(prepared.request.run_id):
             return self._submit_locked(prepared, recovery=False)
 
@@ -244,8 +279,27 @@ class SubmissionService:
         """Explicitly spawn another call while durable admission is prepared."""
         self._validate_prepared(prepared)
         self._store.require_coordination_safe()
+        self._record_binding(prepared)
         with self._receipts.lock(prepared.request.run_id):
             return self._submit_locked(prepared, recovery=True)
+
+    def _record_binding(self, prepared: PreparedSubmission) -> None:
+        from tetrabench.run_reference import RunReference, RunReferenceStore
+
+        launch = prepared.controller_launch
+        if launch is None:
+            raise SubmissionRefusedError("missing controller endpoint")
+        RunReferenceStore(self._receipts.root.parent / "run-references").create(
+            RunReference(
+                run_id=prepared.request.run_id,
+                engine="modal",
+                request_sha256=sha256_hex(canonical_model_bytes(prepared.request)),
+                storage=prepared.plan.storage,
+                app_name=launch.app_name,
+                function_name=launch.function_name,
+                environment_name=launch.environment_name,
+            )
+        )
 
     def recover_request(self, request: RequestRecord) -> str:
         """Spawn from an already-published immutable request and prepared admission."""

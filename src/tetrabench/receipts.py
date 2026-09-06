@@ -172,6 +172,7 @@ class ReceiptStore:
                 directory.mkdir(mode=0o700)
             except FileExistsError:
                 pass
+            directory.chmod(0o700)
             parent = os.open(directory.parent, os.O_RDONLY | os.O_DIRECTORY)
             try:
                 os.fsync(parent)

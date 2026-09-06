@@ -4917,7 +4917,9 @@ def test_zero_request_nonzero_cli_failure_keeps_command_precedence(
     )
     attempt["command_outcome"] = evidence
     with pytest.raises(calibration.AttemptFailure) as caught:
-        calibration._validate_cli_outcome(result, document, parse_status)
+        calibration._validate_cli_outcome(
+            result, document, parse_status, expected_run_id="test-run", output=tmp_path
+        )
     calibration._mark_attempt_failed(attempt, caught.value)
     assert attempt["failure"] == {
         "exception_class": "RuntimeError",
@@ -4941,7 +4943,9 @@ def test_malformed_cli_stdout_is_digest_only_cli_schema_failure(tmp_path: Path) 
         result, tmp_path / "absent-output"
     )
     with pytest.raises(calibration.AttemptFailure) as caught:
-        calibration._validate_cli_outcome(result, document, parse_status)
+        calibration._validate_cli_outcome(
+            result, document, parse_status, expected_run_id="test-run", output=tmp_path
+        )
     assert caught.value.evidence == {
         "exception_class": "ValueError",
         "stage": "cli_schema",
@@ -4953,26 +4957,68 @@ def test_malformed_cli_stdout_is_digest_only_cli_schema_failure(tmp_path: Path) 
     assert "secret-bearing" not in json.dumps(evidence)
 
 
-def test_deny_upstream_accepts_expected_failed_cli_outcome() -> None:
-    document = {
-        "job_directory": "/private/output",
-        "outcome": "failed",
-        "reward": "0",
-        "schema_version": 1,
-        "summary": {},
-    }
+def test_deny_upstream_accepts_expected_failed_cli_outcome(tmp_path: Path) -> None:
+    from test_authority_fencing_task import _production_report
+
+    document = _production_report(
+        tmp_path, run_id="test-run", outcome="failed", reward="0"
+    )
     result = calibration.CommandResult(
         returncode=1,
-        stdout=(json.dumps(document) + "\n").encode(),
+        stdout=(calibration.canonical(document) + "\n").encode(),
         stderr=b"",
         containment={"survivors": 0},
     )
     assert (
         calibration._validate_cli_outcome(
-            result, document, "canonical", debug_deny_upstream=True
+            result,
+            document,
+            "canonical",
+            debug_deny_upstream=True,
+            expected_run_id="test-run",
+            output=tmp_path,
         )
         == document
     )
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("run_id", "another-run"),
+        ("job_directory", "/another/harbor-job"),
+        ("cleanup_complete", False),
+        ("cleanup_complete", "true"),
+        ("state", "running"),
+        ("result_error", "private-native-error"),
+        ("unexpected", "private-unknown-value"),
+        ("schema_version", True),
+    ],
+)
+def test_calibration_rejects_unauthorized_unified_cli_report_before_projection(
+    tmp_path, field, value
+):
+    from test_authority_fencing_task import _production_report
+
+    document = _production_report(tmp_path, run_id="test-run")
+    document[field] = value
+    result = calibration.CommandResult(
+        returncode=0,
+        stdout=(calibration.canonical(document) + "\n").encode(),
+        stderr=b"",
+        containment={"survivors": 0},
+    )
+    evidence, parsed, parse_status = calibration._command_outcome_evidence(
+        result, tmp_path, expected_run_id="test-run"
+    )
+    assert evidence["canonical_cli"] is None
+    with pytest.raises(calibration.AttemptFailure) as caught:
+        calibration._validate_cli_outcome(
+            result, parsed, parse_status, expected_run_id="test-run", output=tmp_path
+        )
+    assert caught.value.evidence["stage"] == "cli_schema"
+    assert "private-native-error" not in json.dumps(evidence)
+    assert "private-unknown-value" not in json.dumps(evidence)
 
 
 def test_deny_upstream_rejects_any_forwarded_request() -> None:

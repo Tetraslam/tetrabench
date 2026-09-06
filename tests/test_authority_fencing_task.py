@@ -48,6 +48,201 @@ def canonical(value: object) -> bytes:
     return json.dumps(value, separators=(",", ":"), sort_keys=True).encode()
 
 
+def _production_report(
+    output: Path,
+    *,
+    run_id: str = "proof-run",
+    reward: str = "1",
+    outcome: str = "succeeded",
+):
+    from tetrabench.engines.docker import LocalReport
+    from tetrabench.rewards import SectionRewardSummary, TaskRewardSummary, TrialReward
+
+    return LocalReport(
+        run_id=run_id,
+        state="terminal",
+        outcome=outcome,
+        reward=reward,
+        cleanup_complete=True,
+        job_directory=str(output / "harbor-job"),
+        summary=SectionRewardSummary(
+            policy="binary",
+            aggregate_kind="binary_pass_rate",
+            aggregate=reward,
+            task_count=1,
+            sample_count=1,
+            pass_count=int(reward),
+            tasks=(
+                TaskRewardSummary(
+                    task_id="authority-fencing",
+                    policy="binary",
+                    sample_count=1,
+                    pass_count=int(reward),
+                    aggregate=reward,
+                ),
+            ),
+            trials=(
+                TrialReward(
+                    task_id="authority-fencing",
+                    trial_name="authority-fencing__trial",
+                    policy="binary",
+                    value=reward,
+                ),
+            ),
+        ),
+    ).model_dump(mode="json")
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("unexpected", "unauthorized"),
+        ("schema_version", True),
+        ("cleanup_complete", "true"),
+        ("cleanup_complete", False),
+        ("result_error", "native failure"),
+        ("state", "submitted"),
+        ("state", "conflict"),
+        ("run_id", "another-run"),
+        ("job_directory", "/other/harbor-job"),
+        ("detail", 42),
+        ("reward", "0"),
+        ("summary", None),
+    ],
+)
+def test_proof_cli_parser_rejects_malformed_or_unproven_report(tmp_path, field, value):
+    from tools.run_authority_fencing_admission import validate_production_cli_report
+
+    report = _production_report(tmp_path)
+    report[field] = value
+    with pytest.raises(ValueError):
+        validate_production_cli_report(
+            report, expected_run_id="proof-run", expected_job=tmp_path / "harbor-job"
+        )
+
+
+def test_proof_cli_parser_requires_complete_current_schema(tmp_path):
+    from tools.run_authority_fencing_admission import validate_production_cli_report
+
+    report = _production_report(tmp_path)
+    parsed = validate_production_cli_report(
+        report, expected_run_id="proof-run", expected_job=tmp_path / "harbor-job"
+    )
+    assert parsed.model_dump(mode="json") == report
+    for field in ("run_id", "result_error", "cleanup_complete"):
+        reduced = dict(report)
+        del reduced[field]
+        with pytest.raises(ValueError, match="schema changed"):
+            validate_production_cli_report(reduced)
+
+
+def _production_envelope(tmp_path, monkeypatch):
+    from tetrabench.controller_runtime import HarborRunResult
+    from tetrabench.docker_lifecycle import DockerBinding
+    from tetrabench.engines.docker import LocalReport
+    from tetrabench.harbor_runner import HarborRunner
+    from tetrabench.local_execution import run_prepared_local
+    from tetrabench.plan import canonical_model_bytes
+    from tetrabench.run_reference import write_private_record
+    from tetrabench.submission import prepare_run
+    from tools import run_authority_fencing_admission as admission
+
+    project, config_root = admission._write_proof_project(tmp_path, task_source=TASK)
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(config_root))
+    output = tmp_path / "output"
+    document = _production_report(output)
+    report = LocalReport.model_validate_json(admission.canonical(document))
+
+    class NativeRunner:
+        validate_tasks = HarborRunner().validate_tasks
+
+        def run(self, request, paths, **kwargs):
+            (paths.jobs / "harbor-job").mkdir()
+            write_private_record(
+                paths.root / "docker-binding.json",
+                canonical_model_bytes(DockerBinding(daemon_id="fixture-daemon")),
+            )
+            return HarborRunResult(
+                outcome="succeeded",
+                reward="1",
+                summary=report.summary,
+                job_directory=paths.jobs / "harbor-job",
+            )
+
+    prepared = prepare_run(
+        project, "systems-design", admission.PROOF_PROFILE, run_id="proof-run"
+    )
+    monkeypatch.setattr("tetrabench.local_execution.HarborRunner", NativeRunner)
+    run_prepared_local(prepared, output)
+    return output, report, prepared
+
+
+def test_proof_projects_only_validated_native_tree_without_weakening_native_checks(
+    tmp_path, monkeypatch
+):
+    from tools import run_authority_fencing_admission as admission
+
+    output, report, prepared = _production_envelope(tmp_path, monkeypatch)
+    snapshot = admission.snapshot_native_output(output)
+    native, request = admission._validated_native_projection(snapshot, report, output)
+    assert request == prepared.request
+    assert [item["path"] for item in native.manifest] == [".", "harbor-job"]
+    # Valid control/sealed bytes still cannot substitute for native Harbor evidence.
+    with pytest.raises(ValueError, match="native Harbor evidence omits"):
+        admission._native_run_record(
+            snapshot,
+            report.model_dump(mode="json"),
+            ordinal=1,
+            expected_task_checksum="a" * 64,
+            expected_task_digest="sha256:" + "b" * 64,
+            expected_run_id="proof-run",
+            output_directory=output,
+        )
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "extra-root",
+        "extra-context",
+        "changed-context",
+        "wrong-owner",
+        "wrong-observation",
+        "nonempty-lock",
+    ],
+)
+def test_proof_rejects_unauthorized_envelope_and_sealed_context_changes(
+    tmp_path, monkeypatch, mutation
+):
+    from tools import run_authority_fencing_admission as admission
+
+    output, report, _ = _production_envelope(tmp_path, monkeypatch)
+    if mutation == "extra-root":
+        (output / "unlisted.json").write_text("{}")
+    elif mutation == "extra-context":
+        (output / "context/unlisted").write_bytes(b"extra")
+    elif mutation == "changed-context":
+        (output / "context/tasks/authority-fencing/instruction.md").write_bytes(
+            b"changed"
+        )
+    elif mutation == "wrong-owner":
+        path = output / "owner-control.json"
+        record = admission.strict_json(path.read_bytes())
+        record["reference"]["run_id"] = "another-run"
+        path.write_bytes(admission.canonical(record).encode())
+    elif mutation == "wrong-observation":
+        path = output / "execution.json"
+        record = admission.strict_json(path.read_bytes())
+        record["state"] = "running"
+        path.write_bytes(admission.canonical(record).encode())
+    else:
+        (output / "execution.lock").write_bytes(b"not an empty lock")
+    with pytest.raises(ValueError):
+        admission._validated_native_projection(
+            admission.snapshot_native_output(output), report, output
+        )
+
+
 def test_authority_fencing_contract_and_hidden_cases_are_frozen() -> None:
     contract = tomllib.loads((TASK / "contract.toml").read_text())
     hidden_contract = (TASK / "tests/contract.toml").read_bytes()

@@ -332,18 +332,35 @@ class Harbor022Api:
 
     @staticmethod
     async def _execute(config: JobConfig) -> JobResult:
+        if (
+            config.environment.type == EnvironmentType.DOCKER
+            and config.environment.import_path is None
+        ):
+            from tetrabench.docker_lifecycle import bind_docker
+
+            bind_docker(config.jobs_dir)
         job = await Job.create(config)
         return await job.run()
 
     def execute(self, config: JobConfig) -> JobResult:
+        if (
+            config.environment.type == EnvironmentType.DOCKER
+            and config.environment.import_path is None
+        ):
+            from tetrabench.local_control import OwnerCancellation, read_owner_control
+
+            control = read_owner_control(config.jobs_dir)
+            if control is not None:
+                return OwnerCancellation(control).run(lambda: self._execute(config))
         return asyncio.run(self._execute(config))
 
     @staticmethod
     def validate_native_artifacts(
         job_directory: Path,
-        result: JobResult,
+        result: JobResult | None,
         config: JobConfig,
     ) -> NativeJobArtifacts:
+        """Validate native files, comparing a transport result when available."""
         config_path = job_directory / "config.json"
         lock_path = job_directory / "lock.json"
         result_path = job_directory / "result.json"
@@ -358,7 +375,7 @@ class Harbor022Api:
         ):
             raise ValueError("Harbor job lock retry policy disagrees with config")
         persisted_result = JobResult.model_validate_json(result_path.read_text())
-        if (
+        if result is not None and (
             persisted_result.id != result.id
             or persisted_result.n_total_trials != result.n_total_trials
             or _terminal_stat_counts(persisted_result.stats)
@@ -378,8 +395,15 @@ class Harbor022Api:
         if len(persisted_lock.trials) != persisted_result.n_total_trials:
             raise ValueError("Harbor job lock trial count disagrees with result")
 
-        returned_trials = {trial.trial_name: trial for trial in result.trial_results}
-        if len(returned_trials) != persisted_result.n_total_trials:
+        returned_trials = (
+            {trial.trial_name: trial for trial in result.trial_results}
+            if result is not None
+            else None
+        )
+        if (
+            returned_trials is not None
+            and len(returned_trials) != persisted_result.n_total_trials
+        ):
             raise ValueError("Harbor transport result trial count is incomplete")
         candidate_directories: list[Path] = []
         with os.scandir(job_directory) as entries:
@@ -426,11 +450,12 @@ class Harbor022Api:
             )
             if persisted_trial.trial_name != trial_name:
                 raise ValueError("Harbor trial directory and result name disagree")
-            returned_trial = returned_trials.get(trial_name)
-            if returned_trial is None or _semantic_model_value(
-                persisted_trial
-            ) != _semantic_model_value(returned_trial):
-                raise ValueError("Harbor trial result changed after execution")
+            if returned_trials is not None:
+                returned_trial = returned_trials.get(trial_name)
+                if returned_trial is None or _semantic_model_value(
+                    persisted_trial
+                ) != _semantic_model_value(returned_trial):
+                    raise ValueError("Harbor trial result changed after execution")
             if _exact_model_value(persisted_trial.config) != _exact_model_value(
                 persisted_trial_config
             ):

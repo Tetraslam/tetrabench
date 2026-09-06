@@ -12,11 +12,13 @@ import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
+import tomlkit
 from pydantic import TypeAdapter
+from tomlkit.items import AoT, Array, Table
 
 from tetrabench.catalog import SectionName, load_catalog
 from tetrabench.config import load_project_config
-from tetrabench.context import SealedContext, seal_context
+from tetrabench.context import SealedContext, materialize_sealed_context, seal_context
 from tetrabench.harbor_api import Harbor022Api
 from tetrabench.models import ContextConfig, TaskId
 from tetrabench.storage import validate_logical_path
@@ -30,45 +32,13 @@ PROJECT_CONFIG = b"""\
 schema_version = 1
 catalog_path = "benchmarks/catalog.toml"
 
-[controller]
-kind = "local"
-
-[execution]
+[engine]
 kind = "docker"
 
 [harbor]
 agent_name = "oracle"
 attempts = 1
 concurrency = 1
-"""
-
-CATALOG = b"""\
-schema_version = 1
-
-[sections.systems-design]
-description = "Build and verify systems tasks."
-readme = "systems-design/README.md"
-
-[sections.github-workflow]
-description = "Build and verify GitHub workflow tasks."
-readme = "github-workflow/README.md"
-
-[[sections.systems-design.tasks]]
-id = "hello-tetrabench"
-harbor_task = "benchmarks/tasks/systems-design/hello-tetrabench"
-reward_policy = "binary"
-"""
-
-SYSTEMS_README = b"""\
-# Systems design
-
-Locally authored systems-design tasks live in `../tasks/systems-design/`.
-"""
-
-GITHUB_README = b"""\
-# GitHub workflow
-
-Locally authored GitHub workflow tasks live in `../tasks/github-workflow/`.
 """
 
 INSTRUCTION = b"""\
@@ -283,20 +253,31 @@ def _task_files() -> dict[str, tuple[bytes, int]]:
     return dict(_TASK_FILES)
 
 
-def initialize_project(directory: Path) -> Path:
+def initialize_project(directory: Path, section: str = "example") -> Path:
     destination = _absent_destination(directory)
+    section = _validated_section(section)
+    catalog = (
+        "schema_version = 1\n\n"
+        f'[sections."{section}"]\n'
+        f'readme = "{section}/README.md"\n\n'
+        f'[[sections."{section}".tasks]]\n'
+        'id = "hello-tetrabench"\n'
+        f'harbor_task = "benchmarks/tasks/{section}/hello-tetrabench"\n'
+        'reward_policy = "binary"\n'
+    ).encode()
     files = {
-        "benchmarks/catalog.toml": (CATALOG, 0o644),
-        "benchmarks/github-workflow/README.md": (GITHUB_README, 0o644),
-        "benchmarks/systems-design/README.md": (SYSTEMS_README, 0o644),
+        "benchmarks/catalog.toml": (catalog, 0o644),
+        f"benchmarks/{section}/README.md": (
+            f"# {section}\n\nLocally authored Harbor tasks.\n".encode(),
+            0o644,
+        ),
         "tetrabench.toml": (PROJECT_CONFIG, 0o644),
     }
-    starter = "benchmarks/tasks/systems-design/hello-tetrabench"
+    starter = f"benchmarks/tasks/{section}/hello-tetrabench"
     files.update({f"{starter}/{name}": value for name, value in _task_files().items()})
     _create_staged_tree(
         destination,
         files,
-        empty_directories=("benchmarks/tasks/github-workflow",),
     )
     return destination
 
@@ -309,14 +290,20 @@ def create_task(project: Path, section: str, task_id: str) -> tuple[Path, str]:
     validate_logical_path(logical_path)
     config = load_project_config(root)
     catalog = load_catalog(root, config.catalog_path)
-    all_tasks = [
-        *catalog.sections.systems_design.tasks,
-        *catalog.sections.github_workflow.tasks,
-    ]
+    if section_name not in catalog.sections:
+        raise ValueError(f"unknown catalog section: {section_name}")
+    all_tasks = [task for item in catalog.sections.values() for task in item.tasks]
     if any(task.id == validated_id for task in all_tasks):
         raise ValueError(f"catalog task ID already exists: {validated_id}")
     if any(task.harbor_task == logical_path for task in all_tasks):
         raise ValueError(f"catalog fixture is already referenced: {logical_path}")
+    parent = root / "benchmarks" / "tasks" / section_name
+    current = root
+    for component in parent.relative_to(root).parts:
+        current = current / component
+        if current.is_symlink():
+            raise ValueError("task parent contains a symlink")
+        current.mkdir(exist_ok=True)
     destination = _absent_destination(root / logical_path)
     _create_staged_tree(destination, _task_files())
     return destination, logical_path
@@ -333,27 +320,6 @@ def validate_fixture(root: Path, fixture: str) -> FixtureValidation:
     )
 
 
-def _materialize_sealed_context(sealed: SealedContext, destination: Path) -> None:
-    destination.chmod(0o700)
-    for manifest_file, sealed_file in zip(
-        sealed.manifest.files, sealed.files, strict=True
-    ):
-        path = destination / manifest_file.destination
-        path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-        current = path.parent
-        while current != destination:
-            current.chmod(0o700)
-            current = current.parent
-        descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-        try:
-            with os.fdopen(descriptor, "wb", closefd=False) as stream:
-                stream.write(sealed_file.content)
-                stream.flush()
-            os.fchmod(descriptor, manifest_file.mode)
-        finally:
-            os.close(descriptor)
-
-
 def _validate_fixture_snapshot(root: Path, logical_path: str) -> SealedContext:
     sealed = seal_context(
         root,
@@ -362,7 +328,7 @@ def _validate_fixture_snapshot(root: Path, logical_path: str) -> SealedContext:
     )
     with tempfile.TemporaryDirectory(prefix="tetrabench-validate-") as temporary:
         materialized_root = Path(temporary)
-        _materialize_sealed_context(sealed, materialized_root)
+        materialize_sealed_context(sealed, materialized_root)
         Harbor022Api().validate_task(path=materialized_root / logical_path)
     resealed = seal_context(
         root,
@@ -372,28 +338,6 @@ def _validate_fixture_snapshot(root: Path, logical_path: str) -> SealedContext:
     if resealed != sealed:
         raise RuntimeError("fixture changed while validating the sealed snapshot")
     return sealed
-
-
-def _toml_string(value: str) -> str:
-    escaped = (
-        value.replace("\\", "\\\\")
-        .replace('"', '\\"')
-        .replace("\b", "\\b")
-        .replace("\t", "\\t")
-        .replace("\n", "\\n")
-        .replace("\f", "\\f")
-        .replace("\r", "\\r")
-    )
-    return f'"{escaped}"'
-
-
-def _catalog_block(section: str, task_id: str, fixture: str) -> bytes:
-    return (
-        f"[[sections.{section}.tasks]]\n"
-        f"id = {_toml_string(task_id)}\n"
-        f"harbor_task = {_toml_string(fixture)}\n"
-        'reward_policy = "binary"\n'
-    ).encode()
 
 
 def _catalog_path(root: Path, configured_path: str) -> Path:
@@ -459,17 +403,37 @@ def _atomic_append_catalog(
         finally:
             os.close(source_descriptor)
         catalog = load_catalog(root, catalog_path.as_posix(), catalog_data=original)
-        all_tasks = [
-            *catalog.sections.systems_design.tasks,
-            *catalog.sections.github_workflow.tasks,
-        ]
+        if section not in catalog.sections:
+            raise ValueError(f"unknown catalog section: {section}")
+        all_tasks = [task for item in catalog.sections.values() for task in item.tasks]
         if any(task.id == task_id for task in all_tasks):
             raise ValueError(f"catalog task ID already exists: {task_id}")
         if any(task.harbor_task == fixture for task in all_tasks):
             raise ValueError(f"catalog fixture is already referenced: {fixture}")
 
-        separator = b"\n" if original.endswith(b"\n") else b"\n\n"
-        updated = original + separator + _catalog_block(section, task_id, fixture)
+        document = tomlkit.parse(original.decode("utf-8"))
+        sections = document["sections"]
+        if not isinstance(sections, Table):
+            raise ValueError("catalog sections must be a table")
+        selected = sections[section]
+        if not isinstance(selected, Table):
+            raise ValueError("catalog section must be a table")
+        tasks = selected.get("tasks")
+        entry = {"id": task_id, "harbor_task": fixture, "reward_policy": "binary"}
+        if isinstance(tasks, Array):
+            item = tomlkit.inline_table()
+            item.update(entry)
+            tasks.append(item)
+        else:
+            if tasks is None:
+                tasks = tomlkit.aot()
+                selected["tasks"] = tasks
+            if not isinstance(tasks, AoT):
+                raise ValueError("catalog tasks must be an array")
+            item = tomlkit.table()
+            item.update(entry)
+            tasks.append(item)
+        updated = tomlkit.dumps(document).encode("utf-8")
         load_catalog(root, catalog_path.as_posix(), catalog_data=updated)
 
         descriptor, temporary_name = tempfile.mkstemp(

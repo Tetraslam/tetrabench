@@ -18,7 +18,6 @@ from tetrabench import __version__
 from tetrabench.artifacts import (
     ArtifactDestinationExistsError,
     ArtifactPullRefusedError,
-    ArtifactPullService,
 )
 from tetrabench.authoring import (
     add_task,
@@ -27,28 +26,43 @@ from tetrabench.authoring import (
     validate_fixture,
 )
 from tetrabench.canonical_json import dumps_canonical_json
-from tetrabench.catalog import SectionName, get_section, load_catalog, select_tasks
+from tetrabench.catalog import get_section, load_catalog, select_tasks
 from tetrabench.config import load_project_config
 from tetrabench.context import resolve_context
-from tetrabench.controller import ModalControllerClient
-from tetrabench.harbor import ModalChildObserver, S3ChildIdentitySource
+from tetrabench.engines import Engine, get_engine, selected_engine
+from tetrabench.engines.modal import (
+    legacy_artifact_service as _artifact_service,
+)
+from tetrabench.engines.modal import (
+    legacy_cancellation_service as _cancellation_service,
+)
+from tetrabench.engines.modal import (
+    legacy_recovery_service as _recovery_service,
+)
+from tetrabench.engines.modal import (
+    legacy_result_service as _remote_result_service,
+)
+from tetrabench.engines.modal import (
+    legacy_status_service as _status_service,
+)
+from tetrabench.engines.modal import (
+    wait_for_run,
+)
 from tetrabench.lifecycle import (
     CancellationConflictError,
-    CancellationService,
     CancellationUnavailableError,
     RecoveryConflictError,
     RecoveryRefusedError,
-    RecoveryService,
-    StatusService,
 )
-from tetrabench.local_execution import LocalOutputExistsError, run_local
+from tetrabench.local_execution import LocalOutputExistsError
 from tetrabench.modal_app import (
     controller_deployment_spec,
     deploy_controller,
 )
+from tetrabench.models import ConfigOverrides, EnginePatch, ProjectConfig
 from tetrabench.plan import canonical_model_bytes, plan_digest, resolve_plan
 from tetrabench.receipts import ReceiptConflictError, ReceiptStore
-from tetrabench.remote import RemoteResult, RemoteResultService
+from tetrabench.run_reference import RunReferenceStore
 from tetrabench.s3 import (
     CoordinationTopology,
     S3CasConflictError,
@@ -58,11 +72,8 @@ from tetrabench.s3 import (
     create_s3_store,
 )
 from tetrabench.submission import (
-    ControllerLaunchConfiguration,
     SubmissionRefusedError,
-    SubmissionService,
-    prepare_submission,
-    resolve_controller_launch,
+    prepare_run,
 )
 
 app = typer.Typer(
@@ -121,16 +132,6 @@ def _deployment_spec(profile: str | None):
     return controller_deployment_spec(config, profile)
 
 
-def _modal_client(
-    launch: ControllerLaunchConfiguration,
-) -> ModalControllerClient:
-    return ModalControllerClient(
-        launch.app_name,
-        launch.function_name,
-        environment_name=launch.environment_name,
-    )
-
-
 def _fail_doctor(error: Exception, *, json_output: bool) -> None:
     error_type, message = _safe_command_error(error)
     if json_output:
@@ -169,6 +170,7 @@ def callback(
 @app.command("init")
 def initialize(
     directory: Path,
+    section: Annotated[str, typer.Option(help="Starter section name.")] = "example",
     json_output: Annotated[
         bool,
         typer.Option("--json", help="Emit canonical JSON to stdout."),
@@ -176,7 +178,7 @@ def initialize(
 ) -> None:
     """Create a runnable local tetrabench project in a new directory."""
     try:
-        created = initialize_project(directory)
+        created = initialize_project(directory, section)
     except (OSError, RuntimeError, ValueError, ValidationError) as error:
         _fail_command(error, json_output=json_output)
     report = {
@@ -279,15 +281,18 @@ def sections() -> None:
     except (ValueError, ValidationError) as error:
         _fail(error)
     table = Table("Section", "Tasks")
-    for name in ("systems-design", "github-workflow"):
+    for name in catalog.sections:
         table.add_row(name, str(len(get_section(catalog, name).tasks)))
     out.print(table)
 
 
 @app.command()
 def plan(
-    section: SectionName,
+    section: str,
     profile: Annotated[str | None, typer.Option(help="User profile name.")] = None,
+    engine: Annotated[
+        str | None, typer.Option(help="Execution engine; built-ins: docker, modal.")
+    ] = None,
     json_output: Annotated[
         bool,
         typer.Option("--json", help="Emit canonical JSON to stdout."),
@@ -295,7 +300,9 @@ def plan(
 ) -> None:
     """Resolve a section into a canonical, secret-free plan."""
     try:
-        resolved = resolve_plan(Path.cwd(), section, profile)
+        resolved = resolve_plan(
+            Path.cwd(), section, profile, overrides=_engine_override(engine)
+        )
     except (ValueError, ValidationError) as error:
         _fail(error)
     if json_output:
@@ -311,94 +318,141 @@ def plan(
 
 @app.command()
 def run(
-    section: SectionName,
-    output: Annotated[Path, typer.Option(help="New output directory.")],
-    profile: Annotated[
-        str | None, typer.Option(help="Optional local Docker profile name.")
+    section: str,
+    output: Annotated[
+        Path | None, typer.Option(help="New local output directory.")
     ] = None,
+    profile: Annotated[str | None, typer.Option(help="User profile name.")] = None,
+    engine: Annotated[
+        str | None, typer.Option(help="Execution engine; built-ins: docker, modal.")
+    ] = None,
+    run_id: Annotated[str | None, typer.Option(help="Explicit safe run ID.")] = None,
+    wait: Annotated[
+        bool,
+        typer.Option(
+            "--wait", help="Wait for a result; remote observation is independent."
+        ),
+    ] = False,
+    detach: Annotated[
+        bool, typer.Option("--detach", help="Leave execution running remotely.")
+    ] = False,
     json_output: Annotated[
         bool,
         typer.Option("--json", help="Emit canonical JSON to stdout."),
     ] = False,
 ) -> None:
-    """Run selected catalog tasks attached through local Docker."""
-    output_path = output.expanduser().absolute()
+    """Run a sealed selection using the configured engine."""
+    output_path = output.expanduser().absolute() if output is not None else None
+    selected_run_id = run_id
+    remote = False
+    adapter: Engine | None = None
+    observe = False
+
+    def validate_mode(config: ProjectConfig) -> None:
+        nonlocal adapter, observe, remote
+        adapter = selected_engine(config)
+        observe = adapter.capabilities.validate_launch(
+            wait=wait, detach=detach, output=output
+        )
+        remote = adapter.capabilities.detached
+
     try:
+        overrides = _engine_override(engine)
+        prepared = prepare_run(
+            Path.cwd(),
+            section,
+            profile,
+            run_id=run_id,
+            overrides=overrides,
+            validate_config=validate_mode,
+        )
+        if adapter is None:
+            raise ValueError("preparation did not select an engine")
+        if prepared.engine_kind is not None and prepared.engine_kind != adapter.kind:
+            raise ValueError("engine selection changed while preparing the run")
+        selected_run_id = prepared.request.run_id
+        if not remote and output_path is None:
+            output_path = Path.cwd() / selected_run_id
         if json_output:
             with open(os.devnull, "w", encoding="utf-8") as sink, redirect_stdout(sink):
-                result = run_local(Path.cwd(), section, profile, output_path)
+                launched = adapter.launch(prepared, output_path)
         else:
-            result = run_local(Path.cwd(), section, profile, output_path)
+            launched = adapter.launch(prepared, output_path)
+        if remote and observe:
+            reference = RunReferenceStore().read(selected_run_id)
+            if reference is None:
+                raise ValueError("launched run has no recorded engine binding")
+            launched = wait_for_run(adapter, reference)
     except KeyboardInterrupt:
-        evidence_path = output_path / "harbor-job"
-        if not evidence_path.exists():
-            evidence_path = output_path
-        if json_output:
-            _canonical_echo(
-                {
-                    "evidence_path": str(evidence_path),
-                    "schema_version": 1,
-                    "status": "interrupted",
-                },
-                stderr=True,
+        report = {
+            "schema_version": 1,
+            "run_id": selected_run_id,
+            "status": "observer_detached" if remote else "interrupted",
+        }
+        if output_path is not None:
+            evidence = output_path / "harbor-job"
+            report["evidence_path"] = str(
+                evidence if evidence.exists() else output_path
             )
+        if json_output:
+            _canonical_echo(report, stderr=True)
         else:
-            err.print("[yellow]interrupted[/yellow] local Harbor execution")
-            if output_path.exists():
-                err.print(f"[bold]Evidence:[/bold] {evidence_path}")
+            err.print(
+                "observer detached; remote run was not cancelled"
+                if remote
+                else "local run interrupted; private evidence retained"
+            )
+            err.print(f"Run: {selected_run_id}")
         raise typer.Exit(130) from None
     except LocalOutputExistsError as error:
         _fail_command(error, json_output=json_output)
-    except (OSError, RuntimeError, ValueError, ValidationError) as error:
-        if output_path.exists():
-            evidence_path = output_path / "harbor-job"
-            if not evidence_path.exists():
-                evidence_path = output_path
+    except (
+        BotoCoreError,
+        ClientError,
+        ModalError,
+        OSError,
+        RuntimeError,
+        ValueError,
+        ValidationError,
+    ) as error:
+        if output_path is not None and output_path.exists():
+            _, message = _safe_command_error(error)
             if json_output:
                 _canonical_echo(
                     {
-                        "error": str(error),
-                        "evidence_path": str(evidence_path),
+                        "error": message,
+                        "evidence_path": str(output_path),
                         "schema_version": 1,
+                        "run_id": selected_run_id,
                     },
                     stderr=True,
                 )
             else:
-                err.print(f"[red]error:[/red] {error}")
-                err.print(f"[bold]Evidence:[/bold] {evidence_path}")
+                err.print(f"[red]error:[/red] {message}")
+                err.print(f"[bold]Evidence:[/bold] {output_path}")
             raise typer.Exit(2) from None
         _fail_command(error, json_output=json_output)
-
-    report = {
-        "job_directory": str(result.job_directory),
-        "outcome": result.outcome,
-        "reward": result.reward,
-        "schema_version": 1,
-        "summary": result.summary.model_dump(mode="json"),
-    }
     if json_output:
-        _canonical_echo(report)
+        typer.echo(canonical_model_bytes(launched).decode("utf-8"))
     else:
-        out.print(f"[bold]Outcome:[/bold] {result.outcome}")
-        if result.summary.policy == "binary":
+        out.print(f"[bold]Run:[/bold] {selected_run_id}")
+        outcome = getattr(launched, "outcome", None)
+        out.print(f"[bold]Outcome:[/bold] {outcome or 'submitted'}")
+        summary = getattr(launched, "summary", None)
+        if summary is not None and summary.policy == "binary":
             out.print(
-                f"[bold]Pass rate:[/bold] {result.summary.aggregate} "
-                f"({result.summary.pass_count}/{result.summary.sample_count})"
+                f"[bold]Pass rate:[/bold] {summary.aggregate} "
+                f"({summary.pass_count}/{summary.sample_count})"
             )
-        else:
-            out.print(f"[bold]Reward:[/bold] {result.reward or 'unavailable'}")
-        task_table = Table("Task", "Samples", "Passed", "Aggregate")
-        for task in result.summary.tasks:
-            task_table.add_row(
-                task.task_id,
-                str(task.sample_count),
-                str(task.pass_count) if task.pass_count is not None else "-",
-                task.aggregate or "unavailable",
-            )
-        out.print(task_table)
-        out.print(f"[bold]Harbor job:[/bold] {result.job_directory}")
-    if result.outcome != "succeeded":
-        raise typer.Exit(1)
+        if output_path is not None:
+            out.print(f"[bold]Harbor job:[/bold] {output_path / 'harbor-job'}")
+    code = _result_exit(launched)
+    if code:
+        raise typer.Exit(code)
+
+
+def _engine_override(engine: str | None) -> ConfigOverrides | None:
+    return ConfigOverrides(engine=EnginePatch(kind=engine)) if engine else None
 
 
 @app.command()
@@ -426,7 +480,7 @@ def doctor(
             if configured_catalog_path.is_absolute()
             else root / configured_catalog_path
         )
-        for name in ("systems-design", "github-workflow"):
+        for name in catalog.sections:
             section = get_section(catalog, name)
             select_tasks(section, config.selection)
             readme = Path(section.readme)
@@ -569,20 +623,22 @@ def controller_deploy(
             err.print("deployment cancelled; no cloud mutation attempted")
             raise typer.Exit(1)
     try:
-        deploy_controller(spec)
+        report = deploy_controller(spec)
     except (ModalError, OSError, ValueError) as error:
         _fail_command(error, json_output=json_output)
-    report = spec.as_dict() | {"deployed": True}
     if json_output:
         _canonical_echo(report)
     else:
         out.print(f"[green]deployed[/green] {spec.app_name}")
         out.print(f"[bold]Environment:[/bold] {spec.environment_name}")
+        if "wheel_filename" in report:
+            out.print(f"[bold]Wheel:[/bold] {report['wheel_filename']}")
+        out.print(f"[bold]Wheel SHA-256:[/bold] {report['wheel_sha256']}")
 
 
 @app.command()
 def submit(
-    section: SectionName,
+    section: str,
     profile: Annotated[str | None, typer.Option(help="User profile name.")] = None,
     run_id: Annotated[str | None, typer.Option(help="Explicit safe run ID.")] = None,
     json_output: Annotated[
@@ -590,76 +646,106 @@ def submit(
         typer.Option("--json", help="Emit canonical JSON to stdout."),
     ] = False,
 ) -> None:
-    """Publish a runnable request and spawn its deployed Modal controller."""
+    """Compatibility alias for run --engine modal --detach."""
+    run(
+        section,
+        profile=profile,
+        engine="modal",
+        run_id=run_id,
+        detach=True,
+        json_output=json_output,
+    )
+
+
+def _recorded_operation(
+    run_id: str,
+    operation: str,
+    *,
+    json_output: bool,
+    output: Path | None = None,
+    profile: str | None = None,
+    environment_name: str | None = None,
+) -> bool:
+    """Route a known run without consulting a mutable project or user profile."""
     try:
-        prepared = prepare_submission(
-            Path.cwd(),
-            section,
-            profile,
-            run_id=run_id,
-        )
-        storage = prepared.plan.storage
-        controller_config = prepared.plan.controller
-        launch = prepared.controller_launch
-        if storage is None or controller_config.kind != "modal" or launch is None:
-            raise SubmissionRefusedError(
-                "cloud submission requires resolved storage and a Modal controller"
-            )
-        service = SubmissionService(
-            create_s3_store(storage),
-            _modal_client(launch),
-            ReceiptStore(),
-        )
-        receipt = service.submit(prepared)
+        try:
+            reference = RunReferenceStore().read(run_id)
+        except (OSError, ValueError):
+            if profile is None:
+                raise ValueError(
+                    "run routing reference is unreadable; supply an explicit --profile "
+                    "for validated remote lookup"
+                ) from None
+            return False
+        if reference is None:
+            return False
+        if (
+            environment_name is not None
+            and environment_name != reference.environment_name
+        ):
+            raise ValueError("--environment cannot override a recorded run binding")
+        engine = get_engine(reference.engine)
+        if operation in {"recover", "cancel", "artifacts"} and not getattr(
+            engine.capabilities, operation
+        ):
+            raise ValueError(f"{reference.engine} does not support {operation}")
+        if operation == "artifacts":
+            if output is None:
+                raise ValueError("artifact output is required")
+            report = engine.artifacts(reference, output)
+        else:
+            report = getattr(engine, operation)(reference)
     except (
         BotoCoreError,
         ClientError,
         ModalError,
         OSError,
-        ReceiptConflictError,
-        S3CasConflictError,
-        SubmissionRefusedError,
-        UnsafeCoordinationTopologyError,
+        RuntimeError,
         ValueError,
-        ValidationError,
     ) as error:
         _fail_command(error, json_output=json_output)
     if json_output:
-        typer.echo(canonical_model_bytes(receipt).decode("utf-8"))
-        return
-    call_id = receipt.attempts[-1].controller_calls[-1].call_id
-    out.print(f"[green]submitted[/green] {receipt.run_id}")
-    out.print(f"[bold]Request SHA-256:[/bold] {receipt.request_sha256}")
-    out.print(f"[bold]Modal call:[/bold] {call_id}")
-
-
-def _recovery_service(profile: str | None) -> RecoveryService:
-    config = load_project_config(Path.cwd(), profile=profile)
-    if config.storage is None:
-        raise ValueError("recover requires storage configuration")
-    if config.controller.kind != "modal":
-        raise ValueError("recover currently supports the Modal controller only")
-    launch = resolve_controller_launch(config, profile)
-    if launch is None:
-        raise ValueError("recover requires Modal execution")
-    store = create_s3_store(config.storage)
-    controller = _modal_client(launch)
-    receipts = ReceiptStore()
-    return RecoveryService(
-        store,
-        controller,
-        ModalChildObserver(
-            S3ChildIdentitySource(store),
-            environment_name=launch.environment_name,
-        ),
-        SubmissionService(store, controller, receipts),
-    )
+        typer.echo(canonical_model_bytes(report).decode("utf-8"))
+    else:
+        out.print(f"[bold]Run:[/bold] {reference.run_id}")
+        for field in (
+            "state",
+            "outcome",
+            "job_directory",
+            "output_directory",
+            "detail",
+            "result_error",
+        ):
+            value = getattr(report, field, None)
+            if value is not None:
+                out.print(f"{field}: {value}")
+        summary = getattr(report, "summary", None)
+        if summary is not None:
+            out.print(f"Aggregate: {summary.aggregate}")
+    state = getattr(report, "state", None)
+    if state == "conflict":
+        raise typer.Exit(3)
+    if operation == "result":
+        code = _result_exit(report)
+        if code:
+            raise typer.Exit(code)
+    if operation in {"recover", "cancel"} and not getattr(
+        report, "cleanup_complete", False
+    ):
+        raise typer.Exit(3)
+    return True
 
 
 @app.command()
 def recover(
     run_id: str,
     profile: Annotated[str | None, typer.Option(help="User profile name.")] = None,
+    environment: Annotated[
+        str | None,
+        typer.Option(
+            help="Original Modal namespace for legacy runs without routing references."
+        ),
+    ] = None,
     yes: Annotated[
         bool,
         typer.Option("--yes", help="Confirm detached-controller recovery."),
@@ -685,7 +771,20 @@ def recover(
             err.print("recovery cancelled; no cloud mutation attempted")
             raise typer.Exit(1)
     try:
-        result = _recovery_service(profile).recover(run_id)
+        if _recorded_operation(
+            run_id,
+            "recover",
+            json_output=json_output,
+            profile=profile,
+            environment_name=environment,
+        ):
+            return
+        service = (
+            _recovery_service(profile, run_id=run_id, environment_name=environment)
+            if environment is not None
+            else _recovery_service(profile)
+        )
+        result = service.recover(run_id)
     except (
         BotoCoreError,
         ClientError,
@@ -713,22 +812,6 @@ def recover(
         raise typer.Exit(3)
 
 
-def _status_service(profile: str | None) -> StatusService:
-    config = load_project_config(Path.cwd(), profile=profile)
-    if config.storage is None:
-        raise ValueError("status requires storage configuration")
-    if config.controller.kind != "modal":
-        raise ValueError("status currently supports the Modal controller only")
-    launch = resolve_controller_launch(config, profile)
-    if launch is None:
-        raise ValueError("status requires Modal execution")
-    return StatusService(
-        create_s3_store(config.storage),
-        ReceiptStore(),
-        _modal_client(launch),
-    )
-
-
 @app.command()
 def status(
     run_id: str,
@@ -738,8 +821,12 @@ def status(
         typer.Option("--json", help="Emit canonical JSON to stdout."),
     ] = False,
 ) -> None:
-    """Combine durable S3 state with local and Modal execution evidence."""
+    """Inspect a run using its recorded engine and execution identity."""
     try:
+        if _recorded_operation(
+            run_id, "status", json_output=json_output, profile=profile
+        ):
+            return
         report = _status_service(profile).status(run_id)
     except (
         BotoCoreError,
@@ -762,30 +849,16 @@ def status(
         raise typer.Exit(3)
 
 
-def _cancellation_service(profile: str | None) -> CancellationService:
-    config = load_project_config(Path.cwd(), profile=profile)
-    if config.storage is None:
-        raise ValueError("cancel requires storage configuration")
-    if config.controller.kind != "modal":
-        raise ValueError("cancel currently supports the Modal controller only")
-    store = create_s3_store(config.storage)
-    launch = resolve_controller_launch(config, profile)
-    if launch is None:
-        raise ValueError("cancel requires Modal execution")
-    return CancellationService(
-        store,
-        _modal_client(launch),
-        ModalChildObserver(
-            S3ChildIdentitySource(store),
-            environment_name=launch.environment_name,
-        ),
-    )
-
-
 @app.command()
 def cancel(
     run_id: str,
     profile: Annotated[str | None, typer.Option(help="User profile name.")] = None,
+    environment: Annotated[
+        str | None,
+        typer.Option(
+            help="Original Modal namespace for legacy runs without routing references."
+        ),
+    ] = None,
     yes: Annotated[
         bool,
         typer.Option("--yes", help="Cancel without an interactive confirmation."),
@@ -795,14 +868,27 @@ def cancel(
         typer.Option("--json", help="Emit canonical JSON to stdout."),
     ] = False,
 ) -> None:
-    """CAS-cancel runs and clean profile-scoped Harbor Modal children."""
+    """Request cancellation and verify cleanup of the run's owned children."""
     if json_output and not yes:
         _fail_command(ValueError("cancel --json requires --yes"), json_output=True)
     if not yes and not typer.confirm(f"Cancel run {run_id}?", default=False):
         err.print("cancellation declined; no cloud mutation attempted")
         raise typer.Exit(1)
     try:
-        result = _cancellation_service(profile).cancel(run_id)
+        if _recorded_operation(
+            run_id,
+            "cancel",
+            json_output=json_output,
+            profile=profile,
+            environment_name=environment,
+        ):
+            return
+        service = (
+            _cancellation_service(profile, run_id=run_id, environment_name=environment)
+            if environment is not None
+            else _cancellation_service(profile)
+        )
+        result = service.cancel(run_id)
     except (
         BotoCoreError,
         ClientError,
@@ -826,22 +912,24 @@ def cancel(
         raise typer.Exit(3)
 
 
-def _remote_result_service(profile: str | None) -> RemoteResultService:
-    config = load_project_config(Path.cwd(), profile=profile)
-    if config.storage is None:
-        raise ValueError("remote reads require storage configuration")
-    return RemoteResultService(create_s3_store(config.storage))
-
-
-def _result_exit(report: RemoteResult) -> int:
-    if report.state == "conflict":
+def _result_exit(report) -> int:
+    state = getattr(report, "state", None)
+    outcome = getattr(report, "outcome", None)
+    if state == "conflict":
         return 3
-    if report.state == "unknown":
+    if state == "terminal":
+        return 1 if outcome in {"failed", "cancelled"} else 0
+    if state == "unknown":
         return 4
-    if report.outcome in {"failed", "cancelled"} or report.admission_state in {
-        "failed",
-        "cancelled",
-    }:
+    if (
+        outcome in {"failed", "cancelled"}
+        or state in {"failed", "interrupted"}
+        or getattr(report, "admission_state", None)
+        in {
+            "failed",
+            "cancelled",
+        }
+    ):
         return 1
     return 0
 
@@ -849,14 +937,20 @@ def _result_exit(report: RemoteResult) -> int:
 @app.command()
 def result(
     run_id: str,
-    profile: Annotated[str, typer.Option(help="Remote storage profile name.")],
+    profile: Annotated[
+        str | None, typer.Option(help="Legacy remote storage profile name.")
+    ] = None,
     json_output: Annotated[
         bool,
         typer.Option("--json", help="Emit canonical JSON to stdout."),
     ] = False,
 ) -> None:
-    """Read one authoritative remote run result without local receipts."""
+    """Read validated native or remote results using the recorded run identity."""
     try:
+        if _recorded_operation(
+            run_id, "result", json_output=json_output, profile=profile
+        ):
+            return
         report = _remote_result_service(profile).result(run_id)
     except (
         BotoCoreError,
@@ -917,7 +1011,9 @@ def result(
 def artifacts_pull(
     run_id: str,
     output_dir: Path,
-    profile: Annotated[str, typer.Option(help="Remote storage profile name.")],
+    profile: Annotated[
+        str | None, typer.Option(help="Legacy remote storage profile name.")
+    ] = None,
     json_output: Annotated[
         bool,
         typer.Option("--json", help="Emit canonical JSON to stdout."),
@@ -925,12 +1021,15 @@ def artifacts_pull(
 ) -> None:
     """Pull one successful terminal inventory into a new private directory."""
     try:
-        config = load_project_config(Path.cwd(), profile=profile)
-        if config.storage is None:
-            raise ValueError("artifact pull requires storage configuration")
-        report = ArtifactPullService(create_s3_store(config.storage)).pull(
-            run_id, output_dir
-        )
+        if _recorded_operation(
+            run_id,
+            "artifacts",
+            json_output=json_output,
+            output=output_dir,
+            profile=profile,
+        ):
+            return
+        report = _artifact_service(profile).pull(run_id, output_dir)
     except (
         ArtifactDestinationExistsError,
         ArtifactPullRefusedError,
@@ -1013,12 +1112,22 @@ def runs(
         return
     try:
         receipts = ReceiptStore().list()
+        references = RunReferenceStore().list()
     except (OSError, ValueError, ValidationError) as error:
         _fail_command(error, json_output=json_output)
     if json_output:
         _canonical_echo(
             {
                 "receipts": [item.model_dump(mode="json") for item in receipts],
+                **(
+                    {
+                        "references": [
+                            item.model_dump(mode="json") for item in references
+                        ]
+                    }
+                    if references
+                    else {}
+                ),
                 "schema_version": 1,
             }
         )
@@ -1027,6 +1136,10 @@ def runs(
     for receipt in receipts:
         evidence = receipt.attempts[-1].transitions[-1].type
         table.add_row(receipt.run_id, evidence, receipt.request_sha256)
+    receipt_ids = {receipt.run_id for receipt in receipts}
+    for reference in references:
+        if reference.run_id not in receipt_ids:
+            table.add_row(reference.run_id, reference.engine, reference.request_sha256)
     out.print(table)
 
 

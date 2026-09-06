@@ -212,6 +212,53 @@ class SealedContext:
             raise ValueError("sealed files do not match context manifest")
 
 
+def materialize_sealed_context(sealed: SealedContext, destination: Path) -> None:
+    """Materialize retained bytes under a private no-follow directory descriptor."""
+    os.chmod(destination, 0o700, follow_symlinks=False)
+    root_fd = os.open(destination, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    try:
+        os.fchmod(root_fd, 0o700)
+        for manifest_file, sealed_file in zip(
+            sealed.manifest.files, sealed.files, strict=True
+        ):
+            directory = os.dup(root_fd)
+            try:
+                parts = manifest_file.destination.split("/")
+                for component in parts[:-1]:
+                    try:
+                        os.mkdir(component, mode=0o700, dir_fd=directory)
+                        os.chmod(
+                            component, 0o700, dir_fd=directory, follow_symlinks=False
+                        )
+                    except FileExistsError:
+                        pass
+                    child = os.open(
+                        component,
+                        os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
+                        dir_fd=directory,
+                    )
+                    os.fchmod(child, 0o700)
+                    os.close(directory)
+                    directory = child
+                fd = os.open(
+                    parts[-1],
+                    os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+                    0o600,
+                    dir_fd=directory,
+                )
+                with os.fdopen(fd, "wb") as stream:
+                    stream.write(sealed_file.content)
+                    stream.flush()
+                    os.fchmod(stream.fileno(), manifest_file.mode)
+                    os.fsync(stream.fileno())
+                os.fsync(directory)
+            finally:
+                os.close(directory)
+        os.fsync(root_fd)
+    finally:
+        os.close(root_fd)
+
+
 def _require_safe_open_support() -> None:
     required_flags = ("O_DIRECTORY", "O_NOFOLLOW", "O_NONBLOCK")
     if (

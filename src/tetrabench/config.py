@@ -75,6 +75,41 @@ def _apply_profile_patch(
     values: dict[str, object],
     layer: ProfilePatch,
 ) -> None:
+    if layer.engine is not None:
+        previous = values.get("engine")
+        if not isinstance(previous, dict):
+            execution = values.get("execution")
+            controller = values.get("controller")
+            previous = {
+                "kind": execution.get("kind", "modal")
+                if isinstance(execution, dict)
+                else "modal",
+                "settings": {
+                    key: value for key, value in controller.items() if key != "kind"
+                }
+                if isinstance(controller, dict)
+                else {},
+            }
+        kind = layer.engine.kind or previous["kind"]
+        settings = previous.get("settings", {}) if kind == previous["kind"] else {}
+        if not isinstance(settings, dict):
+            raise ValueError("engine settings must be a table")
+        values["engine"] = {
+            "kind": kind,
+            "settings": dict(settings) | layer.engine.settings,
+        }
+    elif layer.controller is not None or layer.execution is not None:
+        # Legacy patches remain readable but cannot retain a conflicting engine.
+        previous = values.get("engine")
+        if isinstance(previous, dict):
+            from tetrabench.engines import get_engine
+            from tetrabench.models import EngineConfig
+
+            engine = EngineConfig.model_validate(previous)
+            controller, execution = get_engine(engine.kind).compile(engine.settings)
+            values["controller"] = controller
+            values["execution"] = execution
+        values["engine"] = None
     if layer.controller is not None:
         values["controller"] = _merge_variant(
             values.get("controller"),

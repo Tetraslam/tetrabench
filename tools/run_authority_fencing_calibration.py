@@ -67,6 +67,7 @@ if not BROKER_CHILD_MODE:
         source_manifest,
         tree_digest,
         tree_manifest,
+        validate_production_cli_report,
         write_exclusive_proof,
     )
 else:
@@ -4918,6 +4919,7 @@ def _command_outcome_evidence(
     output: Path,
     *,
     before_main_activation: bool = False,
+    expected_run_id: str | None = None,
 ) -> tuple[dict[str, Any], Any | None, str]:
     stdout_sha256 = hashlib.sha256(result.stdout).hexdigest()
     stderr_sha256 = hashlib.sha256(result.stderr).hexdigest()
@@ -4929,18 +4931,19 @@ def _command_outcome_evidence(
         if result.stdout == (canonical(candidate) + "\n").encode():
             document = candidate
             parse_status = "canonical"
-            if isinstance(candidate, dict):
-                fields: dict[str, Any] = {}
-                schema_version = candidate.get("schema_version")
-                outcome = candidate.get("outcome")
-                reward = candidate.get("reward")
-                if type(schema_version) is int:
-                    fields["schema_version"] = schema_version
-                if outcome in {"succeeded", "failed", "cancelled"}:
-                    fields["outcome"] = outcome
-                if reward in {"0", "1"}:
-                    fields["reward"] = reward
-                canonical_fields = fields
+            report = validate_production_cli_report(
+                candidate,
+                expected_run_id=expected_run_id,
+                expected_job=output / "harbor-job",
+            )
+            canonical_fields = {
+                "schema_version": report.schema_version,
+                "outcome": report.outcome,
+                "reward": report.reward,
+                "run_id": report.run_id,
+                "state": report.state,
+                "cleanup_complete": report.cleanup_complete,
+            }
         else:
             parse_status = "noncanonical"
     except BaseException:
@@ -5013,6 +5016,8 @@ def _validate_cli_outcome(
     document: Any | None,
     parse_status: str,
     *,
+    expected_run_id: str,
+    output: Path,
     debug_deny_upstream: bool = False,
 ) -> dict[str, Any]:
     if not debug_deny_upstream and result.returncode != 0:
@@ -5027,18 +5032,25 @@ def _validate_cli_outcome(
         raise AttemptFailure(
             "agent_install_or_execution", "unexpected_stderr", ValueError()
         )
-    if parse_status != "canonical" or not isinstance(document, dict):
+    if (
+        parse_status != "canonical"
+        or not isinstance(document, dict)
+        or result.stdout != (canonical(document) + "\n").encode()
+    ):
         raise AttemptFailure("cli_schema", "malformed_stdout", ValueError())
-    if set(document) != {
-        "job_directory",
-        "outcome",
-        "reward",
-        "schema_version",
-        "summary",
-    }:
-        raise AttemptFailure("cli_schema", "schema_mismatch", ValueError())
-    if document.get("schema_version") != 1:
+    if (
+        type(document.get("schema_version")) is not int
+        or document["schema_version"] != 1
+    ):
         raise AttemptFailure("cli_schema", "schema_version", ValueError())
+    try:
+        report = validate_production_cli_report(
+            document,
+            expected_run_id=expected_run_id,
+            expected_job=output / "harbor-job",
+        )
+    except ValueError as error:
+        raise AttemptFailure("cli_schema", "schema_mismatch", error) from error
     expected_outcome = "failed" if debug_deny_upstream else "succeeded"
     expected_rewards = {"0"} if debug_deny_upstream else {"0", "1"}
     if (
@@ -5046,7 +5058,7 @@ def _validate_cli_outcome(
         or document["reward"] not in expected_rewards
     ):
         raise AttemptFailure("cli_outcome", "not_succeeded", ValueError())
-    return document
+    return report.model_dump(mode="json")
 
 
 def _started_attempt(
@@ -5297,6 +5309,7 @@ def _validate_native_attempt(
     ordinal: int,
     expected_task_checksum: str,
     expected_task_digest: str,
+    expected_run_id: str,
     harbor_model: str,
     snapshot_status: str,
     debug_deny_upstream: bool = False,
@@ -5309,6 +5322,8 @@ def _validate_native_attempt(
             ordinal=ordinal,
             expected_task_checksum=expected_task_checksum,
             expected_task_digest=expected_task_digest,
+            expected_run_id=expected_run_id,
+            output_directory=output,
             expected_agent_name=CALIBRATION_AGENT,
             expected_agent_info_name="opencode",
             expected_model_name=harbor_model,
@@ -5448,6 +5463,7 @@ def _run_attempt(
     for name in ("tmp", "cache", "data", "state"):
         (home / name).mkdir(mode=0o700)
     output = attempt_root / "output"
+    cli_run_id = f"cal-{ordinal}-{secrets.token_hex(16)}"
     broker_evidence_root = attempt_root / "broker-evidence"
     broker_evidence_root.mkdir(mode=0o700)
     started = time.monotonic()
@@ -5505,6 +5521,10 @@ def _run_attempt(
                             str(installed_cli.executable),
                             "run",
                             "systems-design",
+                            "--engine",
+                            "docker",
+                            "--run-id",
+                            cli_run_id,
                             "--profile",
                             profile,
                             "--output",
@@ -5532,13 +5552,17 @@ def _run_attempt(
                         )
                         raise
                     command_evidence, command_document, parse_status = (
-                        _command_outcome_evidence(command_result, output)
+                        _command_outcome_evidence(
+                            command_result, output, expected_run_id=cli_run_id
+                        )
                     )
                     attempt_record["command_outcome"] = command_evidence
                     validated = _validate_cli_outcome(
                         command_result,
                         command_document,
                         parse_status,
+                        expected_run_id=cli_run_id,
+                        output=output,
                         debug_deny_upstream=debug_deny_upstream,
                     )
                     return command_result, validated
@@ -5574,6 +5598,7 @@ def _run_attempt(
                                     completed_result,
                                     output,
                                     before_main_activation=True,
+                                    expected_run_id=cli_run_id,
                                 )
                             )
                             attempt_record["command_outcome"] = command_evidence
@@ -5624,6 +5649,7 @@ def _run_attempt(
                     ordinal=ordinal,
                     expected_task_checksum=expected_task_checksum,
                     expected_task_digest=expected_task_digest,
+                    expected_run_id=cli_run_id,
                     harbor_model=harbor_model,
                     snapshot_status=snapshot_status,
                     debug_deny_upstream=debug_deny_upstream,

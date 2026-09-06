@@ -50,6 +50,7 @@ RecordIdentifier = Annotated[
         pattern=r"^[a-z0-9][a-z0-9._-]*$",
     ),
 ]
+SectionName = RecordIdentifier
 
 
 class StrictModel(BaseModel):
@@ -215,14 +216,19 @@ class CatalogSection(StrictModel):
         return self
 
 
-class CatalogSections(StrictModel):
-    systems_design: CatalogSection = Field(alias="systems-design")
-    github_workflow: CatalogSection = Field(alias="github-workflow")
-
-
 class Catalog(StrictModel):
     schema_version: SchemaVersion
-    sections: CatalogSections
+    sections: dict[SectionName, CatalogSection]
+
+
+class EngineConfig(StrictModel):
+    kind: RecordIdentifier
+    settings: dict[str, object] = Field(default_factory=dict)
+
+
+class EnginePatch(StrictModel):
+    kind: RecordIdentifier | None = None
+    settings: dict[str, object] = Field(default_factory=dict)
 
 
 class ControllerPatch(StrictModel):
@@ -262,12 +268,21 @@ class HarborPatch(StrictModel):
 
 
 class ProfilePatch(StrictModel):
+    engine: EnginePatch | None = None
     controller: ControllerPatch | None = None
     execution: ExecutionPatch | None = None
     storage: StoragePatch | None = None
     context_files: list[ContextFileSpec] | None = None
     selection: TaskSelectionPatch | None = None
     harbor: HarborPatch | None = None
+
+    @model_validator(mode="after")
+    def validate_engine_spelling(self) -> ProfilePatch:
+        if self.engine is not None and (
+            self.controller is not None or self.execution is not None
+        ):
+            raise ValueError("engine cannot be combined with controller/execution")
+        return self
 
 
 class UserConfig(StrictModel):
@@ -284,6 +299,18 @@ class ProjectConfig(StrictModel):
     context: ContextConfig = Field(default_factory=ContextConfig)
     selection: TaskSelection = Field(default_factory=TaskSelection)
     harbor: HarborConfig = Field(default_factory=HarborConfig)
+    engine: EngineConfig | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def compile_engine(cls, value: object) -> object:
+        if isinstance(value, dict) and value.get("engine") is not None:
+            from tetrabench.engines import get_engine
+
+            engine = EngineConfig.model_validate(value["engine"])
+            controller, execution = get_engine(engine.kind).compile(engine.settings)
+            return dict(value, controller=controller, execution=execution)
+        return value
 
     @model_validator(mode="after")
     def validate_controller_execution(self) -> ProjectConfig:
@@ -476,7 +503,7 @@ class ResolvedTrial(FrozenRecord):
 
 class ResolvedPlan(FrozenRecord):
     schema_version: SchemaVersion
-    section: Literal["systems-design", "github-workflow", "integration"]
+    section: SectionName
     controller: ResolvedControllerConfig
     execution: ResolvedExecutionConfig
     storage: ResolvedStorageConfig | None

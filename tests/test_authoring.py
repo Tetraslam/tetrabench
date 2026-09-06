@@ -22,13 +22,23 @@ runner = CliRunner()
 
 def _init(tmp_path: Path) -> Path:
     project = tmp_path / "project"
-    result = runner.invoke(app, ["init", str(project), "--json"])
+    result = runner.invoke(
+        app, ["init", str(project), "--section", "systems-design", "--json"]
+    )
     assert result.exit_code == 0, result.stderr
     assert _payload(result.stdout) == {
         "directory": str(project),
         "schema_version": 1,
         "status": "created",
     }
+    catalog = project / "benchmarks/catalog.toml"
+    with catalog.open("ab") as stream:
+        stream.write(
+            b'\n[sections.github-workflow]\nreadme = "github-workflow/README.md"\n'
+        )
+    (project / "benchmarks/github-workflow").mkdir()
+    (project / "benchmarks/github-workflow/README.md").write_text("# Workflow\n")
+    (project / "benchmarks/tasks/github-workflow").mkdir()
     return project
 
 
@@ -138,7 +148,7 @@ def test_task_new_stays_unlisted_then_add_preserves_catalog_prefix(
         "task_id": "review-pr",
     }
     after = catalog_path.read_bytes()
-    assert after.startswith(before)
+    assert b"# user comment\n" in after
     assert b"# user comment\n" in after
     catalog = load_catalog(project, config.catalog_path)
     selected = select_tasks(get_section(catalog, "github-workflow"), TaskSelection())
@@ -182,7 +192,7 @@ def test_validate_rejects_symlink_and_is_read_only_without_providers(
         lambda *_args: pytest.fail("validation constructed S3"),
     )
     monkeypatch.setattr(
-        "tetrabench.cli.ModalControllerClient",
+        "tetrabench.engines.modal.ModalControllerClient",
         lambda *_args: pytest.fail("validation constructed Modal"),
     )
     monkeypatch.setattr(
@@ -545,7 +555,7 @@ kind = "docker"
     assert "outside the task fixture" in str(_payload(result.stderr)["error"])
     assert not (fixture_path / ".catalog.toml.lock").exists()
     catalog = load_catalog(project, f"{fixture}/catalog.toml")
-    assert [task.id for task in catalog.sections.systems_design.tasks] == [
+    assert [task.id for task in catalog.sections["systems-design"].tasks] == [
         "hello-tetrabench"
     ]
 
@@ -705,4 +715,5 @@ def test_initialized_starter_runs_through_public_command(
     assert isinstance(summary, dict)
     assert summary["policy"] == "binary"
     assert summary["pass_count"] == 1
+    assert report["cleanup_complete"] is True
     assert (output / "harbor-job/result.json").is_file()

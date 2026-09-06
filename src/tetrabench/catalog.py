@@ -4,11 +4,8 @@ from __future__ import annotations
 
 import tomllib
 from pathlib import Path
-from typing import Literal
 
-from tetrabench.models import Catalog, CatalogSection, TaskSelection
-
-SectionName = Literal["systems-design", "github-workflow"]
+from tetrabench.models import Catalog, CatalogSection, SectionName, TaskSelection
 
 
 def load_catalog(
@@ -30,9 +27,10 @@ def load_catalog(
 
 
 def get_section(catalog: Catalog, name: SectionName) -> CatalogSection:
-    if name == "systems-design":
-        return catalog.sections.systems_design
-    return catalog.sections.github_workflow
+    try:
+        return catalog.sections[name]
+    except KeyError as error:
+        raise ValueError(f"unknown catalog section: {name}") from error
 
 
 def select_tasks(section: CatalogSection, selection: TaskSelection) -> tuple:

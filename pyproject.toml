@@ -4,6 +4,14 @@ version = "0.1.0"
 description = "Harbor evaluation orchestration with durable artifact publication"
 readme = "README.md"
 requires-python = ">=3.12,<3.13"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "Shresht Bhowmick" }]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3.12",
+]
 dependencies = [
     "boto3==1.43.83",
     "botocore[crt]==1.43.83",
@@ -13,18 +21,29 @@ dependencies = [
     "pydantic==2.13.5",
     "rfc8785==0.1.4",
     "rich>=15.0.0",
+    "tomlkit>=0.13.3",
     "typer>=0.27.2",
 ]
 
 [project.scripts]
 tetrabench = "tetrabench.cli:main"
 
+[project.urls]
+Homepage = "https://github.com/Tetraslam/tetrabench"
+Repository = "https://github.com/Tetraslam/tetrabench"
+Issues = "https://github.com/Tetraslam/tetrabench/issues"
+Documentation = "https://github.com/Tetraslam/tetrabench#readme"
+
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling==1.32.0"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/tetrabench"]
+
+[tool.hatch.build.targets.wheel.force-include]
+"pyproject.toml" = "tetrabench/_distribution/pyproject.toml"
+"uv.lock" = "tetrabench/_distribution/uv.lock"
 
 [tool.hatch.build]
 exclude = [
@@ -54,5 +73,6 @@ dev = [
     "pip-audit>=2.9.0",
     "pytest>=9.1.1",
     "ruff>=0.16.5",
+    "twine==7.0.0",
     "ty>=0.0.75",
 ]
