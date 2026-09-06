@@ -3,11 +3,41 @@
 ## Status
 
 - Project state: P0 through P6 are complete for their local/static contracts. Live Tigris/Modal evidence includes cancellation, forced controller interruption/recovery, and the E-046 Single-region `iad` cutover. Current live provider IAM/privacy/encryption state, AWS behavior, and true provider preemption remain `unproven`.
-- Current action: `systems-design/authority-fencing` is admitted on `master` after complete local, detached, reward-forgery, exact-four calibration, review, merge, and post-merge CI evidence. PR 28 finalizes the canonical record and its hosted bounded-observation race fix.
-- Next action: no `authority-fencing` admission work remains. `atomic-outbox` is the next planned systems-design candidate. The exact E-021/E-023 live IAM/privacy/encryption probes, AWS consistency probe, and real provider-initiated Modal preemption remain optional evidence gaps for the current Tigris/Modal user path.
+- Current action: Modular categories, engine-selected run/config/lifecycle behavior, MIT licensing, and distribution-safe deployment are implemented and pass local validation. An isolated installed wheel completed local Docker and detached Modal Oracle runs, verified result/artifact retrieval after configuration changes, and left no child compute running.
+- Next action: merge reviewed release changes, build the release in GitHub, repeat the remote proof with those exact distribution bytes, and publish through the protected PyPI job. Future eval selection belongs to the user; the historical candidate list is not an execution queue. Live IAM/privacy/encryption, AWS consistency, and provider-initiated Modal preemption retain their separately recorded evidence limits.
 - Task-catalog gate: E-132's corrected-byte local/detached execution and audit gates and E-143's exact-four calibration all pass. `authority-fencing` is admitted in `benchmarks/catalog.toml`; later systems and GitHub-workflow tasks remain absent pending their own complete gates.
 - Authoring UX: D-127 is merged through PR 26 with focused local and real-Docker evidence. It creates user-owned starter projects and tasks independently of the repository catalog.
-- Canonical record updated: 2026-09-04.
+- Canonical record updated: 2026-09-05.
+
+### Modular release working record
+
+| Field | Contract |
+| --- | --- |
+| Behavior | Categories are validated project data. One `run` command selects an engine through project/profile/CLI configuration. Docker waits locally; Modal executes detached, and `--wait` observes without owning remote lifetime. Lifecycle commands route by recorded run identity. Unsupported capabilities fail before provider mutation. |
+| Atomic unit and shape | One sealed task selection and resolved request per run; preserve existing context/artifact bounds. One ownership claim remains the remote execution admission unit. A release publishes tested, immutable distribution artifacts, not a source-checkout assumption. |
+| Authority and lifecycle | Harbor owns native execution/results; existing S3 CAS and terminal records own remote coordination and final truth. Engine adapters own launch, inspection, cancellation, cleanup, and supported capabilities. Local run references must not become authority over remote state. Existing persisted request/plan bytes and digests remain readable unchanged. |
+| Native primitives and gaps | Retain Harbor Docker/Modal implementations, S3 coordination, and private filesystem primitives. Add a small internal engine registry, not an external plugin framework. Fix installed-wheel controller packaging, which currently assumes `Path(__file__).parents[2]` is a source checkout. Use PyPI Trusted Publishing where account authority permits. |
+| Evidence | Arbitrary-category authoring; old canonical-record round trips; shared snapshot mutation tests; engine defaults/overrides and unsupported-mode rejection; run-ID routing independent of current profile; cancellation and detached observer failure tests; isolated wheel local run and real detached Modal run/result/pull; MIT package metadata; reviewed CI and exact-artifact publication/install verification. |
+| Scope | No new eval task, automatic candidate queue, new runtime, VM support, or general judge framework. The user authorized MIT licensing and PyPI publication after release checks. |
+
+- [x] Implement and verify modular categories and engine/config/lifecycle behavior.
+- [x] Verify installed-distribution deployment and local/remote release smoke tests.
+- [ ] Merge reviewed changes, publish to PyPI, and verify public tool installation.
+
+Validation: 1,406 non-Docker tests, all 11 required Docker tests, Ruff, formatting,
+ty, Bandit, actionlint, lock checks, dependency audit, distribution metadata,
+sdist reproduction, and isolated installed-wheel smoke pass. Runtime review
+findings were fixed and independently rechecked. Local cancellation is a durable
+request handled once by the execution owner, not repeated external signals;
+native results remain independent of observation markers, and cleanup requires
+owned-container evidence. Legacy remote mutation requires an explicit original
+environment because that field was not persisted. Deployment automatically
+resolves and verifies the installed wheel; development installs preserve its
+digest with a PEP 610 URL fragment. The live Oracle run reported $0.00320072,
+with no model calls. Exact GitHub release artifact validation and publication
+remain pending. PR 30's first hosted run passed; its valid legacy-receipt/run-ID
+collision finding is fixed with shared admission locking and independently
+reviewed cross-process tests. The reviewed-head CI rerun remains pending.
 
 ### Local authoring working record
 
@@ -695,4 +725,5 @@ workflow catalog remains empty.
 E-132 passes the local and detached handoff, network, sealing, reward,
 repetition, and exploit gates on D-133's corrected 1 GiB `authority-fencing`
 bytes. E-143 passes exact-four calibration and budget completion and admits that
-fixture with binary reward policy. `atomic-outbox` is the next planned candidate.
+fixture with binary reward policy. Further eval selection belongs to the user;
+historical task-family suggestions do not authorize an implementation queue.

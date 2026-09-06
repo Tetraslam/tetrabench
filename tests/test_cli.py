@@ -344,7 +344,7 @@ def test_run_invalid_task_leaves_no_output(
     )
 
     assert result.exit_code == 2
-    assert "missing instruction.md" in result.stderr
+    assert "missing instruction.md" in " ".join(result.stderr.split())
     assert not output.exists()
 
 
@@ -417,7 +417,8 @@ def test_run_failure_after_reservation_retains_private_empty_evidence(
     assert result.exit_code == 2
     assert "failed before Harbor execution" in result.stderr
     assert output.is_dir()
-    assert list(output.iterdir()) == []
+    assert (output / "request.json").is_file()
+    assert (output / "execution.json").is_file()
     assert stat.S_IMODE(output.stat().st_mode) == 0o700
 
 
@@ -585,6 +586,7 @@ def test_run_interrupt_preserves_visible_native_evidence(
         "evidence_path": str(output / "harbor-job"),
         "schema_version": 1,
         "status": "interrupted",
+        "run_id": report["run_id"],
     }
     assert (output / "harbor-job/config.json").read_text() == "partial"
 
@@ -602,6 +604,7 @@ def test_run_real_harbor_docker_from_temporary_catalog(
     assert docker.returncode == 0, "Docker daemon is required for the test suite"
     project, user_path = _local_project(tmp_path)
     output = tmp_path / "output"
+    original_config = (project / "tetrabench.toml").read_bytes()
     monkeypatch.chdir(project)
     for name in (
         "AWS_ACCESS_KEY_ID",
@@ -625,7 +628,9 @@ def test_run_real_harbor_docker_from_temporary_catalog(
         def __init__(self, *_args, **_kwargs) -> None:
             pytest.fail("local run constructed a Modal client")
 
-    monkeypatch.setattr("tetrabench.cli.ModalControllerClient", ForbiddenModal)
+    monkeypatch.setattr(
+        "tetrabench.engines.modal.ModalControllerClient", ForbiddenModal
+    )
 
     result = runner.invoke(
         app,
@@ -655,6 +660,90 @@ def test_run_real_harbor_docker_from_temporary_catalog(
     assert (output / "harbor-job/config.json").is_file()
     assert (output / "harbor-job/lock.json").is_file()
     assert (output / "harbor-job/result.json").is_file()
+    run_id = report["run_id"]
+    assert isinstance(run_id, str)
+    monkeypatch.chdir(tmp_path)
+    (project / "tetrabench.toml").write_text("configuration changed after launch")
+    observed = runner.invoke(app, ["result", run_id, "--json"])
+    assert observed.exit_code == 0, observed.stderr
+    observed_report = loads_canonical_json(observed.stdout.strip().encode())
+    assert isinstance(observed_report, dict)
+    assert observed_report["outcome"] == "succeeded"
+    assert observed_report["summary"] == summary
+    assert observed_report["cleanup_complete"] is True
+    (output / "execution.json").unlink()
+    without_marker = runner.invoke(app, ["result", run_id, "--json"])
+    assert without_marker.exit_code == 0, without_marker.stderr
+
+    # Harbor's stop can return after swallowing a failed Compose down. Leave real
+    # native containers alive, then interrupt precisely before the terminal hint.
+    from harbor.environments.docker.docker import DockerEnvironment
+
+    from tetrabench import local_execution
+    from tetrabench.docker_lifecycle import cleanup_containers
+
+    async def swallowed_stop(self, delete):
+        return None
+
+    native_write = local_execution.write_private_record
+
+    def interrupt_terminal_hint(path, data, **kwargs):
+        if path.name == "execution.json":
+            value = loads_canonical_json(data)
+            if isinstance(value, dict) and value.get("state") == "terminal":
+                raise KeyboardInterrupt
+        return native_write(path, data, **kwargs)
+
+    (project / "tetrabench.toml").write_bytes(original_config)
+    monkeypatch.chdir(project)
+    monkeypatch.setattr(DockerEnvironment, "stop", swallowed_stop)
+    monkeypatch.setattr(
+        local_execution, "write_private_record", interrupt_terminal_hint
+    )
+    for corruption in ("truncated", "missing"):
+        leaked_output = tmp_path / f"leaked-{corruption}"
+        leaked_run = f"teardown-{corruption}"
+        try:
+            interrupted = runner.invoke(
+                app,
+                [
+                    "run",
+                    "systems-design",
+                    "--profile",
+                    "local",
+                    "--run-id",
+                    leaked_run,
+                    "--output",
+                    str(leaked_output),
+                    "--json",
+                ],
+            )
+            assert interrupted.exit_code == 130, interrupted.stderr
+            native = runner.invoke(app, ["result", leaked_run, "--json"])
+            assert native.exit_code == 0, native.stderr
+            native_report = loads_canonical_json(native.stdout.strip().encode())
+            assert isinstance(native_report, dict)
+            assert native_report["outcome"] == "succeeded"
+            assert native_report["cleanup_complete"] is False
+            native_path = leaked_output / "harbor-job/result.json"
+            original_result = native_path.read_bytes()
+            if corruption == "truncated":
+                native_path.write_bytes(b'{"finished_at":')
+            else:
+                native_path.unlink()
+            cancelled = runner.invoke(app, ["cancel", leaked_run, "--yes", "--json"])
+            assert cancelled.exit_code == 0, cancelled.stderr
+            cancelled_report = loads_canonical_json(cancelled.stdout.strip().encode())
+            assert isinstance(cancelled_report, dict)
+            assert cancelled_report["cleanup_complete"] is True
+            assert cancelled_report["outcome"] is None
+            assert cancelled_report["result_error"] is not None
+            native_path.write_bytes(original_result)
+            restored = runner.invoke(app, ["result", leaked_run, "--json"])
+            assert restored.exit_code == 0, restored.stderr
+        finally:
+            if (leaked_output / "docker-binding.json").exists():
+                cleanup_containers(leaked_output, remove=True)
 
 
 def test_error_is_on_stderr(tmp_path: Path, monkeypatch) -> None:
@@ -938,7 +1027,9 @@ def test_submit_empty_section_has_zero_s3_or_modal_side_effects(monkeypatch) -> 
         def __init__(self, *_args) -> None:
             pytest.fail("empty submit constructed Modal adapter")
 
-    monkeypatch.setattr("tetrabench.cli.ModalControllerClient", ForbiddenModal)
+    monkeypatch.setattr(
+        "tetrabench.engines.modal.ModalControllerClient", ForbiddenModal
+    )
     result = runner.invoke(app, ["submit", "github-workflow"])
     assert result.exit_code == 2
     assert result.stdout == ""
@@ -1043,7 +1134,7 @@ def test_remote_commands_redact_provider_exception_families(
         monkeypatch.chdir(ROOT)
         monkeypatch.setattr("tetrabench.cli.deploy_controller", raise_provider_error)
     elif operation == "submit":
-        monkeypatch.setattr("tetrabench.cli.prepare_submission", raise_provider_error)
+        monkeypatch.setattr("tetrabench.cli.prepare_run", raise_provider_error)
     elif operation == "recover":
         monkeypatch.setattr(
             "tetrabench.cli._recovery_service", lambda _profile: Service()
@@ -1061,16 +1152,8 @@ def test_remote_commands_redact_provider_exception_families(
             "tetrabench.cli._remote_result_service", lambda _profile: Service()
         )
     else:
-
-        class Config:
-            storage = object()
-
         monkeypatch.setattr(
-            "tetrabench.cli.load_project_config", lambda *_args, **_kwargs: Config()
-        )
-        monkeypatch.setattr("tetrabench.cli.create_s3_store", lambda _storage: object())
-        monkeypatch.setattr(
-            "tetrabench.cli.ArtifactPullService", lambda _store: Service()
+            "tetrabench.cli._artifact_service", lambda _profile: Service()
         )
         arguments = [
             str(tmp_path / "output") if item == "OUTPUT" else item for item in arguments
@@ -1386,9 +1469,6 @@ def test_artifacts_pull_json_is_canonical(monkeypatch, tmp_path: Path) -> None:
         media_type="application/json",
     )
 
-    class Config:
-        storage = object()
-
     class Service:
         @staticmethod
         def pull(run_id: str, output: Path) -> ArtifactPullResult:
@@ -1399,11 +1479,7 @@ def test_artifacts_pull_json_is_canonical(monkeypatch, tmp_path: Path) -> None:
                 artifacts=(artifact,),
             )
 
-    monkeypatch.setattr(
-        "tetrabench.cli.load_project_config", lambda *_args, **_kwargs: Config()
-    )
-    monkeypatch.setattr("tetrabench.cli.create_s3_store", lambda _storage: object())
-    monkeypatch.setattr("tetrabench.cli.ArtifactPullService", lambda _store: Service())
+    monkeypatch.setattr("tetrabench.cli._artifact_service", lambda _profile: Service())
     output = tmp_path / "output"
 
     result = runner.invoke(
@@ -1431,19 +1507,12 @@ def test_artifacts_pull_limit_failure_is_deterministic_json(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    class Config:
-        storage = object()
-
     class Service:
         @staticmethod
         def pull(_run_id: str, _output: Path) -> ArtifactPullResult:
             raise ArtifactPullRefusedError("terminal inventory exceeds max_total_bytes")
 
-    monkeypatch.setattr(
-        "tetrabench.cli.load_project_config", lambda *_args, **_kwargs: Config()
-    )
-    monkeypatch.setattr("tetrabench.cli.create_s3_store", lambda _storage: object())
-    monkeypatch.setattr("tetrabench.cli.ArtifactPullService", lambda _store: Service())
+    monkeypatch.setattr("tetrabench.cli._artifact_service", lambda _profile: Service())
 
     result = runner.invoke(
         app,

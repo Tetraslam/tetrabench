@@ -1954,3 +1954,25 @@ PR 28's full-history Gitleaks job passed, while Python 3.12 exposed an existing 
 Provenance: PR 28; squash merge `cdab1b5fb1ee9ffa25967e94d7f75c187d3bb59f`; GitHub Actions run `33946223622`; fresh `origin/master` inspection.
 
 The latest reviewed head passed Python 3.12 and full-history Gitleaks with the review thread resolved and no further Codex findings. PR 28 merged, and both jobs passed again on the merge commit. `origin/master` resolves to `cdab1b5`. The canonical P7-05, U-012, Task Catalogs, E-143, and repository benchmark records agree that `authority-fencing` is admitted; calibrated fixture bytes are unchanged. No authority-fencing admission work remains.
+
+## 2026-09-05T15:19:23-07:00: User-authorized modular interface and release
+
+Provenance: direct user messages in the current parent conversation, distinguished from historical assistant/subagent proposals.
+
+The user selects future evals. Authority-fencing was the end-to-end platform proof, not the first item in an automatic task queue. The user now authorizes data-driven categories, one engine-selected run command, modular engine-specific lifecycle behavior, simplified engine configuration, standardized run-ID-based lifecycle operations, and PyPI publication after installed-package local/remote release checks. License: MIT. Implementation is delegated to superagents; this work does not add evals or alter the calibrated fixture.
+
+## 2026-09-05T18:22:30-07:00: Modular release implementation and installed runtime proof
+
+Provenance: superagent implementation, independent lifecycle and packaging review, full local validation, and private installed-wheel live smoke. The parent session runs OpenCode with `openrouter/openai/gpt-6-astra`.
+
+Categories are validated mapping keys. Engine configuration compiles through registered Docker/Modal adapters; unified run/lifecycle commands use immutable local routing references while preserving existing remote CAS/terminal authority and canonical record compatibility. Local execution now consumes sealed inputs. Review corrected cancellation/cleanup races, false cleanup claims, observation-marker authority, stale admission precedence, malformed hint fallback, and symlink-ancestor ownership. External cancellation publishes an idempotent request consumed by the owner; no repeated signal interrupts native cleanup. Legacy records require explicit original environment for mutations.
+
+MIT licensing and a protected GitHub OIDC release workflow are implemented. Controller deployment resolves the exact installed wheel using a retained hash-bound local artifact or matching PyPI release, validates installation identity, and installs the embedded locked dependencies with native Modal image tooling. It no longer uploads a presumed source checkout. A fresh wheel-installed project passed arbitrary-category authoring, local Docker reward one, deployed-controller identity, detached Modal reward one, fresh-process result reads after changing the private profile/project, and verified retrieval of all 15 artifacts. The controller stopped and two sandbox sweeps were empty. Reported cloud cost was $0.00320072; final billing may lag. Private evidence is retained under `/tmp/opencode/tetrabench-live-driver-20260906T002040Z/`; the proof wheel SHA-256 is `edf3eaabcd272a32cf3346ba9d83314eac5c9cdda2475504e9a1834732dfb34d`. No model call or PyPI publication occurred.
+
+Final integration passes 1,396 non-Docker tests and all 11 Docker tests. The proof-only CLI consumers were updated for the new validated LocalReport and sealed output envelope without changing task fixture bytes. Ruff, formatting, ty, Bandit, actionlint, lock/build, strict package metadata, sdist reproduction, dependency audit, and whitespace checks pass. Release requires reviewed CI, remote smoke on the exact GitHub-built artifact, protected publish approval, and public installation verification.
+
+## 2026-09-05T19:09:19-07:00: PR 30 legacy run identity correction
+
+Provenance: Codex PR 30 review comment 3942616995, implementation regressions, and independent cross-process review.
+
+Initial hosted CI passed. Codex correctly found that a new Docker run reference could shadow a legacy Modal receipt with the same ID. Receipt/reference admission now shares the existing receipt lock, checks both record families, and holds through local allocation/reference publication or receipt mutation. Matching Modal request identity remains reusable; mismatched IDs fail before launch. Mixed-version concurrent writers that do not follow this protocol remain unsupported. All 1,406 non-Docker tests and two targeted Docker lifecycle tests pass. Independent review passed 134 targeted tests plus cross-process races in both write orders and reentrant canonical-path locking, with no blocker. No persistent record schema or calibrated fixture bytes changed.

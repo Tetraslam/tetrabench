@@ -5,6 +5,13 @@ import os
 import pytest
 
 
+@pytest.fixture(autouse=True)
+def isolated_local_state(tmp_path, monkeypatch):
+    """A test run must never create routing hints in the operator's state tree."""
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
+    monkeypatch.setenv("AWS_EC2_METADATA_DISABLED", "true")
+
+
 def pytest_collection_modifyitems(
     config: pytest.Config, items: list[pytest.Item]
 ) -> None:

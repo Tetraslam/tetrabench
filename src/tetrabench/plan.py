@@ -16,6 +16,7 @@ from tetrabench.config import load_project_config
 from tetrabench.context import resolve_context
 from tetrabench.models import (
     CatalogTask,
+    ConfigOverrides,
     ProjectConfig,
     ResolvedContextFile,
     ResolvedPlan,
@@ -54,8 +55,9 @@ def resolve_plan(
     profile: str | None = None,
     *,
     context: tuple[ResolvedContextFile, ...] | None = None,
+    overrides: ConfigOverrides | None = None,
 ) -> ResolvedPlan:
-    config = load_project_config(root, profile=profile)
+    config = load_project_config(root, profile=profile, overrides=overrides)
     catalog = load_catalog(root, config.catalog_path)
     tasks = select_tasks(get_section(catalog, section_name), config.selection)
     return resolved_plan_from_selection(

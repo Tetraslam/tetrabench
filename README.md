@@ -1,31 +1,33 @@
 # tetrabench
 
-Run Harbor evaluations locally, then move the same sealed task set to detached
-Modal execution with durable S3 or Tigris results.
+Run Harbor evaluations with Docker or detached Modal execution, using your own
+task categories and Harbor's native results.
 
 [![CI](https://github.com/Tetraslam/tetrabench/actions/workflows/ci.yml/badge.svg)](https://github.com/Tetraslam/tetrabench/actions/workflows/ci.yml)
 
-Tetrabench gives eval authors one CLI for project setup, task validation, local
-Docker runs, remote submission, recovery, and artifact retrieval. It keeps
-Harbor's native task, trial, verifier, and trajectory outputs intact rather than
-inventing a second evaluation format.
+Tetrabench is an installed, [MIT-licensed](LICENSE) CLI for authoring tasks,
+running sealed task sets, and retrieving results. Modal runs retain artifacts in
+S3 or Tigris.
 
 ## Quick start
 
 You need Linux, Python 3.12, [uv](https://docs.astral.sh/uv/), and a running
-Docker daemon.
+Docker daemon. Install a released version with:
 
 ```console
-git clone https://github.com/Tetraslam/tetrabench.git
-cd tetrabench
-uv tool install --python 3.12 .
+uv tool install --python 3.12 tetrabench
+```
 
-tetrabench init ../my-evals
-cd ../my-evals
+Create and run a fresh project:
+
+```console
+tetrabench init my-evals
+cd my-evals
 tetrabench doctor
-tetrabench task validate benchmarks/tasks/systems-design/hello-tetrabench
-tetrabench plan systems-design
-tetrabench run systems-design --output ./runs/hello
+tetrabench task validate benchmarks/tasks/example/hello-tetrabench
+tetrabench plan example
+tetrabench run example --engine docker --run-id hello --output ./hello
+tetrabench result hello
 ```
 
 The generated starter runs through Harbor with its Oracle solution and a
@@ -36,16 +38,18 @@ Outcome: succeeded
 Pass rate: 1 (1/1)
 ```
 
-`init` creates a standalone project:
+The installed CLI works outside its source checkout. For a development build,
+install a local wheel instead (see [Development](#development)).
+
+`init` creates a standalone project with the neutral `example` category:
 
 ```text
 my-evals/
 ├── tetrabench.toml
 └── benchmarks/
     ├── catalog.toml
-    ├── systems-design/README.md
-    ├── github-workflow/README.md
-    └── tasks/systems-design/hello-tetrabench/
+    ├── example/README.md
+    └── tasks/example/hello-tetrabench/
         ├── instruction.md
         ├── task.toml
         ├── environment/Dockerfile
@@ -54,33 +58,33 @@ my-evals/
         └── tests/test.sh
 ```
 
+Use `tetrabench init my-evals --section data-quality` to choose another
+category name.
+
 ## Author an eval
 
 Create an unlisted task, edit its instruction, environment, solution, and
 verifier, then validate and add it to your project catalog:
 
 ```console
-tetrabench task new systems-design lease-fencing
+tetrabench task new example check-output
 
-$EDITOR benchmarks/tasks/systems-design/lease-fencing/instruction.md
-$EDITOR benchmarks/tasks/systems-design/lease-fencing/tests/test.sh
+$EDITOR benchmarks/tasks/example/check-output/instruction.md
+$EDITOR benchmarks/tasks/example/check-output/tests/test.sh
 
-tetrabench task validate benchmarks/tasks/systems-design/lease-fencing
-tetrabench task add systems-design lease-fencing \
-  benchmarks/tasks/systems-design/lease-fencing
-tetrabench run systems-design --output ./runs/lease-fencing
+tetrabench task validate benchmarks/tasks/example/check-output
+tetrabench task add example check-output benchmarks/tasks/example/check-output
+tetrabench run example --engine docker --output ./check-output
 ```
 
-`task validate` is read-only. It seals the complete fixture tree under bounded
-path, file, and byte limits, validates a private copy through Harbor 0.22, then
-checks that the source did not change. It does not call Docker, Modal, or a
-storage provider.
+Categories are data in `benchmarks/catalog.toml`, called *sections* by the CLI.
+They are not limited to this repository's benchmark domains. The command above
+runs all selected tasks in `example`, including the starter.
 
-`task add` is an explicit mutation for user-owned catalogs. It validates twice,
-rejects duplicate IDs and fixture paths, preserves existing catalog bytes, and
-atomically appends a binary task entry. Tetrabench writers serialize through a
-sibling lock file; arbitrary programs editing the catalog concurrently are
-outside that cooperative lock.
+`task validate` validates a sealed private copy through Harbor 0.22 without
+Docker or provider calls. `task add` validates again before atomically adding a
+binary entry to your catalog. See the [CLI reference](docs/cli-reference.md) for
+validation limits and concurrent-edit caveats.
 
 The generated task is deliberately small. Replace its exact-answer verifier
 with assertions for your domain. A verifier writes Harbor's native
@@ -93,25 +97,26 @@ stricter rules used by tetrabench's own benchmark catalog.
 | Command | Purpose | Side effects |
 | --- | --- | --- |
 | `init` | Create a runnable local project | New directory |
-| `sections` | List catalog sections and task counts | None |
+| `sections` | List configured categories and task counts | None |
 | `task new` | Create an unlisted Harbor task | New task directory |
 | `task validate` | Seal and validate one fixture | None |
 | `task add` | Add a validated task to the project catalog | Atomic catalog update |
 | `doctor` | Validate config, catalog, context, and optional storage reads | None |
 | `plan` | Resolve a canonical secret-free execution plan | None |
-| `run` | Run selected tasks through local Docker | New private output directory |
+| `run --engine docker` | Run locally and wait | New private output directory |
+| `run --engine modal` | Submit detached; optionally observe with `--wait` | Cloud mutation |
 | `controller info` | Show the selected Modal deployment contract | None |
 | `controller deploy` | Deploy the configured Modal controller | Cloud mutation, confirmation required |
-| `submit` | Publish a request and spawn detached execution | Cloud mutation |
-| `status` | Combine durable and provider execution evidence | Provider reads |
-| `result` | Read authoritative remote state without a local receipt | Storage reads |
-| `runs` | List local receipts or validated remote run records | Local or provider reads |
-| `cancel` | Record cancellation intent and clean owned children | Cloud mutation, confirmation required |
-| `recover` | Clean a stopped owner and prepare a successor | Cloud mutation, confirmation required |
-| `artifacts pull` | Materialize one successful terminal inventory | New private output directory |
+| `submit` | Compatibility alias for `run --engine modal --detach` | Cloud mutation |
+| `status`, `result` | Inspect a run using its recorded engine and location | Local or provider reads |
+| `runs` | List local run references/receipts or remote records | Local or provider reads |
+| `cancel` | Interrupt local work or cancel remote work | Mutation, confirmation required |
+| `recover` | Clean a stopped Modal owner and prepare a successor | Cloud mutation, confirmation required |
+| `artifacts pull` | Download a successful Modal run's artifacts | New private output directory |
 
-Add `--json` for canonical machine-readable output. The `--json` forms of
-`controller deploy`, `cancel`, and `recover` require `--yes`.
+Commands except `sections` accept `--json` for canonical machine-readable output.
+The `--json` forms of `controller deploy`, `cancel`, and `recover` require
+`--yes`.
 
 See the [CLI reference](docs/cli-reference.md) for exit codes, retained failure
 evidence, provider-read boundaries, cancellation and recovery behavior, and
@@ -125,10 +130,7 @@ The starter uses local Docker without a user profile:
 schema_version = 1
 catalog_path = "benchmarks/catalog.toml"
 
-[controller]
-kind = "local"
-
-[execution]
+[engine]
 kind = "docker"
 
 [harbor]
@@ -137,30 +139,34 @@ attempts = 1
 concurrency = 1
 ```
 
-Set `harbor.agent_name = "opencode"` and a Harbor-compatible `model_name` to run
-an agent instead of the checked-in Oracle solution. Tetrabench passes these
-identifiers to Harbor unchanged.
+`run --engine docker|modal` overrides the selected profile and project engine.
+Docker waits locally and rejects `--detach`. Modal defaults to detached;
+`--wait` observes the remote result, and Ctrl-C stops observation without
+cancelling the remote run. `--wait` and `--detach` cannot be combined.
+The negative forms `--no-wait` and `--no-detach` are not supported.
 
 User-specific overrides live at `~/.config/tetrabench/config.toml` on Linux.
-They can select models and credentials without committing personal settings to
-an eval repository. Configuration is strict: unknown fields, malformed paths,
-and invalid controller/execution combinations fail before provider work.
+They can select models and storage locations without committing personal
+settings. Keep credentials in environment variables or provider credential
+stores, not TOML. See [model API configuration](docs/cli-reference.md#model-api-configuration)
+for OpenCode examples. Harbor forwards model credentials into the task;
+tetrabench does not copy your interactive OpenCode login or home configuration.
 
 ## Detached Modal runs
 
-Keep the project local by default and add a user profile for cloud execution:
+Keep the project local by default and add this profile to
+`~/.config/tetrabench/config.toml`, replacing the bucket name:
 
 ```toml
 schema_version = 1
 
-[profiles.cloud.controller]
+[profiles.cloud.engine]
 kind = "modal"
+
+[profiles.cloud.engine.settings]
 app_name = "tetrabench"
 function_name = "controller"
 secret_name = "tetrabench-controller"
-
-[profiles.cloud.execution]
-kind = "modal"
 
 [profiles.cloud.storage]
 provider = "tigris"
@@ -169,10 +175,12 @@ region = "auto"
 prefix = "tetrabench"
 ```
 
-The local submitter uses boto3's standard credential chain. The configured Modal
-Secret must expose the corresponding `AWS_ACCESS_KEY_ID` and
-`AWS_SECRET_ACCESS_KEY` to the controller. Harbor children receive neither the
-controller's storage credentials nor its publication authority.
+Provision a private bucket and configure boto3's standard credential chain for
+the local submitter. For Secret creation below, inject the controller's separate
+`AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` into that process environment
+through your secret manager. Do not put values in files or command arguments.
+Model runs also need their model API variables in the Secret; Oracle does not.
+Harbor children do not receive the controller's storage credentials.
 
 Tigris uses `https://t3.storage.dev`. Mutable coordination accepts known
 Single-region buckets and Multi-region `usa` or `eur` buckets. Tetrabench keeps
@@ -181,33 +189,96 @@ before new run mutation because their cross-region consistency is insufficient
 for admission compare-and-swap.
 
 ```console
-tetrabench doctor --profile cloud --online
+uvx --from modal==1.5.4 modal setup
 tetrabench controller info --profile cloud
-tetrabench controller deploy --profile cloud
-
-tetrabench submit systems-design --profile cloud --run-id first-run
-tetrabench status first-run --profile cloud
-tetrabench result first-run --profile cloud
-tetrabench artifacts pull first-run ./artifacts/first-run --profile cloud
 ```
 
-Submission seals selected task fixtures and explicit context before publishing
-an immutable request. S3 admission records own controller claims and
-cancellation intent. Immutable terminal objects own final truth. Local receipts
-are recovery hints, not run authority.
+On first deployment, create the exact environment printed above and its named
+Secret. The environment includes the profile and package version, so a Secret
+in the default or an older environment will not suffice. Replace
+`ENVIRONMENT_FROM_INFO` below; skip environment creation if it already exists.
+The native Modal API copies only the listed variables from the process:
+
+```console
+uvx --from modal==1.5.4 modal environment create ENVIRONMENT_FROM_INFO
+uv run --no-project --python 3.12 --with modal==1.5.4 python - <<'PY'
+import os
+import modal
+
+modal.Secret.objects.create(
+    "tetrabench-controller",
+    {name: os.environ[name] for name in ("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY")},
+    environment_name="ENVIRONMENT_FROM_INFO",
+)
+PY
+```
+
+From the submitter's credential environment, run:
+
+```console
+tetrabench doctor --profile cloud --online
+tetrabench controller deploy --profile cloud
+
+tetrabench run example --engine modal --profile cloud --wait --run-id first-run
+tetrabench status first-run
+tetrabench result first-run
+# After a successful result:
+tetrabench artifacts pull first-run ./first-run-artifacts
+```
+
+Deployment automatically resolves the exact installed wheel and reports its
+SHA-256. Keep the original wheel for unpublished development builds.
+`controller info` only reports configuration. Use `--detach` instead of `--wait`
+to return after submission. The installed-wheel Modal smoke completed one Oracle
+task with reward `1` and no surviving run-owned compute, resolving the local
+wheel automatically without a wheel environment override.
+
+New runs record their engine, storage, and controller, so lifecycle commands work
+outside the original project without `--profile`. For old remote runs without a
+reference, use the original project/profile configuration. Legacy `cancel` and
+`recover` also require `--environment ORIGINAL_NAMESPACE`, which older records
+did not store. See the [CLI reference](docs/cli-reference.md#run-references).
+Docker artifacts stay at their recorded local location; `artifacts pull` does
+not copy them. Native logs and artifacts may contain workload-emitted secrets.
 
 ## Repository benchmarks
 
 The checked-in production catalog includes `systems-design/authority-fencing`.
-Its corrected 1 GiB agent environment passed local, detached,
-reward-forgery, and exact four-run model calibration gates. This does not affect
-projects created by `tetrabench init` or tasks added to a user's own catalog.
+Its 1 GiB agent environment passed local, detached, reward-forgery, and exact
+four-run model calibration gates as an end-to-end platform proof. It does not
+define a queue of future evals or affect user-created projects. The fixture is
+included in the source distribution, not the wheel.
 
 Read [the benchmark contract](benchmarks/README.md) for task design and
 admission, and [the project record](IMPLEMENTATION_PLAN.md) for authority
 boundaries, decisions, live evidence, and remaining unproven claims.
 
 ## Development
+
+Build and install a wheel from a fresh checkout:
+
+```console
+git clone https://github.com/Tetraslam/tetrabench.git
+cd tetrabench
+uv build --wheel
+```
+
+Install the wheel with its hash so uv retains the artifact identity needed for
+deployment:
+
+```console
+wheel=$(realpath dist/tetrabench-*.whl)
+digest=$(sha256sum "$wheel" | cut -d ' ' -f1)
+uv tool install --python 3.12 "tetrabench @ file://$wheel#sha256=$digest"
+```
+
+Use a `dist` directory containing only the wheel you intend to install. Keep it
+at that path for deployment if the exact build is not on PyPI. A plain wheel
+path can omit the original digest from uv's installation metadata, forcing
+deployment to look up PyPI instead. Released versions use the simple
+`uv tool install --python 3.12 tetrabench` command above.
+
+To validate the checkout:
 
 ```console
 uv sync --locked --all-groups
@@ -219,7 +290,6 @@ TETRABENCH_EXPECT_DOCKER_TESTS=11 uv run pytest --strict-markers -m docker
 uv build
 ```
 
-CI adds checks from Bandit, pip-audit, actionlint, and Gitleaks. Its installed-
-wheel smoke exercises the authoring commands. The project is not currently
-published to a package registry and does not currently declare an open-source
-license.
+CI adds Bandit, pip-audit, actionlint, Gitleaks, distribution metadata checks,
+and an installed-wheel smoke. Forced interruption/recovery has live evidence.
+Live AWS behavior and provider-initiated Modal preemption remain unproven.

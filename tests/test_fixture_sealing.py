@@ -194,13 +194,13 @@ region = "us-east-1"
 
     monkeypatch.setattr(submission_module, "load_project_config", load_config)
     monkeypatch.setattr(submission_module, "load_catalog", load_selected_catalog)
-    monkeypatch.setattr("tetrabench.cli.prepare_submission", prepare_then_replace)
+    monkeypatch.setattr("tetrabench.cli.prepare_run", prepare_then_replace)
     monkeypatch.setattr(
         "tetrabench.cli.load_project_config",
         lambda *_args, **_kwargs: pytest.fail("submit reread project configuration"),
     )
-    monkeypatch.setattr("tetrabench.cli.create_s3_store", create_store)
-    monkeypatch.setattr("tetrabench.cli.SubmissionService", Service)
+    monkeypatch.setattr("tetrabench.engines.modal.create_s3_store", create_store)
+    monkeypatch.setattr("tetrabench.engines.modal.SubmissionService", Service)
     monkeypatch.setattr("tetrabench.controller.modal.Function", Function)
     monkeypatch.chdir(root)
 
@@ -213,7 +213,9 @@ region = "us-east-1"
     assert len(stores) == 1
     assert stores[0].provider == "tigris"
     assert stores[0].bucket == "fixture-bucket"
-    assert spawned == [("tetrabench", "controller", "tetrabench-default")]
+    launch = prepared_results[0].controller_launch
+    assert launch is not None
+    assert spawned == [("tetrabench", "controller", launch.environment_name)]
     durable_request = canonical_model_bytes(prepared_results[0].request)
     assert b"tetrabench-default" not in durable_request
 
@@ -389,7 +391,9 @@ def test_fixture_rejection_constructs_no_cloud_provider(
         def __init__(self, *_args, **_kwargs) -> None:
             pytest.fail("fixture rejection constructed Modal")
 
-    monkeypatch.setattr("tetrabench.cli.ModalControllerClient", ForbiddenModal)
+    monkeypatch.setattr(
+        "tetrabench.engines.modal.ModalControllerClient", ForbiddenModal
+    )
     result = runner.invoke(app, ["submit", "systems-design"])
     assert result.exit_code == 2
     assert "unsafe" in result.stderr

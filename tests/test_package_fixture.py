@@ -2,21 +2,30 @@ from __future__ import annotations
 
 import subprocess
 import tarfile
+import tomllib
 import zipfile
+from email.parser import BytesParser
 from pathlib import Path
 
+import pytest
 
-def test_fixture_is_source_only_and_absent_from_installed_wheel(tmp_path: Path) -> None:
+
+@pytest.fixture(scope="module")
+def distributions(tmp_path_factory):
+    output = tmp_path_factory.mktemp("distribution")
     root = Path(__file__).parents[1]
     subprocess.run(
-        ["uv", "build", "--out-dir", str(tmp_path)],
+        ["uv", "build", "--out-dir", str(output)],
         cwd=root,
         check=True,
         capture_output=True,
         text=True,
     )
-    wheel = next(tmp_path.glob("*.whl"))
-    source = next(tmp_path.glob("*.tar.gz"))
+    return next(output.glob("*.whl")), next(output.glob("*.tar.gz"))
+
+
+def test_fixture_is_source_only_and_absent_from_installed_wheel(distributions) -> None:
+    wheel, source = distributions
     with zipfile.ZipFile(wheel) as archive:
         assert not any("fixtures/harbor_task" in name for name in archive.namelist())
         assert not any(
@@ -73,3 +82,45 @@ def test_fixture_is_source_only_and_absent_from_installed_wheel(tmp_path: Path) 
             name.endswith("tests/test_authority_fencing_calibration.py")
             for name in names
         )
+
+
+def test_release_metadata_license_and_dependency_lock(distributions) -> None:
+    wheel, source = distributions
+    root = Path(__file__).parents[1]
+    with zipfile.ZipFile(wheel) as archive:
+        names = archive.namelist()
+        metadata = BytesParser().parsebytes(
+            archive.read(next(name for name in names if name.endswith("/METADATA")))
+        )
+        assert metadata["Name"] == "tetrabench"
+        assert metadata["Version"] == "0.1.0"
+        assert metadata["License-Expression"] == "MIT"
+        assert metadata["Requires-Python"] == "<3.13,>=3.12"
+        assert metadata.get_all("License-File") == ["LICENSE"]
+        license_file = next(
+            name for name in names if name.endswith("/licenses/LICENSE")
+        )
+        assert archive.read(license_file) == (root / "LICENSE").read_bytes()
+        for name in ("pyproject.toml", "uv.lock"):
+            assert (
+                archive.read(f"tetrabench/_distribution/{name}")
+                == (root / name).read_bytes()
+            )
+        lock = tomllib.loads(archive.read("tetrabench/_distribution/uv.lock").decode())
+        own = next(
+            package for package in lock["package"] if package["name"] == "tetrabench"
+        )
+        assert own["version"] == metadata["Version"]
+        assert all(
+            name.startswith(
+                ("tetrabench/", f"tetrabench-{metadata['Version']}.dist-info/")
+            )
+            for name in names
+        )
+    with tarfile.open(source) as archive:
+        license_member = next(
+            item for item in archive.getmembers() if item.name.endswith("/LICENSE")
+        )
+        stream = archive.extractfile(license_member)
+        assert stream is not None
+        assert stream.read() == (root / "LICENSE").read_bytes()

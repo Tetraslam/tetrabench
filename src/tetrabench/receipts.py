@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import os
 import tempfile
+import threading
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
@@ -86,11 +87,21 @@ class ReceiptConflictError(RuntimeError):
     """A local receipt update would discard or rewrite durable evidence."""
 
 
+class RunIdentityConflictError(ReceiptConflictError):
+    """A valid local record binds this run ID to another engine or request."""
+
+
+_HELD_LOCKS = threading.local()
+
+
 class ReceiptStore:
     """Canonical receipt files replaced atomically with file and directory fsync."""
 
-    def __init__(self, root: Path | None = None) -> None:
+    def __init__(
+        self, root: Path | None = None, *, reference_root: Path | None = None
+    ) -> None:
         self.root = root or default_receipt_root()
+        self.reference_root = reference_root or self.root.parent / "run-references"
 
     def path_for(self, run_id: str) -> Path:
         from tetrabench.records import validate_run_id
@@ -116,22 +127,52 @@ class ReceiptStore:
 
     @contextmanager
     def lock(self, run_id: str) -> Iterator[None]:
-        """Serialize one run's local transition and spawn decision."""
+        """Serialize one run, reentrantly across store instances in this thread.
+
+        Reference admission and receipt writes share this existing lock. Every
+        writer must also check both record families after acquiring it: older
+        binaries or arbitrary file writers are not cooperative namespace writers.
+        """
         import fcntl
 
         receipt_path = self.path_for(run_id)
-        self._ensure_root()
         lock_path = receipt_path.with_suffix(".lock")
-        descriptor = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o600)
+        key = (os.getpid(), str(lock_path.resolve()))
+        held = getattr(_HELD_LOCKS, "keys", None)
+        if held is None:
+            held = _HELD_LOCKS.keys = set()
+        if key in held:
+            yield
+            return
+        self._ensure_root()
+        descriptor = os.open(lock_path, os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
         try:
             os.fchmod(descriptor, 0o600)
             fcntl.flock(descriptor, fcntl.LOCK_EX)
-            yield
+            held.add(key)
+            try:
+                yield
+            finally:
+                held.remove(key)
         finally:
             fcntl.flock(descriptor, fcntl.LOCK_UN)
             os.close(descriptor)
 
     def write(self, receipt: SubmissionReceipt) -> None:
+        from tetrabench.run_reference import RunReferenceStore
+
+        references = RunReferenceStore(self.reference_root, receipts=self)
+        # Spawn evidence remains writable when a routing hint is malformed.
+        # A readable, conflicting engine/request binding is never ignored.
+        with references.admission(
+            receipt.run_id,
+            engine="modal",
+            request_sha256=receipt.request_sha256,
+            tolerate_unreadable_reference=True,
+        ):
+            self._write_locked(receipt)
+
+    def _write_locked(self, receipt: SubmissionReceipt) -> None:
         existing = self.read(receipt.run_id)
         if existing is not None:
             self._validate_append_only(existing, receipt)
@@ -172,6 +213,7 @@ class ReceiptStore:
                 directory.mkdir(mode=0o700)
             except FileExistsError:
                 pass
+            directory.chmod(0o700)
             parent = os.open(directory.parent, os.O_RDONLY | os.O_DIRECTORY)
             try:
                 os.fsync(parent)

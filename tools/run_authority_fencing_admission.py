@@ -39,6 +39,11 @@ from harbor.models.trial.config import TrialConfig
 from harbor.models.trial.result import TrialResult
 from harbor.publisher.packager import Packager
 
+from tetrabench.docker_lifecycle import DockerBinding
+from tetrabench.engines.docker import LocalReport
+from tetrabench.local_control import OwnerControl
+from tetrabench.plan import canonical_model_bytes, parse_canonical_model
+from tetrabench.records import RequestRecord, validate_run_id
 from tetrabench.rewards import SectionRewardSummary
 
 ROOT = Path(__file__).parents[1]
@@ -115,6 +120,8 @@ class CommandResult:
 class NativeSnapshot:
     files: dict[str, bytes]
     manifest: list[dict[str, Any]]
+    root_identity: tuple[int, int] | None = None
+    execution_lock_identity: tuple[int, int] | None = None
 
     def read(self, path: str) -> bytes:
         try:
@@ -1289,9 +1296,10 @@ def snapshot_native_output(root: Path) -> NativeSnapshot:
     manifest: list[dict[str, Any]] = []
     count = 0
     total = 0
+    execution_lock_identity: tuple[int, int] | None = None
 
     def visit(directory_fd: int, relative: tuple[str, ...]) -> None:
-        nonlocal count, total
+        nonlocal count, total, execution_lock_identity
         try:
             iterator = os.scandir(directory_fd)
         except OSError as error:
@@ -1319,6 +1327,8 @@ def snapshot_native_output(root: Path) -> NativeSnapshot:
                     )
                     visit(descriptor, path_parts)
                 elif stat.S_ISREG(before.st_mode):
+                    if logical_path == "execution.lock":
+                        execution_lock_identity = (before.st_dev, before.st_ino)
                     if before.st_nlink != 1:
                         raise ValueError("native Harbor evidence contains a hard link")
                     if before.st_size > MAX_NATIVE_FILE_BYTES:
@@ -1369,11 +1379,182 @@ def snapshot_native_output(root: Path) -> NativeSnapshot:
         visit(root_fd, ())
     finally:
         os.close(root_fd)
-    return NativeSnapshot(files=files, manifest=manifest)
+    return NativeSnapshot(
+        files=files,
+        manifest=manifest,
+        root_identity=(root_metadata.st_dev, root_metadata.st_ino),
+        execution_lock_identity=execution_lock_identity,
+    )
 
 
 def _snapshot_digest(snapshot: NativeSnapshot, path: str) -> str:
     return sha256_bytes(snapshot.read(path))
+
+
+def validate_production_cli_report(
+    document: Any,
+    *,
+    expected_run_id: str | None = None,
+    expected_job: Path | None = None,
+) -> LocalReport:
+    """Accept the complete current run report, never an arbitrary field subset."""
+    if not isinstance(document, dict) or set(document) != set(LocalReport.model_fields):
+        raise ValueError("production CLI JSON schema changed")
+    if type(document["schema_version"]) is not int:
+        raise ValueError("production CLI schema version must be an integer")
+    report = LocalReport.model_validate_json(canonical(document), strict=True)
+    validate_run_id(report.run_id)
+    job = Path(report.job_directory)
+    if (
+        not job.is_absolute()
+        or report.job_directory != os.path.normpath(report.job_directory)
+        or job.name != "harbor-job"
+    ):
+        raise ValueError("production CLI job path is not canonical")
+    if expected_run_id is not None and report.run_id != expected_run_id:
+        raise ValueError("production CLI run identity mismatch")
+    if expected_job is not None and report.job_directory != str(expected_job):
+        raise ValueError("production CLI job directory mismatch")
+    if report.state != "terminal" or report.outcome not in {"succeeded", "failed"}:
+        raise ValueError("production CLI did not return a terminal execution result")
+    if not report.cleanup_complete or report.result_error is not None:
+        raise ValueError("production CLI result or cleanup is unproven")
+    if report.summary is None or report.reward != report.summary.aggregate:
+        raise ValueError("production CLI reward and summary disagree")
+    return report
+
+
+def _validated_native_projection(
+    snapshot: NativeSnapshot,
+    report: LocalReport,
+    output: Path,
+) -> tuple[NativeSnapshot, RequestRecord]:
+    """Bind the sealed execution envelope before retaining the native job view."""
+    expected_roots = {
+        "context": "directory",
+        "harbor-job": "directory",
+        "docker-binding.json": "file",
+        "execution.json": "file",
+        "execution.lock": "file",
+        "owner-control.json": "file",
+        "owner-stopped.json": "file",
+        "request.json": "file",
+    }
+    roots = [
+        item
+        for item in snapshot.manifest
+        if item["path"] != "." and "/" not in item["path"]
+    ]
+    if (
+        len(roots) != len(expected_roots)
+        or {item["path"]: item["type"] for item in roots} != expected_roots
+    ):
+        raise ValueError("production output contains an unauthorized run envelope")
+    for item in roots:
+        if item["type"] == "file" and item["mode"] != 0o600:
+            raise ValueError("production run envelope file is not private")
+    request_bytes = snapshot.read("request.json")
+    request = parse_canonical_model(request_bytes, RequestRecord)
+    owner = parse_canonical_model(snapshot.read("owner-control.json"), OwnerControl)
+    stopped = parse_canonical_model(snapshot.read("owner-stopped.json"), OwnerControl)
+    binding = parse_canonical_model(snapshot.read("docker-binding.json"), DockerBinding)
+    for name, record in (
+        ("request.json", request),
+        ("owner-control.json", owner),
+        ("owner-stopped.json", stopped),
+        ("docker-binding.json", binding),
+    ):
+        if canonical_model_bytes(record) != snapshot.read(name):
+            raise ValueError("production run envelope record representation changed")
+    reference = owner.reference
+    request_digest = sha256_bytes(request_bytes)
+    if (
+        request.run_id != report.run_id
+        or reference.run_id != report.run_id
+        or reference.engine != "docker"
+        or reference.storage is not None
+        or reference.output_directory != str(output)
+        or reference.request_sha256 != request_digest
+        or reference.output_identity is None
+        or reference.output_identity != snapshot.root_identity
+        or owner.lock_identity != snapshot.execution_lock_identity
+        or stopped != owner
+        or snapshot.read("execution.lock") != b""
+    ):
+        raise ValueError("production run envelope identity mismatch")
+    observation = strict_json(snapshot.read("execution.json"))
+    if (
+        observation
+        != {
+            "schema_version": 1,
+            "run_id": report.run_id,
+            "request_sha256": request_digest,
+            "state": "terminal",
+        }
+        or type(observation.get("schema_version")) is not int
+    ):
+        raise ValueError("production execution observation mismatch")
+    if snapshot.read("execution.json") != canonical(observation).encode():
+        raise ValueError("production execution observation is not canonical")
+    if (request.plan.controller.kind, request.plan.execution.kind) != (
+        "local",
+        "docker",
+    ) or request.plan.storage is not None:
+        raise ValueError("production request must select local Docker without storage")
+    if (
+        not request.plan.runnable
+        or request.plan.section != "systems-design"
+        or len(request.plan.trials) != 1
+        or request.plan.trials[0].task_id != "authority-fencing"
+        or request.plan.trials[0].harbor_task != "tasks/authority-fencing"
+        or request.plan.trials[0].reward_policy != "binary"
+    ):
+        raise ValueError("production request task selection mismatch")
+    context_files = {
+        f"context/{item.destination}": item for item in request.context_manifest.files
+    }
+    context_dirs = {"context"}
+    for name in context_files:
+        context_dirs.update(
+            str(path) for path in Path(name).parents if path != Path(".")
+        )
+    context_entries = [
+        item
+        for item in snapshot.manifest
+        if item["path"] == "context" or item["path"].startswith("context/")
+    ]
+    if (
+        len(context_entries) != len(context_files) + len(context_dirs)
+        or {item["path"] for item in context_entries}
+        != set(context_files) | context_dirs
+    ):
+        raise ValueError("sealed production context contains missing or extra entries")
+    for item in context_entries:
+        name = item["path"]
+        if name in context_dirs:
+            if item["type"] != "directory" or item["mode"] != 0o700:
+                raise ValueError("sealed production context directory changed")
+        else:
+            sealed = context_files[name]
+            content = snapshot.read(name)
+            if (
+                item["type"] != "file"
+                or item["mode"] != sealed.mode
+                or len(content) != sealed.content.size
+                or sha256_bytes(content) != sealed.content.sha256
+            ):
+                raise ValueError("sealed production context bytes or mode changed")
+    native_files = {
+        name: data
+        for name, data in snapshot.files.items()
+        if name.startswith("harbor-job/")
+    }
+    native_manifest = [
+        item
+        for item in snapshot.manifest
+        if item["path"] in {".", "harbor-job"} or item["path"].startswith("harbor-job/")
+    ]
+    return NativeSnapshot(native_files, native_manifest), request
 
 
 def _native_run_record(
@@ -1383,6 +1564,8 @@ def _native_run_record(
     ordinal: int,
     expected_task_checksum: str,
     expected_task_digest: str,
+    expected_run_id: str,
+    output_directory: Path,
     expected_agent_name: str = "oracle",
     expected_agent_info_name: str | None = None,
     expected_model_name: str | None = None,
@@ -1390,6 +1573,13 @@ def _native_run_record(
     expected_exception_type: str | None = None,
     require_atif: bool = False,
 ) -> dict[str, Any]:
+    report = validate_production_cli_report(
+        cli_document,
+        expected_run_id=expected_run_id,
+        expected_job=output_directory / "harbor-job",
+    )
+    complete_snapshot = snapshot
+    snapshot, request = _validated_native_projection(snapshot, report, output_directory)
     if expected_agent_info_name is None:
         expected_agent_info_name = expected_agent_name
     job_prefix = "harbor-job"
@@ -1408,6 +1598,7 @@ def _native_run_record(
     result = JobResult.model_validate_json(snapshot.read(result_path))
     if (
         config.job_name != "harbor-job"
+        or config.jobs_dir != output_directory
         or config.n_attempts != 1
         or config.n_concurrent_trials != 1
         or config.quiet is not True
@@ -1423,6 +1614,11 @@ def _native_run_record(
         or len(config.tasks) != 1
         or config.tasks[0].path is None
         or config.tasks[0].path.name != "authority-fencing"
+        or config.tasks[0].path != output_directory / "context/tasks/authority-fencing"
+        or request.plan.harbor.agent_name != expected_agent_name
+        or request.plan.harbor.model_name != expected_model_name
+        or request.plan.harbor.attempts != 1
+        or request.plan.harbor.concurrency != 1
     ):
         raise ValueError("native Harbor production config mismatch")
     if (
@@ -1493,6 +1689,7 @@ def _native_run_record(
         or trial_config.agent.model_name != expected_model_name
         or trial_config.task.path is None
         or trial_config.task.path.name != "authority-fencing"
+        or trial_config.task.path != config.tasks[0].path
     ):
         raise ValueError("native Harbor trial evidence mismatch")
     expected_provider: str | None = None
@@ -1577,6 +1774,9 @@ def _native_run_record(
             "sha256": _snapshot_digest(snapshot, manifest_path),
         },
         "cli": {
+            "run_id": report.run_id,
+            "state": report.state,
+            "cleanup_complete": report.cleanup_complete,
             "outcome": cli_document["outcome"],
             "reward": cli_document["reward"],
             "schema_version": cli_document["schema_version"],
@@ -1613,8 +1813,8 @@ def _native_run_record(
             },
         },
         "output_snapshot": {
-            "manifest": snapshot.manifest,
-            "manifest_sha256": manifest_digest(snapshot.manifest),
+            "manifest": complete_snapshot.manifest,
+            "manifest_sha256": manifest_digest(complete_snapshot.manifest),
         },
         "ordinal": ordinal,
         "trajectory": trajectory_record,
@@ -1680,10 +1880,15 @@ def run_production_proofs(
 
     def invoke(ordinal: int) -> dict[str, Any]:
         output = temporary_root / f"run-{ordinal}"
+        run_id = f"proof-{ordinal}-{uuid.uuid4().hex}"
         command = [
             str(installed_cli.executable),
             "run",
             "systems-design",
+            "--engine",
+            "docker",
+            "--run-id",
+            run_id,
             "--profile",
             PROOF_PROFILE,
             "--output",
@@ -1697,6 +1902,7 @@ def run_production_proofs(
             and key.upper() not in {"BOTO_CONFIG", "BOTOCORE_TCP_KEEPALIVE"}
         }
         environment["XDG_CONFIG_HOME"] = str(config_root)
+        environment["XDG_STATE_HOME"] = str(temporary_root / "state")
         result = _bounded_command(
             command,
             cwd=project,
@@ -1711,16 +1917,10 @@ def run_production_proofs(
             or result.stdout != (canonical(document) + "\n").encode()
         ):
             raise ValueError("production CLI output was not canonical JSON")
-        expected_keys = {
-            "job_directory",
-            "outcome",
-            "reward",
-            "schema_version",
-            "summary",
-        }
-        if set(document) != expected_keys:
-            raise ValueError("production CLI JSON schema changed")
         expected_job = output / "harbor-job"
+        validate_production_cli_report(
+            document, expected_run_id=run_id, expected_job=expected_job
+        )
         if (
             document["job_directory"] != str(expected_job)
             or document["schema_version"] != 1
@@ -1735,6 +1935,8 @@ def run_production_proofs(
             ordinal=ordinal,
             expected_task_checksum=expected_task_checksum,
             expected_task_digest=expected_task_digest,
+            expected_run_id=run_id,
+            output_directory=output,
         )
         record["cli"]["canonical_sha256"] = sha256_bytes(result.stdout[:-1])
         record["containment"] = result.containment
