@@ -3,8 +3,8 @@
 ## Status
 
 - Project state: P0 through P6 are complete for their local/static contracts. Live Tigris/Modal evidence includes cancellation, forced controller interruption/recovery, and the E-046 Single-region `iad` cutover. Current live provider IAM/privacy/encryption state, AWS behavior, and true provider preemption remain `unproven`.
-- Current action: PR 30 is merged as `ead3f90`, post-merge CI passed, and GitHub release `v0.1.0` contains the exact validated wheel/sdist. The release wheel passed isolated local Docker and detached Modal Oracle execution, fresh-process routing, artifact verification, and child cleanup. PyPI's OIDC exchange stopped before upload with `invalid-publisher`.
-- Next action: after the user configures the pending PyPI publisher for `Tetraslam/tetrabench`, workflow `release.yml`, environment `pypi`, rerun the failed publish job of release run `34006594371`, approve the protected job, and verify a fresh public installation. Reuse artifact `9981314035`; do not rebuild or retag. Future eval selection belongs to the user. Previously recorded live IAM/privacy/encryption, AWS consistency, and provider-preemption limits remain separate.
+- Current action: Tetrabench 0.1.0 is published on PyPI under MIT. Trusted Publishing uploaded the unchanged GitHub-built artifacts after installed local and detached Modal proofs. A fresh public tool installation passed custom-category authoring, local execution, result lookup, and automatic controller-wheel resolution; public hashes match the tested artifacts.
+- Next action: the modular CLI and initial release work is complete. Future eval selection belongs to the user; no historical candidate list authorizes implementation. Previously recorded live IAM/privacy/encryption, AWS consistency, and provider-preemption limits remain separate.
 - Task-catalog gate: E-132's corrected-byte local/detached execution and audit gates and E-143's exact-four calibration all pass. `authority-fencing` is admitted in `benchmarks/catalog.toml`; later systems and GitHub-workflow tasks remain absent pending their own complete gates.
 - Authoring UX: D-127 is merged through PR 26 with focused local and real-Docker evidence. It creates user-owned starter projects and tasks independently of the repository catalog.
 - Canonical record updated: 2026-09-05.
@@ -16,13 +16,13 @@
 | Behavior | Categories are validated project data. One `run` command selects an engine through project/profile/CLI configuration. Docker waits locally; Modal executes detached, and `--wait` observes without owning remote lifetime. Lifecycle commands route by recorded run identity. Unsupported capabilities fail before provider mutation. |
 | Atomic unit and shape | One sealed task selection and resolved request per run; preserve existing context/artifact bounds. One ownership claim remains the remote execution admission unit. A release publishes tested, immutable distribution artifacts, not a source-checkout assumption. |
 | Authority and lifecycle | Harbor owns native execution/results; existing S3 CAS and terminal records own remote coordination and final truth. Engine adapters own launch, inspection, cancellation, cleanup, and supported capabilities. Local run references must not become authority over remote state. Existing persisted request/plan bytes and digests remain readable unchanged. |
-| Native primitives and gaps | Retain Harbor Docker/Modal implementations, S3 coordination, and private filesystem primitives. Add a small internal engine registry, not an external plugin framework. Fix installed-wheel controller packaging, which currently assumes `Path(__file__).parents[2]` is a source checkout. Use PyPI Trusted Publishing where account authority permits. |
+| Native primitives and gaps | Harbor Docker/Modal implementations, S3 coordination, and private filesystem primitives remain in use behind a small internal engine registry. Controller packaging resolves and verifies the installed distribution instead of assuming a source checkout. PyPI uses GitHub OIDC Trusted Publishing. |
 | Evidence | Arbitrary-category authoring; old canonical-record round trips; shared snapshot mutation tests; engine defaults/overrides and unsupported-mode rejection; run-ID routing independent of current profile; cancellation and detached observer failure tests; isolated wheel local run and real detached Modal run/result/pull; MIT package metadata; reviewed CI and exact-artifact publication/install verification. |
 | Scope | No new eval task, automatic candidate queue, new runtime, VM support, or general judge framework. The user authorized MIT licensing and PyPI publication after release checks. |
 
 - [x] Implement and verify modular categories and engine/config/lifecycle behavior.
 - [x] Verify installed-distribution deployment and local/remote release smoke tests.
-- [ ] Merge reviewed changes, publish to PyPI, and verify public tool installation.
+- [x] Merge reviewed changes, publish to PyPI, and verify public tool installation.
 
 Validation: 1,406 non-Docker tests, all 11 required Docker tests, Ruff, formatting,
 ty, Bandit, actionlint, lock checks, dependency audit, distribution metadata,
@@ -40,8 +40,12 @@ reviewed cross-process tests. Reviewed-head and post-merge CI passed. Release ru
 `34006594371` passed reusable CI and distribution build; the exact wheel then
 passed the remote proof. Wheel SHA-256:
 `e349be8b583b9bba8d4330f0efa0bf5972983b643b0dcf1ae8daa7fe69d6bea4`.
-Only the PyPI account-side publisher registration and public installation proof
-remain blocked; the failed token exchange uploaded no distribution.
+After publisher registration, the same workflow's second attempt published both
+artifacts successfully. Public PyPI metadata and downloaded bytes match the
+retained hashes. An isolated `uv tool install --python 3.12 tetrabench==0.1.0`
+passed initialization with a custom category, Docker reward one, fresh-process
+result/status lookup, and exact-version controller-wheel resolution from PyPI.
+No local artifact override or source-checkout dependency was used.
 
 ### Local authoring working record
 
