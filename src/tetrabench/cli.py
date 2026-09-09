@@ -29,6 +29,8 @@ from tetrabench.canonical_json import dumps_canonical_json
 from tetrabench.catalog import get_section, load_catalog, select_tasks
 from tetrabench.config import load_project_config
 from tetrabench.context import resolve_context
+from tetrabench.costs import human_cost_lines
+from tetrabench.diagnostics import DiagnosticError, sanitize_error
 from tetrabench.engines import Engine, get_engine, selected_engine
 from tetrabench.engines.modal import (
     legacy_artifact_service as _artifact_service,
@@ -96,17 +98,37 @@ class _ReadAccessStore(Protocol):
 
 
 def _fail(error: Exception) -> None:
-    err.print(f"[red]error:[/red] {error}")
+    _, message = _safe_command_error(error)
+    err.print(f"[red]error:[/red] {message}")
     raise typer.Exit(2)
 
 
 def _safe_command_error(error: Exception) -> tuple[str | None, str]:
+    if isinstance(error, DiagnosticError):
+        return str(error.as_dict()["error_type"]), str(error)
+    if isinstance(error, ValidationError):
+        return "configuration_error", "; ".join(
+            item["msg"]
+            for item in error.errors(
+                include_input=False, include_context=False, include_url=False
+            )
+        )
     if isinstance(error, (BotoCoreError, ClientError, ModalError)):
-        return "provider_error", "provider request failed"
+        return "provider_error", str(sanitize_error(error))
     return None, str(error)
 
 
 def _fail_command(error: Exception, *, json_output: bool) -> None:
+    if isinstance(error, (BotoCoreError, ClientError, ModalError, DiagnosticError)):
+        diagnostic = sanitize_error(error)
+        if json_output:
+            _canonical_echo(diagnostic.as_dict(), stderr=True)
+        else:
+            err.print(
+                f"error: {diagnostic} ({diagnostic.as_dict()['error_type']})",
+                markup=False,
+            )
+        raise typer.Exit(2) from None
     error_type, message = _safe_command_error(error)
     if json_output:
         report = {"error": message, "schema_version": 1}
@@ -143,6 +165,8 @@ def _fail_doctor(error: Exception, *, json_output: bool) -> None:
         }
         if error_type is not None:
             report["error_type"] = error_type
+        if isinstance(error, (BotoCoreError, ClientError, ModalError, DiagnosticError)):
+            report.update(sanitize_error(error, operation="doctor").as_dict())
         _canonical_echo(report, stderr=True)
     else:
         suffix = f" ({error_type})" if error_type is not None else ""
@@ -192,6 +216,66 @@ def initialize(
         out.print(f"[green]created[/green] {created}")
 
 
+@app.command("agents")
+def agents(
+    name: Annotated[
+        str | None, typer.Argument(help="Optional controlled harness name.")
+    ] = None,
+    json_output: Annotated[bool, typer.Option("--json")] = False,
+) -> None:
+    """Show supported harnesses, options and the run-level configuration shape."""
+    from tetrabench.harnesses import capabilities, get_harness
+
+    try:
+        if name is not None:
+            get_harness(name)
+        entries = [
+            entry for entry in capabilities() if name is None or entry["name"] == name
+        ]
+    except ValueError as error:
+        _fail_command(error, json_output=json_output)
+    if json_output:
+        _canonical_echo({"schema_version": 1, "harnesses": entries})
+    else:
+        for entry in entries:
+            out.print(f"{entry['name']} ({entry['package']})", markup=False)
+            options = get_harness(str(entry["name"])).options
+            out.print(f"  options: {', '.join(options)}", markup=False)
+            out.print(
+                f"  native config: {entry['native_config']}; {entry['version']}",
+                markup=False,
+            )
+            if name is not None:
+                details = entry["option_details"]
+                if not isinstance(details, dict):
+                    raise TypeError("harness option details must be a mapping")
+                for option, detail in details.items():
+                    choices = detail.get("choices")
+                    choice_text = f" ({', '.join(choices)})" if choices else ""
+                    out.print(
+                        f"  {option}: {detail['type']}{choice_text}", markup=False
+                    )
+                out.print(
+                    f"  credential variables: {entry['credential_variables']}",
+                    markup=False,
+                )
+        out.print(
+            "Use [harness]: name, version, model, options, args, env, "
+            "native_config, ancillary_models.",
+            markup=False,
+        )
+        out.print(
+            "env accepts only ${VARIABLE} references. "
+            "native_config accepts format and path or text.",
+            markup=False,
+        )
+        out.print(
+            'ancillary_models = "primary" (default) or "native"; '
+            "no universal all-call or billing cap guarantee.",
+            markup=False,
+        )
+
+
 @task_app.command("new")
 def task_new(
     section: str,
@@ -219,6 +303,29 @@ def task_new(
         _canonical_echo(report)
     else:
         out.print(f"[green]created[/green] {fixture}")
+
+
+@app.command("category-create")
+def category_create(
+    name: str,
+    readme: Annotated[
+        str,
+        typer.Option(help="Existing README path relative to the catalog directory."),
+    ],
+    project: Annotated[Path, typer.Option()] = Path("."),
+    json_output: Annotated[bool, typer.Option("--json")] = False,
+) -> None:
+    """Add an empty task category without changing any task fixture."""
+    from tetrabench.categories import create_category
+
+    try:
+        create_category(project, name, readme)
+    except (OSError, RuntimeError, ValueError) as error:
+        _fail_command(error, json_output=json_output)
+    if json_output:
+        _canonical_echo({"schema_version": 1, "status": "created", "section": name})
+    else:
+        out.print(f"Created category {name}", markup=False)
 
 
 @task_app.command("validate")
@@ -327,6 +434,10 @@ def run(
         str | None, typer.Option(help="Execution engine; built-ins: docker, modal.")
     ] = None,
     run_id: Annotated[str | None, typer.Option(help="Explicit safe run ID.")] = None,
+    harness: Annotated[
+        Path | None,
+        typer.Option(help="TOML file containing a run-level [harness] table."),
+    ] = None,
     wait: Annotated[
         bool,
         typer.Option(
@@ -358,6 +469,13 @@ def run(
 
     try:
         overrides = _engine_override(engine)
+        if harness is not None:
+            from tetrabench.config import load_harness_override
+
+            harness_override = load_harness_override(harness)
+            overrides = ConfigOverrides(
+                engine=overrides.engine if overrides else None, harness=harness_override
+            )
         prepared = prepare_run(
             Path.cwd(),
             section,
@@ -446,6 +564,9 @@ def run(
             )
         if output_path is not None:
             out.print(f"[bold]Harbor job:[/bold] {output_path / 'harbor-job'}")
+        if outcome is not None:
+            for line in human_cost_lines(getattr(launched, "costs", None)):
+                out.print(line, markup=False)
     code = _result_exit(launched)
     if code:
         raise typer.Exit(code)
@@ -468,9 +589,12 @@ def doctor(
     ] = False,
 ) -> None:
     """Validate local inputs and optionally check read-only storage access."""
+    from tetrabench.preflight import check_runtime
+
     root = Path.cwd()
     topology: CoordinationTopology | None = None
     try:
+        check_runtime("doctor")
         config = load_project_config(root, profile=profile)
         catalog = load_catalog(root, config.catalog_path)
         resolve_context(root, config.context)
@@ -608,7 +732,10 @@ def controller_deploy(
     ] = False,
 ) -> None:
     """Deploy the selected profile's named controller resources and Function."""
+    from tetrabench.preflight import check_runtime
+
     try:
+        check_runtime("controller_deploy")
         spec = _deployment_spec(profile)
     except (ValueError, ValidationError) as error:
         _fail_command(error, json_output=json_output)
@@ -685,6 +812,8 @@ def _recorded_operation(
         ):
             raise ValueError("--environment cannot override a recorded run binding")
         engine = get_engine(reference.engine)
+        if operation == "verify" and not callable(getattr(engine, "verify", None)):
+            raise ValueError("explicit artifact verification requires a remote run")
         if operation in {"recover", "cancel", "artifacts"} and not getattr(
             engine.capabilities, operation
         ):
@@ -706,6 +835,12 @@ def _recorded_operation(
         _fail_command(error, json_output=json_output)
     if json_output:
         typer.echo(canonical_model_bytes(report).decode("utf-8"))
+    elif operation == "verify":
+        from tetrabench.integrity import ArtifactVerificationReport
+
+        if not isinstance(report, ArtifactVerificationReport):
+            raise TypeError("artifact verifier returned an invalid report")
+        _print_artifact_verification(report)
     else:
         out.print(f"[bold]Run:[/bold] {reference.run_id}")
         for field in (
@@ -722,8 +857,13 @@ def _recorded_operation(
         summary = getattr(report, "summary", None)
         if summary is not None:
             out.print(f"Aggregate: {summary.aggregate}")
+        if operation == "result":
+            for line in human_cost_lines(getattr(report, "costs", None)):
+                out.print(line, markup=False)
     state = getattr(report, "state", None)
     if state == "conflict":
+        raise typer.Exit(3)
+    if operation == "verify" and state != "verified":
         raise typer.Exit(3)
     if operation == "result":
         code = _result_exit(report)
@@ -990,6 +1130,8 @@ def result(
                         task.aggregate or "unavailable",
                     )
                 out.print(task_table)
+        for line in human_cost_lines(getattr(report, "costs", None)):
+            out.print(line, markup=False)
         if report.artifacts:
             table = Table("Artifact", "Bytes", "SHA-256", "Media type")
             for artifact in report.artifacts:
@@ -1005,6 +1147,60 @@ def result(
     exit_code = _result_exit(report)
     if exit_code:
         raise typer.Exit(exit_code)
+
+
+def _print_artifact_verification(report) -> None:
+    """Identical, untruncated audit evidence for recorded and legacy routing."""
+    out.print(f"Run: {report.run_id}", markup=False)
+    out.print(
+        f"Audit: {report.state}; {report.objects_verified}/{report.objects_total} "
+        f"objects verified; {report.bytes_verified}/{report.bytes_total} bytes",
+        markup=False,
+    )
+    out.print(
+        f"Missing: {len(report.missing)}; corrupt: {len(report.corrupt)}", markup=False
+    )
+    for kind, descriptors in (("missing", report.missing), ("corrupt", report.corrupt)):
+        for descriptor in descriptors:
+            out.print(
+                f"  {kind}: key={descriptor.key} size={descriptor.size} "
+                f"sha256={descriptor.sha256}",
+                markup=False,
+                highlight=False,
+                soft_wrap=True,
+            )
+    for reason in report.reasons:
+        out.print(f"Reason: {reason}", markup=False, highlight=False)
+
+
+@artifacts_app.command("verify")
+def artifacts_verify(
+    run_id: str,
+    profile: Annotated[str | None, typer.Option(help="Legacy remote profile.")] = None,
+    json_output: Annotated[bool, typer.Option("--json")] = False,
+) -> None:
+    """Stream and hash all bound remote inputs/artifacts, without downloading files."""
+    from tetrabench.engines.modal import legacy_verification_service
+
+    if _recorded_operation(run_id, "verify", json_output=json_output, profile=profile):
+        return
+    try:
+        report = legacy_verification_service(profile).verify(run_id)
+    except (
+        BotoCoreError,
+        ClientError,
+        ModalError,
+        OSError,
+        RuntimeError,
+        ValueError,
+    ) as error:
+        _fail_command(error, json_output=json_output)
+    if json_output:
+        typer.echo(canonical_model_bytes(report).decode())
+    else:
+        _print_artifact_verification(report)
+    if report.state != "verified":
+        raise typer.Exit(3)
 
 
 @artifacts_app.command("pull")

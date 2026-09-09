@@ -10,6 +10,7 @@ from typing import Literal
 from harbor.models.job.result import JobResult
 
 from tetrabench.canonical_json import loads_canonical_json, sha256_hex
+from tetrabench.costs import CostSummary, read_local_costs
 from tetrabench.docker_lifecycle import (
     cleanup_containers,
     observe_cleanup,
@@ -54,6 +55,7 @@ class LocalReport(FrozenRecord):
     detail: str = "Local native Harbor evidence."
     cleanup_complete: bool = False
     result_error: str | None = None
+    costs: CostSummary | None = None
 
 
 def _cancel_intent(reference: RunReference):
@@ -152,6 +154,7 @@ class DockerEngine:
             outcome=result.outcome,
             reward=result.reward,
             summary=result.summary,
+            costs=result.costs,
             job_directory=str(result.job_directory),
             cleanup_complete=observe_cleanup(output, identity=result.output_identity),
         )
@@ -231,6 +234,7 @@ class DockerEngine:
             outcome=_outcome(artifacts.result),
             reward=summary.aggregate,
             summary=summary,
+            costs=read_local_costs(job / "tetrabench-costs.json", request),
             job_directory=str(job),
             cleanup_complete=observe_cleanup(
                 paths.root, identity=reference.output_identity

@@ -235,18 +235,29 @@ def test_remote_result_exposes_every_nonterminal_admission_state(state: str) -> 
     assert report.admission_state == state
 
 
-def test_remote_result_terminal_exposes_reward_and_native_inventory(
+def test_remote_legacy_result_exposes_inventory_without_downloading_native_payload(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     terminal = _terminal()
     store = _Store(_terminal_state(terminal))
-    monkeypatch.setattr("tetrabench.remote._standard_reward", lambda _data: "0.75")
+    reads = []
+    original = store.read_content
+
+    def read_content(descriptor):
+        reads.append(descriptor)
+        assert descriptor.sha256 == sha256_hex(_legacy_controller_result())
+        return original(descriptor)
+
+    monkeypatch.setattr(store, "read_content", read_content)
 
     report = RemoteResultService(store).result("run-1")
 
     assert report.state == "terminal"
     assert report.outcome == "succeeded"
-    assert report.reward == "0.75"
+    assert report.reward is None
+    assert len(reads) == 1
+    assert report.verification_level == "summary"
+    assert report.payload_integrity == "unchecked"
     assert report.summary_status == "legacy_unavailable"
     assert tuple(item.logical_path for item in report.artifacts) == (
         "attempts/attempt-1/controller-result.json",
@@ -339,6 +350,82 @@ def _binary_controller_result() -> tuple[RequestRecord, bytes]:
         )
     )
     return request, controller
+
+
+def test_remote_costs_reuse_single_controller_summary_read(monkeypatch):
+    from tetrabench.canonical_json import dumps_canonical_json, loads_canonical_json
+    from tetrabench.costs import CostEvidence, summarize_costs
+
+    request, original = _binary_controller_result()
+    summary = summarize_costs(
+        [
+            CostEvidence(
+                scope="trial",
+                category="model",
+                amount_usd="0",
+                source="harness_reported",
+                coverage="partial",
+                source_artifacts=("job/result.json",),
+            ),
+            CostEvidence(
+                scope="trial",
+                category="auxiliary",
+                limitations=("Auxiliary cost unavailable",),
+            ),
+        ]
+    )
+    value = loads_canonical_json(original)
+    assert isinstance(value, dict)
+    controller = dumps_canonical_json(
+        value | {"costs": summary.model_dump(mode="json")}
+    )
+    terminal = _terminal(request=request, controller_result=controller)
+    store = _Store(_terminal_state(terminal), request_override=request)
+    reads = []
+
+    def only_summary(descriptor):
+        reads.append(descriptor.sha256)
+        assert descriptor.sha256 == sha256_hex(controller), (
+            "ordinary result fetched native payload"
+        )
+        return controller
+
+    monkeypatch.setattr(store, "read_content", only_summary)
+    result = RemoteResultService(store).result("run-1")
+    assert result.state == "terminal"
+    assert result.summary == _binary_summary()
+    assert result.costs == summary
+    assert result.costs.model.amount_usd == "0"
+    assert result.payload_integrity == "unchecked"
+    assert reads == [sha256_hex(controller)]
+
+
+def test_remote_rejects_unbound_cost_artifact_without_fetching_it():
+    from tetrabench.canonical_json import dumps_canonical_json, loads_canonical_json
+    from tetrabench.costs import CostEvidence, summarize_costs
+
+    request, original = _binary_controller_result()
+    value = loads_canonical_json(original)
+    assert isinstance(value, dict)
+    summary = summarize_costs(
+        [
+            CostEvidence(
+                scope="trial", category="model", source_artifacts=("unbound.json",)
+            )
+        ]
+    )
+    controller = dumps_canonical_json(
+        value | {"costs": summary.model_dump(mode="json")}
+    )
+    terminal = _terminal(request=request, controller_result=controller)
+    store = _Store(
+        _terminal_state(terminal),
+        request_override=request,
+        extra_content={sha256_hex(controller): controller},
+    )
+    result = RemoteResultService(store).result("run-1")
+    assert result.state == "conflict"
+    assert result.costs is None
 
 
 def _remote_summary_report(controller: bytes):

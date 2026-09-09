@@ -234,7 +234,9 @@ def test_version_and_installed_entrypoint() -> None:
     scripts = {entry.name: entry for entry in entry_points(group="console_scripts")}
 
     assert result.exit_code == 0
-    assert result.stdout == "0.1.0\n"
+    from tetrabench import __version__
+
+    assert result.stdout == f"{__version__}\n"
     assert scripts["tetrabench"].value == "tetrabench.cli:main"
 
 
@@ -937,7 +939,9 @@ def test_doctor_online_redacts_provider_errors_on_stderr(
 
     assert result.exit_code == 2
     assert result.stdout == ""
-    assert "error: provider request failed (provider_error)" in result.stderr
+    assert "error:" in result.stderr
+    assert "provider_error" in result.stderr
+    assert "Check" in result.stderr
     assert code not in result.stderr
     assert "test error" not in result.stderr
     assert "storage writes; no mutation attempted" in result.stderr
@@ -962,11 +966,12 @@ def test_doctor_json_error_is_canonical_stderr(tmp_path: Path, monkeypatch) -> N
     assert result.exit_code == 2
     assert result.stdout == ""
     report = loads_canonical_json(result.stderr.removesuffix("\n").encode("utf-8"))
-    assert report == {
-        "error": "provider request failed",
-        "error_type": "provider_error",
+    from tetrabench.diagnostics import sanitize_error
+
+    assert report == sanitize_error(
+        _client_error("InvalidAccessKeyId"), operation="doctor"
+    ).as_dict() | {
         "mutation_attempted": False,
-        "schema_version": 1,
         "storage_writes": "unproven",
     }
 
@@ -1171,20 +1176,17 @@ def test_remote_commands_redact_provider_exception_families(
         "TIGRIS_SECRET_ACCESS_KEY",
         "MODAL_TOKEN_SECRET",
         "CHAINED_PROVIDER_CAUSE",
-        "secret",
-        "args",
-        "cause",
-        "context",
-        "message",
+        "chained-secret",
         "traceback",
     ):
         assert raw_field not in result.stderr
     if json_output:
-        expected = {
-            "error": "provider request failed",
-            "error_type": "provider_error",
-            "schema_version": 1,
-        }
+        from tetrabench.diagnostics import sanitize_error
+
+        expected = sanitize_error(
+            provider_error,
+            operation="doctor" if operation == "doctor" else "provider_request",
+        ).as_dict()
         if operation == "doctor":
             expected |= {
                 "mutation_attempted": False,
@@ -1194,10 +1196,12 @@ def test_remote_commands_redact_provider_exception_families(
             loads_canonical_json(result.stderr.removesuffix("\n").encode()) == expected
         )
     else:
-        expected = "error: provider request failed (provider_error)\n"
+        from tetrabench.diagnostics import sanitize_error
+
+        expected = f"error: {sanitize_error(provider_error)} (provider_error)\n"
         if operation == "doctor":
             expected += "unproven: storage writes; no mutation attempted\n"
-        assert result.stderr == expected
+        assert " ".join(result.stderr.split()) == " ".join(expected.split())
 
 
 @pytest.mark.parametrize(

@@ -13,6 +13,7 @@ from tetrabench.config import load_project_config
 from tetrabench.controller import ModalControllerClient
 from tetrabench.engines import Capabilities
 from tetrabench.harbor import ModalChildObserver, S3ChildIdentitySource
+from tetrabench.integrity import ArtifactVerificationService
 from tetrabench.lifecycle import (
     CancellationService,
     RecoveryService,
@@ -21,6 +22,7 @@ from tetrabench.lifecycle import (
 )
 from tetrabench.models import ModalControllerConfig, RecordIdentifier
 from tetrabench.plan import canonical_model_bytes
+from tetrabench.preflight import check_runtime
 from tetrabench.receipts import ReceiptStore
 from tetrabench.records import ConflictRunState, TerminalRunState
 from tetrabench.remote import RemoteResultService
@@ -146,6 +148,7 @@ def legacy_cancellation_service(
     run_id: str | None = None,
     environment_name: str | None = None,
 ) -> CancellationService:
+    check_runtime("cancel")
     store, controller, environment = _legacy_binding(
         profile, run_id=run_id, environment_name=environment_name, mutation=True
     )
@@ -167,6 +170,7 @@ def legacy_recovery_service(
     run_id: str | None = None,
     environment_name: str | None = None,
 ) -> RecoveryService:
+    check_runtime("recover")
     store, controller, environment = _legacy_binding(
         profile, run_id=run_id, environment_name=environment_name, mutation=True
     )
@@ -190,6 +194,13 @@ def legacy_artifact_service(profile: str | None) -> ArtifactPullService:
     return ArtifactPullService(create_s3_store(config.storage))
 
 
+def legacy_verification_service(profile: str | None) -> ArtifactVerificationService:
+    config = load_project_config(Path.cwd(), profile=profile)
+    if config.storage is None:
+        raise ValueError("artifact verification requires storage configuration")
+    return ArtifactVerificationService(create_s3_store(config.storage))
+
+
 class ModalEngine:
     kind = "modal"
     capabilities = Capabilities(detached=True, default_wait=False, recover=True)
@@ -199,6 +210,7 @@ class ModalEngine:
         return controller.model_dump(), {"kind": "modal"}
 
     def launch(self, prepared: PreparedSubmission, output: Path | None):
+        check_runtime("run")
         launch = prepared.controller_launch
         if prepared.plan.storage is None or launch is None:
             raise ValueError(
@@ -231,6 +243,7 @@ class ModalEngine:
         return RemoteResultService(_bound_store(reference)).result(reference.run_id)
 
     def cancel(self, reference: RunReference):
+        check_runtime("cancel")
         if reference.environment_name is None:
             raise ValueError("missing controller environment")
         store = _bound_store(reference)
@@ -244,6 +257,7 @@ class ModalEngine:
         ).cancel(reference.run_id)
 
     def recover(self, reference: RunReference):
+        check_runtime("recover")
         if reference.environment_name is None:
             raise ValueError("missing controller environment")
         store = _bound_store(reference)
@@ -261,6 +275,11 @@ class ModalEngine:
     def artifacts(self, reference: RunReference, output: Path):
         return ArtifactPullService(_bound_store(reference)).pull(
             reference.run_id, output
+        )
+
+    def verify(self, reference: RunReference):
+        return ArtifactVerificationService(_bound_store(reference)).verify(
+            reference.run_id
         )
 
 

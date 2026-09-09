@@ -29,9 +29,11 @@ from tetrabench.controller_runtime import (
     ControllerRuntime,
     parse_controller_invocation,
 )
+from tetrabench.diagnostics import sanitize_error
 from tetrabench.harbor import ModalChildObserver, S3ChildIdentitySource
 from tetrabench.harbor_runner import HarborRunner
 from tetrabench.models import ProjectConfig
+from tetrabench.preflight import CONTROLLER_PYTHON_VERSION, check_runtime
 from tetrabench.s3 import create_s3_store
 
 CONTROLLER_TIMEOUT_SECONDS = 24 * 60 * 60
@@ -376,6 +378,7 @@ def build_modal_controller(
     modal_module: Any = modal,
 ) -> ModalControllerBundle:
     """Resolve the installed wheel and build the graph without contacting Modal."""
+    check_runtime("controller_build")
     if not 0 < spec.timeout_seconds <= CONTROLLER_TIMEOUT_SECONDS:
         raise ValueError("controller timeout must be between one second and 24 hours")
     wheel_name, wheel_bytes = _controller_wheel()
@@ -391,7 +394,7 @@ def build_modal_controller(
     wheel_digest = sha256_hex(wheel_bytes)
     remote_wheel = f"{REMOTE_ARTIFACT_ROOT}/{wheel_name}"
     image = (
-        modal_module.Image.debian_slim(python_version="3.12")
+        modal_module.Image.debian_slim(python_version=CONTROLLER_PYTHON_VERSION)
         .uv_sync(
             str(artifact_root),
             frozen=True,
@@ -411,7 +414,9 @@ def build_modal_controller(
         )
     )
     volume = modal_module.Volume.from_name(spec.volume_name, create_if_missing=True)
-    secret = modal_module.Secret.from_name(spec.secret_name)
+    secret = modal_module.Secret.from_name(
+        spec.secret_name, environment_name=spec.environment_name
+    )
     app = modal_module.App(spec.app_name)
 
     @app.function(
@@ -467,14 +472,18 @@ def ensure_modal_environment(
     modal_module: Any = modal,
     client: Any | None = None,
 ) -> Any:
-    """Create or resolve the profile Environment before deployment."""
-    environment = modal_module.Environment.from_name(
-        spec.environment_name,
-        create_if_missing=True,
-        client=client,
-    )
-    environment.hydrate(client=client)
-    return environment
+    """Resolve the explicitly provisioned namespace, without creating resources."""
+    check_runtime("controller_deploy")
+    try:
+        environment = modal_module.Environment.from_name(
+            spec.environment_name,
+            create_if_missing=False,
+            client=client,
+        )
+        environment.hydrate(client=client)
+        return environment
+    except modal.exception.Error as error:
+        raise sanitize_error(error, operation="modal_environment") from None
 
 
 def deploy_controller(
@@ -483,15 +492,26 @@ def deploy_controller(
     modal_module: Any = modal,
 ) -> dict[str, object]:
     """Deploy one already-confirmed profile App."""
+    check_runtime("controller_deploy")
     bundle = build_modal_controller(spec, modal_module=modal_module)
     try:
-        client = modal_module.Client.from_env()
+        try:
+            client = modal_module.Client.from_env()
+        except modal.exception.Error as error:
+            raise sanitize_error(error, operation="modal_auth") from None
         ensure_modal_environment(spec, modal_module=modal_module, client=client)
-        bundle.app.deploy(
-            name=spec.app_name,
-            environment_name=spec.environment_name,
-            client=client,
-        )
+        try:
+            bundle.secret.hydrate(client=client)
+        except modal.exception.Error as error:
+            raise sanitize_error(error, operation="modal_secret") from None
+        try:
+            bundle.app.deploy(
+                name=spec.app_name,
+                environment_name=spec.environment_name,
+                client=client,
+            )
+        except modal.exception.Error as error:
+            raise sanitize_error(error, operation="controller_deploy") from None
         return spec.as_dict() | {
             "deployed": True,
             "wheel_filename": bundle.wheel_filename,

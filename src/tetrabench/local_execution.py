@@ -17,6 +17,7 @@ from tetrabench.controller_runtime import (
     AttemptPaths,
     credential_free_harbor_environment,
 )
+from tetrabench.costs import CostSummary
 from tetrabench.docker_lifecycle import execution_owner
 from tetrabench.harbor import (
     ATTEMPT_LABEL,
@@ -25,6 +26,7 @@ from tetrabench.harbor import (
     RUN_LABEL,
 )
 from tetrabench.harbor_runner import HarborRunner
+from tetrabench.harnesses import validate_credentials
 from tetrabench.local_control import initialize_owner
 from tetrabench.plan import canonical_model_bytes
 from tetrabench.rewards import SectionRewardSummary
@@ -45,6 +47,7 @@ class LocalExecutionResult:
     job_directory: Path
     run_id: str
     output_identity: tuple[int, int]
+    costs: CostSummary | None = None
 
 
 class LocalOutputExistsError(FileExistsError):
@@ -79,11 +82,15 @@ def run_prepared_local(
     *,
     references: RunReferenceStore | None = None,
 ) -> LocalExecutionResult:
+    from tetrabench.preflight import check_runtime
+
+    check_runtime("run")
     if threading.current_thread() is not threading.main_thread():
         raise ValueError(
             "local execution requires the main thread for cancellation ownership"
         )
     request = prepared.request
+    validate_credentials(request.plan.harness)
     if (
         request.plan.controller.kind != "local"
         or request.plan.execution.kind != "docker"
@@ -200,6 +207,21 @@ def run_prepared_local(
                 raise ValueError(
                     "Harbor runner did not return a canonical reward summary"
                 )
+            if result.costs is not None:
+                job_metadata = result.job_directory.stat()
+                write_private_record(
+                    result.job_directory / "tetrabench-costs.json",
+                    dumps_canonical_json(
+                        {
+                            "schema_version": 1,
+                            "run_id": request.run_id,
+                            "request_sha256": request_sha256,
+                            "plan_sha256": request.plan_sha256,
+                            "costs": result.costs.model_dump(mode="json"),
+                        }
+                    ),
+                    expected_parent=(job_metadata.st_dev, job_metadata.st_ino),
+                )
             record("terminal")
             return LocalExecutionResult(
                 outcome=result.outcome,
@@ -208,6 +230,7 @@ def run_prepared_local(
                 job_directory=result.job_directory,
                 run_id=request.run_id,
                 output_identity=output_identity,
+                costs=result.costs,
             )
         except KeyboardInterrupt:
             with suppress(OSError):

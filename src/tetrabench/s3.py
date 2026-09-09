@@ -1,4 +1,9 @@
-"""Verified immutable S3 transport and publication."""
+"""Records-only observations; byte verification at publish, materialize, and audit.
+
+Valid control records bind descriptors, not the current availability or integrity
+of their payloads. Observation windows still enumerate every record family on
+every pass; only successfully parsed immutable bodies are reused within a window.
+"""
 
 from __future__ import annotations
 
@@ -86,6 +91,31 @@ class S3Client(Protocol):
 
 class S3IntegrityError(RuntimeError):
     """Stored object identity does not match its immutable key or descriptor."""
+
+
+class S3ListingLimitError(S3IntegrityError):
+    """A census is incomplete because its finite page or key budget was exhausted."""
+
+
+@dataclass(frozen=True, slots=True)
+class ListingLimits:
+    """Bounds per prefix scan, counting returned entries even when duplicated.
+
+    A run can execute 256 tasks x 32 trials, with start/stop/failure events and
+    recovery attempts. 100,000 entries leaves headroom without pretending the
+    append-only event history has an inherent schema bound. Larger histories
+    require an explicit larger budget. Sparse pages also consume the page budget.
+    """
+
+    max_pages: int = 128
+    max_keys: int = 100_000
+
+    def __post_init__(self) -> None:
+        if self.max_pages <= 0 or self.max_keys <= 0:
+            raise ValueError("listing page and key limits must be positive")
+
+
+DEFAULT_DISCOVERY_LISTING_LIMITS = ListingLimits(max_pages=1024, max_keys=1_000_000)
 
 
 class S3ConflictError(RuntimeError):
@@ -306,6 +336,7 @@ class _RunObservation:
     terminal_digests: set[str] = field(default_factory=set)
     invalid: dict[str, str] = field(default_factory=dict)
     pending: set[str] = field(default_factory=set)
+    content_identities: dict[str, tuple[str, int]] = field(default_factory=dict)
 
     def conflict_reasons(self) -> tuple[str, ...]:
         reasons = [
@@ -348,6 +379,8 @@ class S3Store:
         verification_delay_seconds: float = 0.1,
         multipart_threshold: int = DEFAULT_MULTIPART_THRESHOLD,
         multipart_chunk_size: int = DEFAULT_MULTIPART_CHUNK_SIZE,
+        run_listing_limits: ListingLimits | None = None,
+        discovery_listing_limits: ListingLimits | None = None,
     ) -> None:
         if verification_attempts <= 0:
             raise ValueError("verification_attempts must be positive")
@@ -371,6 +404,10 @@ class S3Store:
         self._verification_attempts = verification_attempts
         self._verification_delay_seconds = verification_delay_seconds
         self._multipart_threshold = multipart_threshold
+        self._run_listing_limits = run_listing_limits or ListingLimits()
+        self._discovery_listing_limits = (
+            discovery_listing_limits or DEFAULT_DISCOVERY_LISTING_LIMITS
+        )
         self._coordination_topology: CoordinationTopology | None = None
         self._transfer_config = TransferConfig(
             multipart_threshold=multipart_threshold,
@@ -512,6 +549,19 @@ class S3Store:
             collect=False,
         )
 
+    def _validate_content_descriptor(
+        self,
+        descriptor: ContentObject,
+        identities: dict[str, tuple[str, int]] | None = None,
+    ) -> None:
+        if descriptor.key != content_object_key(descriptor.sha256, prefix=self._prefix):
+            raise S3IntegrityError("content object is outside the configured namespace")
+        if identities is not None:
+            identity = (descriptor.sha256, descriptor.size)
+            previous = identities.setdefault(descriptor.key, identity)
+            if previous != identity:
+                raise S3IntegrityError("content descriptors disagree on size or hash")
+
     def read_content(self, descriptor: ContentObject) -> bytes:
         """Return verified content bytes for bounded controller materialization."""
         expected_key = content_object_key(descriptor.sha256, prefix=self._prefix)
@@ -566,7 +616,12 @@ class S3Store:
     def read_request(
         self, run_id: str, request_sha256: str, request_object_key: str
     ) -> RequestRecord:
-        """Fetch and validate one immutable request by its complete identity."""
+        """Validate request bytes and descriptor bindings, without fetching inputs.
+
+        Execution materializes inputs through read_content; publication and explicit
+        audits separately verify their bytes. This read is also safe for ownership
+        and cancellation checks when input payloads have become unavailable.
+        """
         run_id = validate_run_id(run_id)
         expected_key = request_key(run_id, request_sha256, prefix=self._prefix)
         if request_object_key != expected_key:
@@ -575,8 +630,9 @@ class S3Store:
         request = parse_canonical_model(data, RequestRecord)
         if request.run_id != run_id:
             raise S3IntegrityError("request body run ID does not match its key")
+        identities: dict[str, tuple[str, int]] = {}
         for item in request.context_manifest.files:
-            self.verify_content(item.content)
+            self._validate_content_descriptor(item.content, identities)
         return request
 
     def create_admission(self, admission: AdmissionRecord) -> AdmissionRead:
@@ -711,6 +767,8 @@ class S3Store:
             attempts=self._verification_attempts,
             delay_seconds=self._verification_delay_seconds,
         )
+        if reasons := observation.conflict_reasons():
+            raise S3ConflictError("; ".join(reasons))
         request_data = self._read_verified_object(
             request_key(
                 terminal.run_id,
@@ -757,7 +815,7 @@ class S3Store:
         attempts: int = 3,
         delay_seconds: float = 0.1,
     ) -> RunReadState:
-        """Read all visible run records across a bounded observation window."""
+        """Validate visible control records, never GET/HEAD input or artifact blobs."""
         run_id = validate_run_id(run_id)
         observation = self._observe_run(
             run_id,
@@ -800,7 +858,7 @@ class S3Store:
         namespace = f"{self._prefix}/runs/" if self._prefix else "runs/"
         run_ids: set[str] = set()
         malformed: list[MalformedRemoteKey] = []
-        for key in self._list_keys(namespace):
+        for key in self._list_keys(namespace, limits=self._discovery_listing_limits):
             try:
                 run_ids.add(self._run_id_from_authoritative_key(key, namespace))
             except ValueError as error:
@@ -1168,6 +1226,9 @@ class S3Store:
             for kind, prefix in prefixes.items():
                 try:
                     keys = self._list_keys(prefix)
+                except S3ListingLimitError as error:
+                    observation.invalid[f"listing:{prefix}"] = str(error)
+                    return observation
                 except S3IntegrityError as error:
                     observation.invalid[f"listing:{prefix}"] = str(error)
                     continue
@@ -1202,12 +1263,16 @@ class S3Store:
         if kind == "request":
             digest = self._key_digest(key, prefix)
             observation.request_digests.add(digest)
+            if digest in observation.requests:
+                return
             data = self._read_record_bytes(key, digest)
             record = parse_canonical_model(data, RequestRecord)
             if record.run_id != run_id:
                 raise ValueError("request body run ID does not match its key")
             for item in record.context_manifest.files:
-                self.verify_content(item.content)
+                self._validate_content_descriptor(
+                    item.content, observation.content_identities
+                )
             observation.requests[digest] = record
             return
         if kind == "terminal":
@@ -1217,22 +1282,26 @@ class S3Store:
             terminal = parse_canonical_model(data, TerminalRecord)
             if terminal.run_id != run_id:
                 raise ValueError("terminal body run ID does not match its key")
-            request_data = self._read_record_bytes(
-                request_key(run_id, terminal.request_sha256, prefix=self._prefix),
-                terminal.request_sha256,
-            )
-            request = parse_canonical_model(request_data, RequestRecord)
+            # Count the directly referenced request even if LIST or its body lags.
+            observation.request_digests.add(terminal.request_sha256)
+            request = observation.requests.get(terminal.request_sha256)
+            if request is None:
+                request = self.read_request(
+                    run_id,
+                    terminal.request_sha256,
+                    request_key(run_id, terminal.request_sha256, prefix=self._prefix),
+                )
             if request.run_id != run_id:
                 raise ValueError("terminal request dependency has the wrong run ID")
-            for item in request.context_manifest.files:
-                self.verify_content(item.content)
-            # A terminal's directly referenced request may be GET-visible while
-            # absent from LIST. Merge it with every listed request identity so
-            # a lagged second request remains a visible conflict.
-            observation.request_digests.add(terminal.request_sha256)
             observation.requests[terminal.request_sha256] = request
+            for item in request.context_manifest.files:
+                self._validate_content_descriptor(
+                    item.content, observation.content_identities
+                )
             for artifact in terminal.artifacts:
-                self.verify_content(artifact.content)
+                self._validate_content_descriptor(
+                    artifact.content, observation.content_identities
+                )
             observation.terminals[digest] = terminal
             return
         attempt_id, sequence, digest = self._event_key_parts(key, prefix)
@@ -1287,18 +1356,27 @@ class S3Store:
             raise ValueError("event key does not contain a valid sequence and digest")
         return attempt_id, int(sequence_text), digest
 
-    def _list_keys(self, prefix: str) -> list[str]:
+    def _list_keys(
+        self, prefix: str, *, limits: ListingLimits | None = None
+    ) -> list[str]:
+        limits = limits or self._run_listing_limits
         keys: list[str] = []
         continuation_token: str | None = None
         seen_tokens: set[str] = set()
+        pages = 0
         while True:
+            if pages >= limits.max_pages:
+                raise S3ListingLimitError("S3 listing incomplete: page budget exceeded")
             kwargs: dict[str, Any] = {"Bucket": self._bucket, "Prefix": prefix}
             if continuation_token is not None:
                 kwargs["ContinuationToken"] = continuation_token
             response = self._client.list_objects_v2(**kwargs)
+            pages += 1
             contents = response.get("Contents", ())
             if not isinstance(contents, (list, tuple)):
                 raise S3IntegrityError("S3 listing returned invalid contents")
+            if len(contents) > limits.max_keys - len(keys):
+                raise S3ListingLimitError("S3 listing incomplete: key budget exceeded")
             for item in contents:
                 if not isinstance(item, Mapping) or not isinstance(
                     item.get("Key"), str
@@ -1315,6 +1393,8 @@ class S3Store:
                 )
             if not truncated:
                 break
+            if len(keys) >= limits.max_keys:
+                raise S3ListingLimitError("S3 listing incomplete: key budget exceeded")
             if not next_token:
                 raise S3IntegrityError(
                     "truncated S3 listing omitted continuation token"

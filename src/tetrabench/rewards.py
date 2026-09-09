@@ -10,6 +10,7 @@ from typing import Annotated, Literal
 
 from pydantic import AfterValidator, Field, model_validator
 
+from tetrabench.costs import CostSummary
 from tetrabench.harbor_api import NativeJobArtifacts, NativeTrialArtifacts
 from tetrabench.models import (
     FrozenRecord,
@@ -201,6 +202,9 @@ class ControllerResultV1(FrozenRecord):
     harbor_version: Literal["0.22.0"]
     modal_version: Literal["1.5.4"]
     tetrabench_version: NonEmptyString
+    costs: CostSummary | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
 
 
 class ControllerResultV2(FrozenRecord):
@@ -214,6 +218,9 @@ class ControllerResultV2(FrozenRecord):
     modal_version: Literal["1.5.4"]
     tetrabench_version: NonEmptyString
     summary: SectionRewardSummary
+    costs: CostSummary | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
 
 
 def _resolved_task_path(context_root: Path, harbor_task: str) -> Path:

@@ -15,6 +15,8 @@ from pydantic import (
     model_validator,
 )
 
+from tetrabench.harness_config import HarnessConfig, ResolvedHarness
+
 SchemaVersion = Literal[1]
 RewardPolicy = Literal["numeric", "binary"]
 MAX_HARBOR_ATTEMPTS = 32
@@ -268,6 +270,7 @@ class HarborPatch(StrictModel):
 
 
 class ProfilePatch(StrictModel):
+    harness: HarnessConfig | None = None
     engine: EnginePatch | None = None
     controller: ControllerPatch | None = None
     execution: ExecutionPatch | None = None
@@ -278,6 +281,16 @@ class ProfilePatch(StrictModel):
 
     @model_validator(mode="after")
     def validate_engine_spelling(self) -> ProfilePatch:
+        if (
+            self.harness is not None
+            and self.harbor is not None
+            and (
+                self.harbor.agent_name is not None or self.harbor.model_name is not None
+            )
+        ):
+            raise ValueError(
+                "harness cannot be combined with legacy harbor agent/model"
+            )
         if self.engine is not None and (
             self.controller is not None or self.execution is not None
         ):
@@ -300,6 +313,7 @@ class ProjectConfig(StrictModel):
     selection: TaskSelection = Field(default_factory=TaskSelection)
     harbor: HarborConfig = Field(default_factory=HarborConfig)
     engine: EngineConfig | None = None
+    harness: HarnessConfig | None = None
 
     @model_validator(mode="before")
     @classmethod
@@ -315,6 +329,10 @@ class ProjectConfig(StrictModel):
     @model_validator(mode="after")
     def validate_controller_execution(self) -> ProjectConfig:
         _validate_destination(self.catalog_path)
+        if self.harness is not None and (
+            self.harbor.agent_name != "oracle" or self.harbor.model_name is not None
+        ):
+            raise ValueError("harness conflicts with legacy harbor agent/model")
         if self.execution.kind == "docker" and self.controller.kind != "local":
             raise ValueError("Docker execution requires an explicit local controller")
         if self.execution.kind == "modal" and self.controller.kind != "modal":
@@ -513,9 +531,16 @@ class ResolvedPlan(FrozenRecord):
     trials: tuple[ResolvedTrial, ...]
     runnable: bool
     not_runnable_reasons: tuple[NonEmptyString, ...]
+    harness: ResolvedHarness | None = None
 
     @model_validator(mode="after")
     def validate_invariants(self) -> ResolvedPlan:
+        if self.harness is not None and (
+            self.harbor.agent_name != "oracle" or self.harbor.model_name is not None
+        ):
+            raise ValueError(
+                "resolved harness conflicts with legacy harbor agent/model"
+            )
         compatible = (self.execution.kind, self.controller.kind) in {
             ("modal", "modal"),
             ("docker", "local"),

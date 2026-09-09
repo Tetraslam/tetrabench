@@ -1592,7 +1592,8 @@ def test_authority_fencing_non_admission_uses_isolated_production_cli_once(
         item["name"].lower(): item["version"]
         for item in distribution["distribution"]["installed_distributions"]
     }
-    assert installed["tetrabench"] == "0.1.0"
+    project = tomllib.loads((ROOT / "pyproject.toml").read_text())
+    assert installed["tetrabench"] == project["project"]["version"]
     assert installed["harbor"] == "0.22.0"
     serialized = result.stdout
     assert "/tmp/" not in serialized

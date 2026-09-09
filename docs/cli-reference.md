@@ -4,9 +4,10 @@ Tetrabench uses Rich for human output. Commands except `sections` accept
 `--json`, which writes one RFC 8785 canonical JSON document followed by a newline
 on success. Errors go to stderr. `plan` errors remain human-readable even with
 `--json`. Local configuration and integrity errors keep their specific message.
-Caught Botocore and Modal exceptions become `provider_error` with the fixed
-message `provider request failed`, so provider-controlled details do not cross
-the CLI boundary.
+Caught Botocore and Modal exceptions become `provider_error` with fixed advice
+selected from known exception types or service codes. Their messages, URLs, and
+chained errors are not copied into public diagnostics. See
+[diagnostics](#diagnostics) for codes and runtime requirements.
 
 ## Local project and tasks
 
@@ -20,7 +21,21 @@ task counts. Categories use `[sections.NAME]` tables in
 are 1 to 64 lowercase ASCII letters, digits, dots, underscores, or hyphens,
 starting with a letter or digit. Each section requires a `readme` path relative
 to the catalog directory; `description` is optional. To add a category to an
-existing project, create its README and add a section table with `tasks = []`.
+existing project, create its README, then run:
+
+```console
+mkdir -p benchmarks/data-quality
+printf '# Data quality\n' > benchmarks/data-quality/README.md
+tetrabench category-create data-quality --readme data-quality/README.md
+tetrabench task new data-quality check-output
+tetrabench task validate benchmarks/tasks/data-quality/check-output
+tetrabench task add data-quality check-output benchmarks/tasks/data-quality/check-output
+tetrabench plan data-quality --json
+```
+
+`category-create NAME --readme PATH [--project DIRECTORY]` requires an existing
+README relative to the catalog directory. It atomically appends a section with
+`tasks = []`, preserving existing catalog content and leaving task fixtures alone.
 
 `tetrabench task new SECTION TASK_ID` creates an unlisted task under
 `benchmarks/tasks/`. The section must already exist. `--project DIRECTORY`
@@ -54,7 +69,7 @@ claims write access.
 
 The project file is `tetrabench.toml` in the current directory. User profiles are
 in `~/.config/tetrabench/config.toml` on Linux (or under `XDG_CONFIG_HOME`).
-Precedence is project, selected user profile, then CLI `--engine`.
+Precedence is project, selected user profile, then CLI `--engine` / `--harness`.
 
 ```toml
 schema_version = 1
@@ -83,7 +98,9 @@ fields for persisted-record compatibility.
 
 ### Model API configuration
 
-Tetrabench passes `agent_name` and `model_name` unchanged to Harbor 0.22. The
+Legacy `[harbor]` profiles remain supported and unpinned. They do not provide the
+controlled settings or version evidence described below. Tetrabench passes
+`agent_name` and `model_name` unchanged to Harbor 0.22. The
 `opencode` adapter requires a `provider/model` name. Add this profile
 to your user configuration (with top-level `schema_version = 1`):
 
@@ -131,11 +148,189 @@ arbitrary Harbor agent kwargs nor an `api_key` field in TOML. Keep secret values
 out of project files, plans, and receipts. Native Harbor logs and artifacts may
 still contain workload-emitted secrets and must be treated as private.
 
+### Controlled harness configuration
+
+`tetrabench agents [NAME] [--json]` lists the registered harnesses. JSON includes
+package identity, supported native formats, option types/choices/defaults,
+credential variables, version restrictions, and limitations. Only the four
+listed adapters are registered; arbitrary agent import paths or shell arguments
+are not accepted.
+
+| Name | Native package | Native configuration | Supported options |
+| --- | --- | --- | --- |
+| `opencode` | `opencode-ai` | JSON | `variant`, `title` |
+| `codex` | `@openai/codex` | TOML or JSON | `reasoning_effort`, `reasoning_summary`, `web_search` |
+| `claude-code` | `@anthropic-ai/claude-code` | JSON | `max_turns`, `reasoning_effort`, `max_budget_usd`, `fallback_model`, `append_system_prompt`, `allowed_tools`, `disallowed_tools`, `permission_mode`, `max_thinking_tokens` |
+| `pi` | `@earendil-works/pi-coding-agent` | JSON with `settings` and/or `models` objects | `thinking`, `model_api` |
+
+Use `[harness]` in the project, `[profiles.NAME.harness]` in user configuration,
+or a separate TOML file passed to `run --harness FILE`. That separate file must
+contain only the `[harness]` table and its subtables, without `schema_version`,
+engine settings, or task selection. A higher-precedence harness replaces the
+whole lower-precedence harness, rather than merging individual options.
+`[harbor]` still controls `attempts` and `concurrency`. Do not combine a harness
+with legacy agent/model selection in the same configuration layer; a later
+legacy agent/model override clears the controlled harness.
+
+Required fields are `name`, exact `version = "x.y.z"`, and `model = "provider/model"`.
+Controlled OpenCode accepts only `1.18.29`, the verified native CLI pin. Its run
+command uses `--auto`, not Harbor 0.22's unsupported
+`--dangerously-skip-permissions`. Other OpenCode pins, including `1.2.15`, fail
+validation before installation. `agents opencode --json` reports this restriction
+in `supported_versions`; the other adapters do not have that allowlist.
+OpenCode and Pi preserve nested model IDs; Codex and Claude Code reject them
+because their Harbor adapters truncate them. Pi requires version 0.74.0 or later
+and uses Harbor's native Earendil installer. During setup, tetrabench probes the
+installed executable and refuses a version mismatch before task solving. The pin
+does not make all transitive dependencies, plugins, or hosted models immutable.
+
+Optional fields:
+
+- `options`: only the adapter's listed options. Limits such as `max_turns` use
+  integers; `max_budget_usd` uses a decimal string, such as `"1.50"`.
+- `args`: supported flags and values normalized to those same options, not a raw
+  shell escape. For example, `args = ["--variant", "high"]` replaces
+  `[harness.options] variant = "high"`; specifying both is an error.
+- `env`: agent variable names mapped to host references such as
+  `OPENAI_API_KEY = "${MODEL_API_KEY}"`. Literal credentials and reserved storage,
+  controller, or process-control variables are rejected. Custom credential names
+  must be referenced by native configuration. Docker resolves references from
+  the local process; Modal resolves them inside the controller's named Secret.
+  The submitter does not upload local credential values.
+- `native_config`: `format` plus exactly one of `path` or `text`. The UTF-8
+  content is bounded to 128 KiB and sealed into the plan with its SHA-256; a path
+  is resolved relative to the TOML file declaring it. Host paths are not sent to
+  the controller. Native auth/env overlays and conflicting model settings fail
+  validation. Native fields outside tetrabench's checks retain native semantics.
+- `ancillary_models`: `"primary"` (default) or `"native"`. Primary routes known
+  ancillary settings to the requested model: OpenCode's small model and Claude
+  Code's default tiers/subagent model. OpenCode gets a fixed title to avoid title
+  generation; conflicting explicit ancillary models are rejected. Codex role
+  `config_file` entries, including roles inside native `profiles`, require
+  `"native"` because role files can override model selection. These referenced
+  files are not automatically bundled by `native_config`; provide them in the
+  task environment. Native allows the harness's ancillary choices. Neither policy
+  intercepts every possible model call or guarantees a universal billing cap.
+
+The [README OpenCode example](../README.md#project-configuration) is a complete
+portable file. Equivalent examples for the other adapters follow. Save each in
+its named file, supply the referenced environment variable, then use
+`tetrabench run example --engine docker --harness FILE` with your network-enabled
+task. These are offline-validated configurations, not claims of current model or
+endpoint availability.
+
+`codex-run.toml`:
+
+```toml
+[harness]
+name = "codex"
+version = "0.114.0"
+model = "openai/gpt-5"
+
+[harness.options]
+reasoning_effort = "medium"
+web_search = "disabled"
+
+[harness.env]
+OPENAI_API_KEY = "${MODEL_API_KEY}"
+
+[harness.native_config]
+format = "toml"
+text = 'model_context_window = 100000'
+```
+
+`claude-run.toml`:
+
+```toml
+[harness]
+name = "claude-code"
+version = "2.1.63"
+model = "anthropic/claude-sonnet-4-6"
+
+[harness.options]
+max_turns = 3
+
+[harness.env]
+ANTHROPIC_API_KEY = "${MODEL_API_KEY}"
+
+[harness.native_config]
+format = "json"
+text = '{"permissions":{"allow":["Read"]}}'
+```
+
+`pi-run.toml`:
+
+```toml
+[harness]
+name = "pi"
+version = "0.74.0"
+model = "openai/gpt-5"
+
+[harness.options]
+thinking = "high"
+
+[harness.env]
+OPENAI_API_KEY = "${MODEL_API_KEY}"
+
+[harness.native_config]
+format = "json"
+text = '{"settings":{"compaction":{"enabled":true}}}'
+```
+
+For a native file, replace `text` with `path = "./settings.json"` (or a TOML path
+for Codex). Pi's wrapper writes its `settings` and `models` objects as native
+`settings.json` and `models.json`. A Pi base-URL environment reference requires
+an explicit `model_api` option; this endpoint route cannot also supply a native
+`models` object. Use `agents pi --json` for accepted API names.
+
+Pi's native `models` configuration uses a bare agent environment variable name
+for `apiKey`, such as `"TOKEN"`, not `"$TOKEN"` or `"${TOKEN}"`. The outer
+`harness.env` still maps that name to `"${HOST_TOKEN}"`. For example, save this
+portable custom-endpoint configuration as `pi-custom-run.toml`:
+
+```toml
+[harness]
+name = "pi"
+version = "0.74.0"
+model = "custom/model"
+
+[harness.env]
+TOKEN = "${HOST_TOKEN}"
+
+[harness.native_config]
+format = "json"
+text = '''
+{"models":{"providers":{"custom":{
+  "baseUrl":"https://example.test/v1",
+  "api":"openai-responses",
+  "apiKey":"TOKEN",
+  "models":[{"id":"model"}]
+}}}}
+'''
+```
+
+Replace the example endpoint and model with your own before running. No price
+is supplied here; Pi's default zero does not prove a free model call.
+
+Codex native `env_key`, `bearer_token_env_var`, and the values of
+`env_http_headers` likewise name agent variables declared in `harness.env`.
+For example, `env_key = "TOKEN"` selects `TOKEN = "${HOST_TOKEN}"` from the outer
+table. Direct `bearer_token` and `experimental_bearer_token` fields are rejected,
+even if their values look like environment references. Use the native selectors
+instead of literal secrets or shell interpolation.
+
+Controlled runs use declared environment references, not ambient interactive
+logins or home configuration. Anonymous endpoints require explicit native
+endpoint configuration. Native adapters still own execution. The agent artifact
+`tetrabench-harness.json` records requested/observed CLI versions, options,
+credential references, and effective native configs with resolved credential
+values replaced by references. Treat the rest of the native artifacts as private.
+
 ## Running an evaluation
 
 ```text
 tetrabench run SECTION [--engine docker|modal] [--profile PROFILE]
-    [--run-id RUN_ID] [--wait | --detach] [--output DIRECTORY] [--json]
+    [--harness FILE] [--run-id RUN_ID] [--wait | --detach] [--output DIRECTORY] [--json]
 ```
 
 Both engines execute sealed task fixtures and explicitly configured context.
@@ -167,6 +362,36 @@ summary. Binary sections report exact pass count, sample count, and pass rate.
 Numeric sections report their aggregate reward. A successful Harbor outcome
 means execution completed without trial errors, not that every task passed its
 verifier. Check the reward or pass rate separately.
+
+### Cost reports
+
+Run/result output includes costs when evidence is available. JSON `costs` has
+separate `model`, `auxiliary`, and `infrastructure` totals plus per-scope
+`evidence`. Each amount is a decimal USD string or `null`; coverage is `complete`,
+`partial`, or `unknown`. Sources distinguish `harness_reported`, `estimate`,
+`provider_reported`, and `unknown`; source artifact paths and requested/observed
+models preserve provenance. Harness and estimated amounts are not a reconciled
+provider invoice. Missing evidence stays unknown, never silently zero.
+
+Pi may report zero for an unpriced custom model. When pricing is absent or
+unverified, tetrabench excludes that zero from `amount_usd` and known
+subtotals, retains the raw reported subtotal in `reported_amount_usd`, and adds
+an unpriced-usage limitation. A wholly unpriced scope has `amount_usd = null`
+and unknown coverage. Explicit complete model pricing can distinguish a
+configured zero from Pi's default zero; it still does not establish provider
+billing. Pi's message stream also excludes compaction and branch-summary costs.
+
+If Claude Code's raw result stream is unavailable, its Harbor `cost_usd`
+aggregate remains `harness_reported` with a limitation that the amount may be
+native-reported or estimated. Absence of the raw stream does not prove how the
+price was obtained. Codex's Harbor aggregate fallback is labeled `estimate`.
+
+An aggregate and its per-call records are alternative evidence for the same
+scope, not additive charges. Auxiliary observations included in a model subtotal
+are not counted again. The runner does not collect infrastructure billing or
+perform live pricing lookups. Older results may have no cost supplement. Cost
+evidence does not change verifier rewards, and native budget options do not
+provide a tetrabench-wide hard cap.
 
 ## Controller deployment
 
@@ -232,9 +457,9 @@ does not cancel remote compute. Use `cancel RUN_ID` explicitly to stop it.
 
 New Docker and Modal runs record their engine and location in local user state
 (`~/.local/state/tetrabench/run-references` on Linux, or under `XDG_STATE_HOME`).
-`status`, `result`, `cancel`, `recover`, and `artifacts pull` use that reference
-to select the original engine, storage, and controller without reading the
-current project or profile. They work from another directory, even if the
+`status`, `result`, `cancel`, `recover`, `artifacts pull`, and `artifacts verify`
+use that reference to select the original engine, storage, and controller without
+reading the current project or profile. They work from another directory, even if the
 original project configuration has changed or vanished. Neither `--profile` nor
 `--environment` can rebind a valid recorded run. Keep Docker output at its
 recorded path. Remote operations still need current provider credentials.
@@ -268,7 +493,25 @@ inspection error does not prove that a controller has stopped.
 
 `tetrabench result RUN_ID` validates native Harbor files for Docker. For Modal,
 it reads S3 only and does not require a submission receipt or construct a Modal
-client. Its states and exits are:
+client. Routine remote `status`, `result`, and `runs` validate small authority
+records and bindings without fetching every sealed input or native artifact.
+`result` also fetches and verifies the bounded controller-result summary.
+Remote result JSON (including entries in `runs`) reports:
+
+| Field | Meaning |
+| --- | --- |
+| `verification_level = "none"` | No validated record/summary level established, for example unknown or conflicting work |
+| `verification_level = "records"` | Authority records validated; no controller summary verified |
+| `verification_level = "summary"` | Authority records and the controller summary validated |
+| `payload_integrity = "unchecked"` | This read did not verify all input/artifact bytes, even with a successful outcome |
+
+A missing or oversized controller summary can leave a terminal result with
+`summary_status = "unavailable"` and record-level verification. Invalid summary
+bytes or bindings produce conflict. Legacy summaries can be validated while
+their reward summary remains `legacy_unavailable`. Run `artifacts verify` to
+audit complete remote content; ordinary result reads do not remember an earlier
+audit as a permanent integrity guarantee. Docker reports use their local native
+evidence contract rather than these remote fields. Result states and exits are:
 
 | State | Exit |
 | --- | --- |
@@ -335,6 +578,28 @@ interruption and recovery.
 
 ## Remote artifacts
 
+`tetrabench artifacts verify RUN_ID [--profile PROFILE] [--json]` streams and
+hashes all sealed input and artifact objects bound to an authoritative Modal
+terminal, including failed or cancelled terminals. It deduplicates identical
+content descriptors, checks size and SHA-256, and rechecks terminal authority
+after reading. It writes no local files and performs no provider mutation.
+Conflicting records, no terminal, or inventories outside the audit limits are
+refused. Docker does not support this remote audit.
+
+```console
+tetrabench artifacts verify first-run --json
+```
+
+The report separates `missing` from `corrupt` objects and reports reference
+counts, unique object/byte totals, and verified counts. Human output includes
+`Audit: STATE`, verified/total objects and bytes, and `Missing: N; corrupt: M`.
+It lists each missing or corrupt object's key, expected size, and SHA-256, plus
+any refusal reasons, for both recorded-run and legacy-profile routing.
+States are `verified` (exit `0`), `failed` or `refused` (exit `3`).
+Configuration/provider failures exit
+`2`. Verification describes bytes read during that operation, not future storage
+availability. Publication and downloads retain their own content checks.
+
 `tetrabench artifacts pull RUN_ID OUTPUT_DIR` uses a recorded Modal reference;
 `--profile PROFILE` is the legacy remote fallback. It accepts only a
 successful, validated terminal. Failed and cancelled terminals remain available
@@ -350,3 +615,36 @@ call provider delete APIs.
 Docker does not support `artifacts pull`. Its artifacts remain in the native
 job directory reported by `run`, `status`, and `result`; the command does not
 copy them elsewhere.
+
+## Diagnostics
+
+Execution and controller deployment require Linux and CPython 3.12, matching the
+serialized Modal controller. `doctor` checks this offline along with installed
+Harbor 0.22.0 and Modal 1.5.4. `run`/`submit`, controller deployment, and Modal
+`cancel`/`recover` reject an unsupported runtime before provider mutation.
+Execution preflight also precedes provider clients, image builds, and output
+reservation.
+
+Read-only remote `result`, `status`, and `artifacts verify` do not invoke that
+execution guard, so it does not block inspecting an existing run under another
+Python version. This is not a claim that every dependency supports that Python;
+the installed package must still import and run. Configuration/version inspection
+is not subject to an import-time platform guard either.
+
+Provider and preflight JSON errors include `code`, `operation`, `exception_type`,
+`error_type`, and fixed actionable `error` text; missing-credential errors may
+also list `credential_names`, never values. Generic configuration errors retain
+their validation message and need not have a diagnostic code.
+
+| Code | Action |
+| --- | --- |
+| `unsupported_python`, `unsupported_platform` | Use Linux with CPython 3.12. Install a released build or the local wheel described in [Development](../README.md#development). |
+| `runtime_dependency_mismatch` | Restore the package's locked Harbor/Modal environment. |
+| `missing_credentials` | Supply the declared variables or the provider's standard credential chain. |
+| `authentication_required`, `authentication_expired` | Authenticate with Modal or renew the provider credentials. |
+| `modal_environment_missing`, `modal_secret_missing`, `modal_resource_missing` | Use `controller info` with the same profile to locate the exact versioned environment and resource names. |
+| `provider_permission_denied` | Check account, environment, and permissions for the operation. |
+| `provider_request_failed` | Check availability/configuration and inspect run status before retrying a mutation. |
+
+For an unpublished checkout, retain and install its local wheel; do not assume a
+version named in a diagnostic is already available on PyPI.

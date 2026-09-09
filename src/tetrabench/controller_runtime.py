@@ -27,6 +27,7 @@ from tetrabench.controller import (
     TerminalAcknowledgementPending,
     TerminalPublicationUncertain,
 )
+from tetrabench.costs import CostSummary
 from tetrabench.harbor import ENVIRONMENT_IMPORT_PATH, child_event_sink
 from tetrabench.lifecycle import ChildCleanupObserver
 from tetrabench.plan import canonical_model_bytes
@@ -142,6 +143,7 @@ class HarborRunResult:
     evidence: tuple[str, ...] = ()
     warnings: tuple[str, ...] = ()
     atif_paths: tuple[Path, ...] = ()
+    costs: CostSummary | None = None
 
 
 class HarborRunnerProtocol(Protocol):
@@ -373,6 +375,9 @@ class ControllerRuntime:
         *,
         function_call_id: str,
     ) -> ControllerRuntimeResult:
+        from tetrabench.preflight import check_runtime
+
+        check_runtime("run")
         self._store.require_coordination_safe()
         with credential_free_harbor_environment():
             return self._run_credential_free(
@@ -414,6 +419,11 @@ class ControllerRuntime:
                     ),
                 )
 
+            phase = "harness-preflight"
+            from tetrabench.harnesses import validate_credentials
+
+            preflight_request = self._admission.validate_invocation(invocation)
+            validate_credentials(preflight_request.plan.harness)
             phase = "admission-claim"
             decision = self._admission.claim(invocation, function_call_id)
             if not decision.admitted:
@@ -543,6 +553,7 @@ class ControllerRuntime:
                     ),
                     warnings=result.warnings,
                     atif_paths=result.atif_paths,
+                    costs=result.costs,
                 )
             phase = "artifact-validation"
             self._validate_runner_result(paths, result)
@@ -576,10 +587,10 @@ class ControllerRuntime:
                     summary=result.summary,
                     tetrabench_version=version("tetrabench"),
                 )
-            _write_new(
-                paths.controller_result,
-                canonical_model_bytes(controller_result),
-            )
+            result_value = controller_result.model_dump(mode="json")
+            if result.costs is not None:
+                result_value["costs"] = result.costs.model_dump(mode="json")
+            _write_new(paths.controller_result, dumps_canonical_json(result_value))
             self._volume.commit()
             self._volume.reload()
             phase = "artifact-publication"

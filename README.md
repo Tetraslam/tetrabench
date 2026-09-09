@@ -40,6 +40,8 @@ Pass rate: 1 (1/1)
 
 The installed CLI works outside its source checkout. For a development build,
 install a local wheel instead (see [Development](#development)).
+These docs describe this checkout; features absent from your installed release
+require that local build, not an unpublished version from PyPI.
 
 `init` creates a standalone project with the neutral `example` category:
 
@@ -81,6 +83,10 @@ Categories are data in `benchmarks/catalog.toml`, called *sections* by the CLI.
 They are not limited to this repository's benchmark domains. The command above
 runs all selected tasks in `example`, including the starter.
 
+To add an empty category, first create its README under `benchmarks/`, then run
+`tetrabench category-create data-quality --readme data-quality/README.md`.
+The README path is relative to the catalog directory and must already exist.
+
 `task validate` validates a sealed private copy through Harbor 0.22 without
 Docker or provider calls. `task add` validates again before atomically adding a
 binary entry to your catalog. See the [CLI reference](docs/cli-reference.md) for
@@ -98,6 +104,8 @@ stricter rules used by tetrabench's own benchmark catalog.
 | --- | --- | --- |
 | `init` | Create a runnable local project | New directory |
 | `sections` | List configured categories and task counts | None |
+| `category-create` | Add an empty category using an existing README | Atomic catalog update |
+| `agents [NAME]` | Show controlled harnesses, options, and credential variables | None |
 | `task new` | Create an unlisted Harbor task | New task directory |
 | `task validate` | Seal and validate one fixture | None |
 | `task add` | Add a validated task to the project catalog | Atomic catalog update |
@@ -113,6 +121,7 @@ stricter rules used by tetrabench's own benchmark catalog.
 | `cancel` | Interrupt local work or cancel remote work | Mutation, confirmation required |
 | `recover` | Clean a stopped Modal owner and prepare a successor | Cloud mutation, confirmation required |
 | `artifacts pull` | Download a successful Modal run's artifacts | New private output directory |
+| `artifacts verify` | Stream and hash a Modal terminal's inputs and artifacts | Provider reads; no local download |
 
 Commands except `sections` accept `--json` for canonical machine-readable output.
 The `--json` forms of `controller deploy`, `cancel`, and `recover` require
@@ -149,8 +158,49 @@ User-specific overrides live at `~/.config/tetrabench/config.toml` on Linux.
 They can select models and storage locations without committing personal
 settings. Keep credentials in environment variables or provider credential
 stores, not TOML. See [model API configuration](docs/cli-reference.md#model-api-configuration)
-for OpenCode examples. Harbor forwards model credentials into the task;
-tetrabench does not copy your interactive OpenCode login or home configuration.
+for legacy profiles. For a controlled run, save this portable file as
+`opencode-run.toml`:
+
+```toml
+[harness]
+name = "opencode"
+version = "1.18.29"
+model = "openai/gpt-5"
+ancillary_models = "primary"
+
+[harness.options]
+variant = "high"
+
+[harness.env]
+OPENAI_API_KEY = "${MODEL_API_KEY}"
+
+[harness.native_config]
+format = "json"
+text = '{"compaction":{"auto":true}}'
+```
+
+```console
+tetrabench agents
+tetrabench agents opencode --json
+tetrabench run example --engine docker --harness ./opencode-run.toml
+```
+
+Supply `MODEL_API_KEY` through your secret manager. Before that model run, adapt
+your own task's agent network policy and timeout: the generated starter permits
+neither network access nor enough time for agent installation. Keep its separate
+verifier offline. The example validates configuration, not model availability.
+
+`--harness` replaces the run's harness without editing task bytes. Project
+`[harness]` and user `[profiles.NAME.harness]` tables accept the same schema.
+Supported harnesses are OpenCode, Codex, Claude Code, and native Earendil Pi
+(`@earendil-works/pi-coding-agent`, version 0.74.0 or later). Controlled OpenCode
+accepts only the verified 1.18.29 pin and uses its native `--auto` flag. Check
+`agents NAME --json` for each adapter's capabilities and version restrictions.
+The exact version pin is checked against the installed agent CLI before it solves
+the task; it does not freeze all dependencies or hosted models. Tetrabench does
+not copy interactive logins or home configuration. See the
+[controlled harness reference](docs/cli-reference.md#controlled-harness-configuration)
+for native config files, credential references, and ancillary-model limits.
 
 ## Detached Modal runs
 
@@ -222,6 +272,8 @@ tetrabench controller deploy --profile cloud
 tetrabench run example --engine modal --profile cloud --wait --run-id first-run
 tetrabench status first-run
 tetrabench result first-run
+# Explicitly audit remote input and artifact bytes:
+tetrabench artifacts verify first-run
 # After a successful result:
 tetrabench artifacts pull first-run ./first-run-artifacts
 ```
@@ -240,6 +292,18 @@ reference, use the original project/profile configuration. Legacy `cancel` and
 did not store. See the [CLI reference](docs/cli-reference.md#run-references).
 Docker artifacts stay at their recorded local location; `artifacts pull` does
 not copy them. Native logs and artifacts may contain workload-emitted secrets.
+
+Routine remote reads validate authority records and, for `result`, the small
+controller summary. JSON reports distinguish `verification_level` from
+`payload_integrity = "unchecked"`; they do not rehash the full payload inventory.
+Use `artifacts verify` for that read-only audit; human output shows verified totals
+and separate missing/corrupt counts. Publication and artifact downloads still
+verify content. Cost reports separate model, auxiliary, and infrastructure
+evidence, with source and coverage labels. Unknown cost is not zero; reported
+amounts and estimates are not a provider invoice or a universal spending cap.
+Pi's unpriced default zero is excluded from known subtotals, and a Claude Code
+aggregate without its raw source is not assumed to be an estimate. See
+[cost reports](docs/cli-reference.md#cost-reports) for those provenance limits.
 
 ## Repository benchmarks
 

@@ -122,6 +122,9 @@ def prepare_submission(
     validate_config: Callable[[ProjectConfig], None] | None = None,
 ) -> PreparedSubmission:
     """Resolve and seal locally, refusing empty plans before cloud access."""
+    from tetrabench.preflight import check_runtime
+
+    check_runtime("submit" if require_remote else "run")
     root = root.absolute()
     authority = open_project_root(root)
     try:
@@ -207,6 +210,9 @@ def _prepare_submission_from_authority(
         tasks,
         context=resolved_context,
     )
+    from tetrabench.harnesses import validate_credential_configuration
+
+    validate_credential_configuration(plan.harness)
     if not plan.runnable or not plan.trials:
         reasons = "; ".join(plan.not_runnable_reasons)
         raise SubmissionRefusedError(f"plan is not runnable: {reasons}")
@@ -270,6 +276,9 @@ class SubmissionService:
         self._timestamp = timestamp
 
     def submit(self, prepared: PreparedSubmission) -> SubmissionReceipt:
+        from tetrabench.preflight import check_runtime
+
+        check_runtime("submit")
         self._validate_prepared(prepared)
         with self._references().admission(
             prepared.request.run_id,
@@ -282,6 +291,9 @@ class SubmissionService:
 
     def recover(self, prepared: PreparedSubmission) -> SubmissionReceipt:
         """Explicitly spawn another call while durable admission is prepared."""
+        from tetrabench.preflight import check_runtime
+
+        check_runtime("recover")
         self._validate_prepared(prepared)
         with self._references().admission(
             prepared.request.run_id,
@@ -317,6 +329,9 @@ class SubmissionService:
 
     def recover_request(self, request: RequestRecord) -> str:
         """Spawn from an already-published immutable request and prepared admission."""
+        from tetrabench.preflight import check_runtime
+
+        check_runtime("recover")
         self._validate_recovery_request(request)
         with self._references().admission(
             request.run_id,
