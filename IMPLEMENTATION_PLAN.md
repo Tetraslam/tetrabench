@@ -3,8 +3,8 @@
 ## Status
 
 - Project state: P0 through P6 are complete for their local/static contracts. Live Tigris/Modal evidence includes cancellation, forced controller interruption/recovery, and the E-046 Single-region `iad` cutover. Current live provider IAM/privacy/encryption state, AWS behavior, and true provider preemption remain `unproven`.
-- Current action: Version 0.2.0 implements controlled run-level harness configuration, explicit cost provenance, records-only result inspection, deep audits, preflight diagnostics, and category creation. Independent native-consumer and authority reviews are resolved; installed local and bounded Modal Oracle/Astra proofs passed.
-- Next action: merge reviewed changes, verify the exact GitHub release artifact on Modal, and publish 0.2.0 through the existing protected PyPI workflow. Future eval selection belongs to the user; no historical candidate list authorizes implementation. Previously recorded live infrastructure evidence limits remain separate.
+- Current action: Tetrabench 0.2.0 is published on PyPI. PR 33 merged with passing CI; the unchanged GitHub release artifacts passed installed local/Modal Oracle and controlled Astra proofs before protected publication. Public installation and artifact hashes were independently verified.
+- Next action: the controlled-experiment release is complete. Future eval selection belongs to the user; no historical candidate list authorizes implementation. Previously recorded live infrastructure evidence limits remain separate.
 - Task-catalog gate: E-132's corrected-byte local/detached execution and audit gates and E-143's exact-four calibration all pass. `authority-fencing` is admitted in `benchmarks/catalog.toml`; later systems and GitHub-workflow tasks remain absent pending their own complete gates.
 - Authoring UX: D-127 is merged through PR 26 with focused local and real-Docker evidence. It creates user-owned starter projects and tasks independently of the repository catalog.
 - Canonical record updated: 2026-09-09.
@@ -21,7 +21,7 @@
 
 - [x] Implement and review harness configuration, cost evidence, fast reads/audits, and preflight diagnostics.
 - [x] Pass local and installed remote release validation.
-- [ ] Publish and verify the next PyPI release using unchanged tested artifacts.
+- [x] Publish and verify the next PyPI release using unchanged tested artifacts.
 
 Validation: 1,814 non-Docker tests and all 11 required Docker tests passed. Native
 consumers validated option binding, credential-reference syntax, version checks,
@@ -35,6 +35,17 @@ input/other artifact blobs; explicit audits verified 19 and 47 unique objects.
 Both owners stopped and terminal cleanup observed two empty child sweeps. The
 old plasma before/after comparison could not run because its private reference
 and installation were absent; no latency improvement ratio is claimed.
+
+Release evidence: PR 33 merged as `b6766d3`; post-merge run `34391617469` passed.
+Release run `34391661606` published artifact `10120369491` after exact-artifact
+remote verification. Public wheel SHA-256:
+`3feb57cf7ee15048de6885ad671320e87eb8a321e2a2d6bdf3a0e9691b2afa46`.
+Public sdist SHA-256:
+`5666dc081821f5b05ca17d1f28167252fde1b2bcc78db2a9d21f887b9cb84223`.
+An isolated public PyPI tool installation passed custom authoring, all four native
+adapter captures, error preflight, Docker reward one, fresh-process lifecycle
+lookup, and exact-version controller-wheel resolution. The user's existing local
+tool installation was not changed.
 
 ### Completed modular release
 
