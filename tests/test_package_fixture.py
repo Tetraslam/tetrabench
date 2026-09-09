@@ -87,13 +87,14 @@ def test_fixture_is_source_only_and_absent_from_installed_wheel(distributions) -
 def test_release_metadata_license_and_dependency_lock(distributions) -> None:
     wheel, source = distributions
     root = Path(__file__).parents[1]
+    project = tomllib.loads((root / "pyproject.toml").read_text())
     with zipfile.ZipFile(wheel) as archive:
         names = archive.namelist()
         metadata = BytesParser().parsebytes(
             archive.read(next(name for name in names if name.endswith("/METADATA")))
         )
         assert metadata["Name"] == "tetrabench"
-        assert metadata["Version"] == "0.1.0"
+        assert metadata["Version"] == project["project"]["version"]
         assert metadata["License-Expression"] == "MIT"
         assert metadata["Requires-Python"] == "<3.13,>=3.12"
         assert metadata.get_all("License-File") == ["LICENSE"]

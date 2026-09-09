@@ -1,14 +1,19 @@
-"""Receipt-independent remote result and run discovery."""
+"""Receipt-independent records-only inspection with one bounded result summary.
+
+Native results and inputs are not downloaded here, including for legacy runs.
+Reported values come only from a verified, request-bound controller summary;
+inventory membership alone never attests payload availability or integrity.
+"""
 
 from __future__ import annotations
 
-from decimal import Decimal
 from typing import Literal, Protocol
 
-from harbor.models.job.result import JobResult
+from botocore.exceptions import ClientError
 from pydantic import Field, ValidationError, model_validator
 
-from tetrabench.canonical_json import loads_canonical_json
+from tetrabench.canonical_json import MAX_CANONICAL_JSON_BYTES, loads_canonical_json
+from tetrabench.costs import CostSummary, split_controller_costs
 from tetrabench.lifecycle import (
     ActiveAdmissionBindingError,
     BindingStore,
@@ -27,8 +32,10 @@ from tetrabench.records import (
     AdmissionRecord,
     ArtifactInventoryEntry,
     ConflictRunState,
+    ContentObject,
     RunId,
     RunReadState,
+    TerminalRecord,
     TerminalRunState,
     validate_run_id,
 )
@@ -73,11 +80,16 @@ class RemoteResult(FrozenRecord):
     ) = None
     outcome: Literal["succeeded", "failed", "cancelled"] | None = None
     reward: str | None = None
-    summary_status: Literal["available", "legacy_unavailable"] | None = None
+    summary_status: Literal["available", "legacy_unavailable", "unavailable"] | None = (
+        None
+    )
     summary: SectionRewardSummary | None = None
     terminal_sha256: Sha256 | None = None
     artifacts: tuple[RemoteArtifact, ...] = ()
     reasons: tuple[NonEmptyString, ...] = ()
+    verification_level: Literal["none", "records", "summary"] = "none"
+    payload_integrity: Literal["unchecked"] = "unchecked"
+    costs: CostSummary | None = None
 
     @model_validator(mode="after")
     def validate_summary_status(self) -> RemoteResult:
@@ -105,20 +117,6 @@ class RemoteRunsReport(FrozenRecord):
     malformed_keys: tuple[MalformedRemoteKey, ...]
 
 
-def _standard_reward(data: bytes) -> str | None:
-    result = JobResult.model_validate_json(data)
-    values: list[Decimal] = []
-    for trial in result.trial_results:
-        verifier = trial.verifier_result
-        if verifier is None or verifier.rewards is None:
-            continue
-        value = verifier.rewards.get("reward")
-        if isinstance(value, bool) or not isinstance(value, (int, float)):
-            continue
-        values.append(Decimal(str(value)))
-    return str(sum(values) / len(values)) if values else None
-
-
 def _inventory(
     artifacts: tuple[ArtifactInventoryEntry, ...],
 ) -> tuple[RemoteArtifact, ...]:
@@ -133,7 +131,7 @@ def _inventory(
     )
 
 
-def _controller_result_descriptor(terminal) -> object:
+def _controller_result_descriptor(terminal: TerminalRecord) -> ContentObject:
     logical_path = f"attempts/{terminal.winning_attempt_id}/controller-result.json"
     matches = [
         item.content for item in terminal.artifacts if item.logical_path == logical_path
@@ -141,6 +139,22 @@ def _controller_result_descriptor(terminal) -> object:
     if len(matches) != 1:
         raise ValueError("terminal must contain one controller result artifact")
     return matches[0]
+
+
+class _SummaryUnavailable(Exception):
+    pass
+
+
+def _read_summary(store: RemoteReadStore, descriptor: ContentObject) -> bytes:
+    if descriptor.size > MAX_CANONICAL_JSON_BYTES:
+        raise _SummaryUnavailable("controller summary exceeds the bounded read limit")
+    try:
+        return store.read_content(descriptor)
+    except ClientError as error:
+        code = str(error.response.get("Error", {}).get("Code", ""))
+        if code not in {"404", "NoSuchKey", "NotFound"}:
+            raise
+        raise _SummaryUnavailable("controller summary is unavailable") from error
 
 
 def _parse_controller_result(
@@ -153,7 +167,12 @@ def _parse_controller_result(
     outcome: str,
     legacy_plan: bool,
     plan,
-) -> tuple[SectionRewardSummary | None, Literal["available", "legacy_unavailable"]]:
+) -> tuple[
+    SectionRewardSummary | None,
+    Literal["available", "legacy_unavailable"],
+    CostSummary | None,
+]:
+    data, costs = split_controller_costs(data)
     value = loads_canonical_json(data)
     if not isinstance(value, dict):
         raise ValueError("controller result must be an object")
@@ -168,7 +187,7 @@ def _parse_controller_result(
             outcome,
         ):
             raise ValueError("legacy controller result identity changed")
-        return None, "legacy_unavailable"
+        return None, "legacy_unavailable", costs
     if schema_version != 2:
         raise ValueError("unsupported controller result schema")
     result = parse_canonical_model(data, ControllerResultV2)
@@ -181,7 +200,7 @@ def _parse_controller_result(
     ) != (run_id, attempt_id, outcome, request_sha256, plan_sha256):
         raise ValueError("controller result identity changed")
     validate_summary_for_plan(result.summary, plan)
-    return result.summary, "available"
+    return result.summary, "available", costs
 
 
 def _admission_conflict(
@@ -240,7 +259,11 @@ class RemoteResultService:
             terminal = durable.terminal
             reward: str | None = None
             summary: SectionRewardSummary | None = None
-            summary_status: Literal["available", "legacy_unavailable"] | None = None
+            summary_status: (
+                Literal["available", "legacy_unavailable", "unavailable"] | None
+            ) = None
+            summary_verified = False
+            costs = None
             try:
                 request = validate_request_plan_storage_binding(
                     self._store,
@@ -248,8 +271,8 @@ class RemoteResultService:
                     request_sha256=terminal.request_sha256,
                 )
                 descriptor = _controller_result_descriptor(terminal)
-                summary, summary_status = _parse_controller_result(
-                    self._store.read_content(descriptor),
+                summary, summary_status, costs = _parse_controller_result(
+                    _read_summary(self._store, descriptor),
                     run_id=run_id,
                     request_sha256=terminal.request_sha256,
                     plan_sha256=request.plan_sha256,
@@ -258,7 +281,19 @@ class RemoteResultService:
                     legacy_plan=is_legacy_reward_plan(request.plan),
                     plan=request.plan,
                 )
+                if costs is not None:
+                    paths = {item.logical_path for item in terminal.artifacts}
+                    if any(
+                        source not in paths
+                        for entry in costs.evidence
+                        for source in entry.source_artifacts
+                    ):
+                        raise ValueError("cost evidence references an unbound artifact")
                 reward = summary.aggregate if summary is not None else None
+                summary_verified = True
+            except _SummaryUnavailable as error:
+                summary_status = "unavailable"
+                reasons.append(str(error))
             except (
                 OSError,
                 S3IntegrityError,
@@ -274,36 +309,6 @@ class RemoteResultService:
                     artifacts=_inventory(terminal.artifacts),
                     reasons=(f"invalid controller result: {type(error).__name__}",),
                 )
-            if (
-                summary_status == "legacy_unavailable"
-                and terminal.harbor_result is not None
-            ):
-                descriptor = next(
-                    item.content
-                    for item in terminal.artifacts
-                    if item.logical_path == terminal.harbor_result.logical_path
-                    and item.content.sha256 == terminal.harbor_result.sha256
-                )
-                try:
-                    reward = _standard_reward(self._store.read_content(descriptor))
-                except (
-                    S3IntegrityError,
-                    TypeError,
-                    ValueError,
-                    ValidationError,
-                ) as error:
-                    return RemoteResult(
-                        run_id=run_id,
-                        state="conflict",
-                        admission_state=(
-                            admission.state if admission is not None else None
-                        ),
-                        terminal_sha256=durable.terminal_sha256,
-                        artifacts=_inventory(terminal.artifacts),
-                        reasons=(
-                            f"invalid native Harbor result: {type(error).__name__}",
-                        ),
-                    )
             return RemoteResult(
                 run_id=run_id,
                 state="terminal",
@@ -312,8 +317,11 @@ class RemoteResultService:
                 reward=reward,
                 summary_status=summary_status,
                 summary=summary,
+                costs=costs,
                 terminal_sha256=durable.terminal_sha256,
                 artifacts=_inventory(terminal.artifacts),
+                verification_level="summary" if summary_verified else "records",
+                reasons=tuple(reasons),
             )
         if admission is None:
             return RemoteResult(run_id=run_id, state="unknown")
@@ -321,6 +329,7 @@ class RemoteResultService:
             run_id=run_id,
             state="nonterminal",
             admission_state=admission.state,
+            verification_level="records",
         )
 
     def runs(self) -> RemoteRunsReport:

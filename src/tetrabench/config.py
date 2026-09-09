@@ -19,6 +19,49 @@ from tetrabench.models import (
 PROJECT_CONFIG_NAME = "tetrabench.toml"
 
 
+def load_harness_override(path: Path):
+    """Load one bounded, portable model-run configuration independent of tasks."""
+    from tetrabench.harness_config import HarnessConfig, NativeConfig
+    from tetrabench.harnesses import read_config_text, seal_harness
+
+    try:
+        value = tomllib.loads(read_config_text(path.expanduser()))
+    except tomllib.TOMLDecodeError:
+        raise ValueError("invalid TOML model-run configuration") from None
+    if set(value) != {"harness"}:
+        raise ValueError("run configuration must contain only a [harness] table")
+    spec = HarnessConfig.model_validate(value["harness"])
+    resolved = seal_harness(spec, path.absolute().parent)
+    native = resolved.native_config
+    return spec.model_copy(
+        update={
+            "native_config": NativeConfig(format=native.format, text=native.text)
+            if native
+            else None
+        }
+    )
+
+
+def _seal_native_layer[LayerT: ProfilePatch](layer: LayerT, base: Path) -> LayerT:
+    from tetrabench.harness_config import NativeConfig
+    from tetrabench.harnesses import seal_harness
+
+    if layer.harness is None or layer.harness.native_config is None:
+        return layer
+    sealed = seal_harness(layer.harness, base)
+    if sealed.native_config is None:
+        raise ValueError("native configuration sealing produced no snapshot")
+    harness = layer.harness.model_copy(
+        update={
+            "native_config": NativeConfig(
+                format=sealed.native_config.format,
+                text=sealed.native_config.text,
+            )
+        }
+    )
+    return layer.model_copy(update={"harness": harness})
+
+
 def default_user_config_path() -> Path:
     return user_config_path("tetrabench") / "config.toml"
 
@@ -75,6 +118,16 @@ def _apply_profile_patch(
     values: dict[str, object],
     layer: ProfilePatch,
 ) -> None:
+    if layer.harness is not None:
+        values["harness"] = layer.harness.model_dump(mode="python")
+        harbor_value = values.get("harbor")
+        current_harbor = dict(harbor_value) if isinstance(harbor_value, dict) else {}
+        current_harbor.update(agent_name="oracle", model_name=None)
+        values["harbor"] = current_harbor
+    elif layer.harbor is not None and (
+        layer.harbor.agent_name is not None or layer.harbor.model_name is not None
+    ):
+        values["harness"] = None
     if layer.engine is not None:
         previous = values.get("engine")
         if not isinstance(previous, dict):
@@ -169,6 +222,7 @@ def load_project_config(
     project = ProjectConfigPatch.model_validate(
         _read_toml(root / PROJECT_CONFIG_NAME, data=project_data)
     )
+    project = _seal_native_layer(project, root)
     values = ProjectConfig(schema_version=1).model_dump(mode="python")
     values["schema_version"] = project.schema_version
     if project.catalog_path is not None:
@@ -196,7 +250,12 @@ def load_project_config(
             selected_profile = profiles[profile]
         except KeyError as error:
             raise ValueError(f"unknown user profile: {profile}") from error
-        _apply_profile_patch(values, selected_profile)
+        _apply_profile_patch(
+            values,
+            _seal_native_layer(
+                selected_profile, (user_path or default_user_config_path()).parent
+            ),
+        )
     if overrides is not None:
-        _apply_profile_patch(values, overrides)
+        _apply_profile_patch(values, _seal_native_layer(overrides, root))
     return ProjectConfig.model_validate(values)

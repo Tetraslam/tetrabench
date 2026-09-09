@@ -40,10 +40,13 @@ from tetrabench.records import (
     transition_admission,
 )
 from tetrabench.s3 import (
+    DEFAULT_DISCOVERY_LISTING_LIMITS,
     AdmissionRead,
+    ListingLimits,
     S3CasConflictError,
     S3ConflictError,
     S3IntegrityError,
+    S3ListingLimitError,
     S3Store,
     UnsafeCoordinationTopologyError,
     create_s3_client,
@@ -1011,18 +1014,19 @@ def test_read_state_turns_invalid_visible_terminal_into_conflict(
     assert "invalid immutable record" in state.reasons[0]
 
 
-def test_read_state_rejects_terminal_with_unavailable_dependency(
+def test_read_state_does_not_fetch_unavailable_payload_dependency(
     store: tuple[S3Store, FakeS3Client],
 ) -> None:
     s3, client = store
     digest, _terminal_record, artifacts = _publish_terminal_fixture(s3)
     del client.objects[artifacts[0].content.key]
+    client.operations.clear()
 
     state = s3.read_run_state("run-1", attempts=2, delay_seconds=0)
 
-    assert isinstance(state, ConflictRunState)
-    assert state.terminal_sha256s == (digest,)
-    assert "remained unavailable" in state.reasons[0]
+    assert isinstance(state, TerminalRunState)
+    assert state.terminal_sha256 == digest
+    assert not any("/objects/" in key for _operation, key in client.operations)
 
 
 def test_lagged_request_conflict_can_surface_on_a_later_read(
@@ -1134,7 +1138,7 @@ def test_corrupt_second_request_still_counts_as_a_digest_conflict(
     assert any("multiple request digests" in reason for reason in state.reasons)
 
 
-def test_corrupt_terminal_dependency_becomes_conflict_state(
+def test_corrupt_terminal_payload_remains_unchecked_during_record_read(
     store: tuple[S3Store, FakeS3Client],
 ) -> None:
     s3, client = store
@@ -1142,11 +1146,12 @@ def test_corrupt_terminal_dependency_becomes_conflict_state(
     content = client.objects[artifacts[0].content.key]
     content.body = b"corrupt"
     content.metadata["sha256"] = "f" * 64
+    client.operations.clear()
 
     state = s3.read_run_state("run-1", attempts=1, delay_seconds=0)
 
-    assert isinstance(state, ConflictRunState)
-    assert "invalid immutable record" in state.reasons[0]
+    assert isinstance(state, TerminalRunState)
+    assert not any("/objects/" in key for _operation, key in client.operations)
 
 
 def test_existing_content_is_fully_rehashed_with_bounded_reads(
@@ -1373,6 +1378,109 @@ def test_listing_rejects_non_boolean_truncation_state(
 
     with pytest.raises(S3IntegrityError, match="truncation state"):
         s3.discover_runs()
+
+
+@pytest.mark.parametrize("discovery", [False, True])
+def test_fresh_continuation_tokens_cannot_exhaust_an_unbounded_listing(
+    store, monkeypatch, discovery
+):
+    s3, client = store
+    calls = 0
+
+    def endless(**_kwargs):
+        nonlocal calls
+        calls += 1
+        return {
+            "Contents": (),
+            "IsTruncated": True,
+            "NextContinuationToken": f"secret-token-{calls}",
+        }
+
+    monkeypatch.setattr(client, "list_objects_v2", endless)
+    if discovery:
+        with pytest.raises(
+            S3ListingLimitError, match="listing incomplete: page budget exceeded"
+        ) as caught:
+            s3.discover_runs()
+        assert "secret-token" not in str(caught.value)
+        assert calls == DEFAULT_DISCOVERY_LISTING_LIMITS.max_pages
+    else:
+        state = s3.read_run_state("run-1", attempts=1)
+        assert isinstance(state, ConflictRunState)
+        assert any(
+            "listing incomplete: page budget exceeded" in reason
+            for reason in state.reasons
+        )
+        assert "secret-token" not in str(state)
+        assert calls == ListingLimits().max_pages
+    assert client.operations == []
+
+
+@pytest.mark.parametrize("truncated", [False, True])
+def test_key_budget_counts_duplicate_entries_and_does_not_return_partial_discovery(
+    store, monkeypatch, truncated
+):
+    s3, client = store
+    s3 = S3Store(
+        s3.storage,
+        client,
+        discovery_listing_limits=ListingLimits(max_keys=2),
+        sleep=lambda _: None,
+    )
+    key = admission_key("run-1", prefix=s3.storage.prefix)
+    monkeypatch.setattr(
+        client,
+        "list_objects_v2",
+        lambda **_: {
+            "Contents": [{"Key": key}] * (2 if truncated else 3),
+            "IsTruncated": truncated,
+            "NextContinuationToken": "secret-token",
+        },
+    )
+    with pytest.raises(
+        S3ListingLimitError, match="listing incomplete: key budget exceeded"
+    ) as caught:
+        s3.discover_runs()
+    assert "secret-token" not in str(caught.value)
+
+
+def test_complete_listing_at_exact_page_and_key_limits_is_accepted(store):
+    s3, client = store
+    keys = tuple(
+        admission_key(f"run-{index}", prefix=s3.storage.prefix) for index in range(3)
+    )
+    for key in keys:
+        client.seed(key, b"record")
+    client.page_size = 1
+    s3 = S3Store(
+        s3.storage,
+        client,
+        discovery_listing_limits=ListingLimits(max_pages=3, max_keys=3),
+    )
+    assert s3.discover_runs().run_ids == ("run-0", "run-1", "run-2")
+    assert client.list_calls == 3
+
+
+def test_run_listing_budget_has_room_for_maximum_trial_event_shape(store):
+    s3, client = store
+    # Three lifecycle events per maximum 256 tasks x 32 trials, one attempt.
+    keys = [
+        event_key("run-1", "attempt-1", sequence, "a" * 64, prefix=s3.storage.prefix)
+        for sequence in range(256 * 32 * 3)
+    ]
+    for key in keys:
+        client.seed(key, b"record")
+    assert s3._list_keys(s3._run_prefix("run-1", "events")) == sorted(keys)
+    assert client.list_calls == 25
+    assert all(op == "list" for op, _key in client.operations)
+
+
+@pytest.mark.parametrize(
+    "limits", [{"max_pages": 0}, {"max_keys": 0}, {"max_pages": -1}]
+)
+def test_listing_limits_must_be_positive(limits):
+    with pytest.raises(ValueError, match="limits must be positive"):
+        ListingLimits(**limits)
 
 
 def test_remote_run_discovery_surfaces_every_malformed_key_deterministically(

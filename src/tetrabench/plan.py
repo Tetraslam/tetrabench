@@ -29,6 +29,9 @@ from tetrabench.models import (
 def canonical_model_bytes(model: BaseModel) -> bytes:
     value = model.model_dump(mode="json", by_alias=True)
     plan = model if isinstance(model, ResolvedPlan) else getattr(model, "plan", None)
+    if isinstance(plan, ResolvedPlan) and "harness" not in plan.model_fields_set:
+        plan_value = value if isinstance(model, ResolvedPlan) else value["plan"]
+        plan_value.pop("harness", None)
     if isinstance(plan, ResolvedPlan) and is_legacy_reward_plan(plan):
         trials = (
             value["trials"]
@@ -86,6 +89,15 @@ def resolved_plan_from_selection(
     )
     empty_reason = f"section {section_name!r} contains no selected tasks"
     reasons = () if trials else (empty_reason,)
+    from tetrabench.harnesses import seal_harness
+
+    harness = {}
+    if config.harness is not None:
+        if config.harness.native_config and config.harness.native_config.path:
+            raise ValueError(
+                "native harness paths must be sealed before plan resolution"
+            )
+        harness["harness"] = seal_harness(config.harness, Path.cwd())
     return ResolvedPlan(
         schema_version=1,
         section=section_name,
@@ -105,6 +117,7 @@ def resolved_plan_from_selection(
         trials=trials,
         runnable=bool(trials),
         not_runnable_reasons=reasons,
+        **harness,
     )
 
 

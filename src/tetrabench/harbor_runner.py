@@ -6,8 +6,10 @@ from pathlib import Path
 from typing import Any, Literal, Protocol
 
 from tetrabench.controller_runtime import AttemptPaths, HarborRunResult
+from tetrabench.costs import summarize_native_costs
 from tetrabench.harbor import ATTEMPT_LABEL, PLAN_LABEL, RUN_LABEL
 from tetrabench.harbor_api import Harbor022Api, NativeJobArtifacts
+from tetrabench.harnesses import compile_agent_config
 from tetrabench.records import RequestRecord
 from tetrabench.rewards import summarize_rewards
 
@@ -87,7 +89,9 @@ def compile_harbor_job(
         quiet=True,
         tasks=tasks,
         agents=[
-            api.agent_config(
+            compile_agent_config(plan.harness)
+            if plan.harness is not None
+            else api.agent_config(
                 name=plan.harbor.agent_name,
                 model_name=plan.harbor.model_name,
             )
@@ -172,6 +176,20 @@ class HarborRunner:
             reward=summary.aggregate,
             summary=summary,
             evidence=_native_evidence(artifacts),
+            costs=summarize_native_costs(
+                request.plan,
+                artifacts,
+                root=paths.root,
+                logical_prefix=f"attempts/{paths.root.name}/"
+                if request.plan.execution.kind == "modal"
+                else "",
+            ),
+            warnings=(
+                ("Legacy harness is unpinned; native version is best-effort",)
+                if request.plan.harness is None
+                and request.plan.harbor.agent_name not in {"oracle", "nop"}
+                else ()
+            ),
             atif_paths=tuple(
                 path for trial in artifacts.trials for path in trial.atif_paths
             ),

@@ -20,6 +20,7 @@ from typer.testing import CliRunner
 from tetrabench.canonical_json import loads_canonical_json
 from tetrabench.cli import app
 from tetrabench.config import load_project_config
+from tetrabench.diagnostics import DiagnosticError, PreflightError
 from tetrabench.modal_app import (
     CONTROLLER_TIMEOUT_SECONDS,
     CONTROLLER_WHEEL_ENV,
@@ -93,9 +94,14 @@ class _FakeModal:
         self.operations.append(("volume", (name, create_if_missing)))
         return SimpleNamespace(name=name)
 
-    def secret_from_name(self, name):
-        self.operations.append(("secret", name))
-        return SimpleNamespace(name=name)
+    def secret_from_name(self, name, *, environment_name):
+        self.operations.append(("secret", (name, environment_name)))
+        return SimpleNamespace(
+            name=name,
+            hydrate=lambda *, client: self.operations.append(
+                ("secret_hydrate", client)
+            ),
+        )
 
     def app(self, name):
         app = _App(name, self.operations)
@@ -113,7 +119,7 @@ def test_profile_specific_names_are_exact_and_secret_is_name_only() -> None:
     assert spec.app_name == "tetrabench"
     assert spec.function_name == "controller"
     assert spec.environment_name.startswith("tetrabench-gpu-lab-")
-    assert spec.environment_name.endswith("-v0-1-0")
+    assert spec.environment_name.endswith("-v0-2-0")
     assert spec.volume_name.startswith("tetrabench-gpu-lab-")
     assert spec.volume_name.endswith("-controller")
     assert spec.secret_name == "tetrabench-controller"
@@ -129,6 +135,7 @@ def test_profile_name_normalization_cannot_alias_distinct_profiles() -> None:
 
 
 def test_releases_cannot_resolve_each_others_controller(monkeypatch) -> None:
+    monkeypatch.setattr("tetrabench.modal_app.version", lambda _: "0.1.0")
     first = _spec()
     monkeypatch.setattr("tetrabench.modal_app.version", lambda _: "0.2.0")
     second = _spec()
@@ -319,7 +326,8 @@ def test_real_modal_154_constructs_dynamic_serialized_function(
 def test_installed_distribution_metadata_has_exact_runtime_dependencies() -> None:
     package = metadata("tetrabench")
     requirements = package.get_all("Requires-Dist") or []
-    assert version("tetrabench") == "0.1.0"
+    assert version("tetrabench") == "0.2.0"
+    assert package["Requires-Python"] == "<3.13,>=3.12"
     assert "harbor[modal]==0.22.0" in requirements
     assert "modal==1.5.4" in requirements
 
@@ -351,10 +359,11 @@ def test_deploy_ensures_environment_before_app_deploy(controller_artifact) -> No
     )
     assert environment_index < deploy_index
     assert fake.operations[environment_index][1][1] == {
-        "create_if_missing": True,
+        "create_if_missing": False,
         "client": client,
     }
     assert fake.operations[environment_index + 1] == ("hydrate", client)
+    assert fake.operations[deploy_index - 1] == ("secret_hydrate", client)
 
 
 def test_environment_creation_failure_prevents_deploy(controller_artifact) -> None:
@@ -369,8 +378,10 @@ def test_environment_creation_failure_prevents_deploy(controller_artifact) -> No
         )
     )
 
-    with pytest.raises(modal.exception.AuthError, match="not authenticated"):
+    with pytest.raises(DiagnosticError, match="Modal authentication") as caught:
         deploy_controller(_spec(), modal_module=fake)
+    assert caught.value.code == "authentication_required"
+    assert caught.value.exception_type == "AuthError"
 
     assert not any(item[0] == "deploy" for item in fake.operations)
 
@@ -453,7 +464,7 @@ def test_pypi_install_resolves_exact_version_without_override(
     (next(installed.glob("*.dist-info")) / "direct_url.json").unlink()
     calls = _mock_pypi(monkeypatch, wheel)
     assert _controller_wheel() == (wheel.name, wheel.read_bytes())
-    assert calls[0][0] == "https://pypi.org/pypi/tetrabench/0.1.0/json"
+    assert calls[0][0] == "https://pypi.org/pypi/tetrabench/0.2.0/json"
     assert calls[1][0].endswith(wheel.name)
 
 
@@ -691,7 +702,7 @@ def test_wheel_extra_paths_fail_before_image_or_provider(
 
 def test_wheel_wrong_release_filename_fails(controller_artifact, tmp_path, monkeypatch):
     wheel, _ = controller_artifact
-    changed = tmp_path / "tetrabench-0.2.0-py3-none-any.whl"
+    changed = tmp_path / "tetrabench-0.1.0-py3-none-any.whl"
     changed.write_bytes(wheel.read_bytes())
     monkeypatch.setenv(CONTROLLER_WHEEL_ENV, str(changed))
     with pytest.raises(ValueError, match="installed version"):
@@ -782,7 +793,7 @@ def test_controller_info_is_no_cloud_and_json_lists_exact_names(
     assert result.exit_code == 0
     report = loads_canonical_json(result.stdout.removesuffix("\n").encode())
     assert isinstance(report, dict)
-    assert report["environment_name"] == "tetrabench-default-v0-1-0"
+    assert report["environment_name"] == "tetrabench-default-v0-2-0"
     assert report["volume_name"] == "tetrabench-default-controller"
     assert report["secret_name"] == "tetrabench-controller"
 
@@ -810,7 +821,7 @@ def test_controller_deploy_yes_json_invokes_once(
         calls.append(spec)
         return spec.as_dict() | {
             "deployed": True,
-            "wheel_filename": "tetrabench-0.1.0-py3-none-any.whl",
+            "wheel_filename": "tetrabench-0.2.0-py3-none-any.whl",
             "wheel_sha256": digest,
         }
 
@@ -822,7 +833,7 @@ def test_controller_deploy_yes_json_invokes_once(
     assert isinstance(report, dict)
     assert report["deployed"] is True
     assert report["wheel_sha256"] == digest
-    assert report["wheel_filename"] == "tetrabench-0.1.0-py3-none-any.whl"
+    assert report["wheel_filename"] == "tetrabench-0.2.0-py3-none-any.whl"
 
 
 def test_controller_deploy_json_without_yes_is_dry() -> None:
@@ -831,3 +842,79 @@ def test_controller_deploy_json_without_yes_is_dry() -> None:
     report = loads_canonical_json(result.stderr.removesuffix("\n").encode())
     assert isinstance(report, dict)
     assert "requires --yes" in str(report["error"])
+
+
+@pytest.mark.parametrize("entrypoint", [build_modal_controller, deploy_controller])
+@pytest.mark.parametrize("python_version", [(3, 11, 9), (3, 13, 0), (3, 14, 0)])
+def test_unsupported_python_fails_before_artifact_or_provider(
+    monkeypatch, entrypoint, python_version
+):
+    # sys.version_info is read at invocation time, not cached during import.
+    monkeypatch.setattr("tetrabench.preflight.sys.version_info", python_version)
+    monkeypatch.setattr(
+        "tetrabench.modal_app._controller_wheel", lambda: pytest.fail("artifact access")
+    )
+    fake = _FakeModal()
+    fake.Client.from_env = lambda: pytest.fail("provider client")
+    with pytest.raises(
+        PreflightError, match=r"--python 3\.12 tetrabench==0\.2\.0"
+    ) as caught:
+        entrypoint(_spec(), modal_module=fake)
+    assert caught.value.code == "unsupported_python"
+    assert fake.operations == []
+
+
+def test_unsupported_platform_fails_before_artifact_or_provider(monkeypatch):
+    monkeypatch.setattr("tetrabench.preflight.sys.platform", "darwin")
+    monkeypatch.setattr(
+        "tetrabench.modal_app._controller_wheel", lambda: pytest.fail("artifact access")
+    )
+    with pytest.raises(PreflightError, match="requires Linux"):
+        deploy_controller(_spec(), modal_module=_FakeModal())
+
+
+@pytest.mark.parametrize("resource", ["environment", "secret"])
+def test_missing_namespace_or_secret_prevents_costly_deployment(
+    controller_artifact, resource
+):
+    fake = _FakeModal()
+
+    def missing(**_kwargs):
+        raise modal.exception.NotFoundError("https://private.invalid/?token=secret")
+
+    fake.Environment.from_name = lambda *_args, **_kwargs: SimpleNamespace(
+        hydrate=missing if resource == "environment" else lambda **_kwargs: None
+    )
+    if resource == "secret":
+        fake.Secret.from_name = lambda *_args, **_kwargs: SimpleNamespace(
+            hydrate=missing
+        )
+    with pytest.raises(DiagnosticError) as caught:
+        deploy_controller(_spec(), modal_module=fake)
+    assert caught.value.code == f"modal_{resource}_missing"
+    assert caught.value.operation == f"modal_{resource}"
+    assert "private.invalid" not in str(caught.value)
+    assert "token=secret" not in str(caught.value)
+    assert not any(item[0] == "deploy" for item in fake.operations)
+
+
+def test_unknown_deploy_error_preserves_safe_context_and_cleans_snapshot(
+    controller_artifact, monkeypatch
+):
+    fake = _FakeModal()
+    fake.Environment.from_name = lambda *_args, **_kwargs: SimpleNamespace(
+        hydrate=lambda **_kwargs: None
+    )
+
+    def fail_deploy(self, **_kwargs):
+        raise modal.exception.InvalidError("credential-value https://private.invalid")
+
+    monkeypatch.setattr(_App, "deploy", fail_deploy)
+    with pytest.raises(DiagnosticError) as caught:
+        deploy_controller(_spec(), modal_module=fake)
+    assert caught.value.code == "provider_request_failed"
+    assert caught.value.operation == "controller_deploy"
+    assert caught.value.exception_type == "InvalidError"
+    assert "credential-value" not in str(caught.value)
+    uploaded = next(item[1][0] for item in fake.operations if item[0] == "wheel")
+    assert not uploaded.exists()

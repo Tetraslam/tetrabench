@@ -3,13 +3,40 @@
 ## Status
 
 - Project state: P0 through P6 are complete for their local/static contracts. Live Tigris/Modal evidence includes cancellation, forced controller interruption/recovery, and the E-046 Single-region `iad` cutover. Current live provider IAM/privacy/encryption state, AWS behavior, and true provider preemption remain `unproven`.
-- Current action: Tetrabench 0.1.0 is published on PyPI under MIT. Trusted Publishing uploaded the unchanged GitHub-built artifacts after installed local and detached Modal proofs. A fresh public tool installation passed custom-category authoring, local execution, result lookup, and automatic controller-wheel resolution; public hashes match the tested artifacts.
-- Next action: the modular CLI and initial release work is complete. Future eval selection belongs to the user; no historical candidate list authorizes implementation. Previously recorded live IAM/privacy/encryption, AWS consistency, and provider-preemption limits remain separate.
+- Current action: Version 0.2.0 implements controlled run-level harness configuration, explicit cost provenance, records-only result inspection, deep audits, preflight diagnostics, and category creation. Independent native-consumer and authority reviews are resolved; installed local and bounded Modal Oracle/Astra proofs passed.
+- Next action: merge reviewed changes, verify the exact GitHub release artifact on Modal, and publish 0.2.0 through the existing protected PyPI workflow. Future eval selection belongs to the user; no historical candidate list authorizes implementation. Previously recorded live infrastructure evidence limits remain separate.
 - Task-catalog gate: E-132's corrected-byte local/detached execution and audit gates and E-143's exact-four calibration all pass. `authority-fencing` is admitted in `benchmarks/catalog.toml`; later systems and GitHub-workflow tasks remain absent pending their own complete gates.
 - Authoring UX: D-127 is merged through PR 26 with focused local and real-Docker evidence. It creates user-owned starter projects and tasks independently of the repository catalog.
-- Canonical record updated: 2026-09-05.
+- Canonical record updated: 2026-09-09.
 
-### Modular release working record
+### Controlled experiment release working record
+
+| Field | Contract |
+| --- | --- |
+| Behavior | A standardized run-level harness specification selects OpenCode, Codex, Claude Code, Pi, or an explicitly registered adapter, with supported version/config/options/credential references and declared ancillary-model policy. Task fixture bytes remain separate. Routine result/status reads validate small authoritative records and bindings, not every content blob. Publication, download, and explicit audits retain content verification. |
+| Atomic unit and authority | One resolved immutable run request binds task input and harness identity. Preserve old canonical bytes and digests. S3 admission and validated terminal records retain their authority and conflict precedence. Harness-reported cost, estimates, provider observations, ancillary coverage, and infrastructure cost are distinct evidence, never silently summed or called a reconciled invoice. |
+| Native primitives and gaps | Harbor 0.22 has native adapters for all four harnesses, including Earendil Pi. Use their real supported kwargs/config/env surfaces; add thin adapters only for verified missing capability or provenance. Unknown/contradictory options fail before paid work. Detect Python/controller mismatch before provider mutation; error reports retain safe operation/type/action without provider-controlled secret-bearing messages. |
+| Largest shape and evidence | Keep existing context/artifact limits. Prove routine reads use bounded control records and zero artifact/input blob GETs; deep audit detects missing/corrupt content. Test native adapter construction and effective config/argv for each harness, version mismatch, secret references, task/harness digest separation, legacy record reads, missing/zero/estimated cost and no double counting. Release verification uses isolated installed distributions and a bounded real Modal experiment. |
+| Scope | No new eval task or model ranking, no universal LLM gateway, no invented hard spend guarantee, and no replacement of Harbor. Authoring improvements stay small: discoverable supported options and minimal category creation/help. New release artifacts must pass review and exact-artifact verification before publication. |
+
+- [x] Implement and review harness configuration, cost evidence, fast reads/audits, and preflight diagnostics.
+- [x] Pass local and installed remote release validation.
+- [ ] Publish and verify the next PyPI release using unchanged tested artifacts.
+
+Validation: 1,814 non-Docker tests and all 11 required Docker tests passed. Native
+consumers validated option binding, credential-reference syntax, version checks,
+and known ancillary routing for the four supported adapters. Ruff, formatting,
+ty, Bandit, actionlint, lock/build, strict Twine, dependency audit, and isolated
+wheel/sdist reproduction passed. The bounded installed Modal proof ran the same
+six-file task under Oracle and controlled OpenCode 1.18.29/Astra, both reward one.
+No auxiliary model call was observed; the model subtotal was $0.084845 with partial
+harness-reported coverage. Result reads fetched one roughly 2 KiB summary and no
+input/other artifact blobs; explicit audits verified 19 and 47 unique objects.
+Both owners stopped and terminal cleanup observed two empty child sweeps. The
+old plasma before/after comparison could not run because its private reference
+and installation were absent; no latency improvement ratio is claimed.
+
+### Completed modular release
 
 | Field | Contract |
 | --- | --- |

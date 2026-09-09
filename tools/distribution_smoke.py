@@ -40,14 +40,24 @@ def wheel_contents(path: Path) -> dict[str, bytes]:
 def installed_smoke(work: Path, *, docker: bool, category: str | None) -> None:
     """Runs only under the wheel-installed interpreter with Python isolation."""
     from importlib.metadata import distribution
+    from unittest.mock import patch
 
     import tetrabench
-    from tetrabench.modal_app import ControllerDeploymentSpec, build_modal_controller
+    from tetrabench.canonical_json import dumps_canonical_json, loads_canonical_json
+    from tetrabench.diagnostics import PreflightError
+    from tetrabench.modal_app import (
+        ControllerDeploymentSpec,
+        build_modal_controller,
+        deploy_controller,
+    )
+    from tetrabench.preflight import check_runtime
 
     package = distribution("tetrabench")
+    require(package.version == "0.2.0", "wrong release version")
     require(Path(tetrabench.__file__).is_relative_to(work / "venv"), "checkout import")
     require(package.metadata["License-Expression"] == "MIT", "missing MIT metadata")
     require(package.metadata["Requires-Python"] == "<3.13,>=3.12", "wrong Python range")
+    require(check_runtime("doctor")["status"] == "ok", "runtime preflight failed")
     require(
         "LICENSE" in package.metadata.get_all("License-File", []), "missing license"
     )
@@ -133,6 +143,35 @@ def installed_smoke(work: Path, *, docker: bool, category: str | None) -> None:
     require(
         tuple(bundle.app.registered_functions) == ("controller",), "missing function"
     )
+    # An unsupported caller must fail before artifact lookup or provider creation.
+    with (
+        patch("tetrabench.preflight.sys.version_info", (3, 13, 0)),
+        patch(
+            "tetrabench.modal_app._controller_wheel",
+            side_effect=AssertionError("artifact lookup"),
+        ),
+        patch(
+            "tetrabench.modal_app.modal.Client.from_env",
+            side_effect=AssertionError("provider access"),
+        ),
+    ):
+        try:
+            deploy_controller(bundle.spec)
+        except PreflightError as error:
+            require(
+                error.code == "unsupported_python", "wrong compatibility diagnostic"
+            )
+            report = error.as_dict()
+            require(
+                loads_canonical_json(dumps_canonical_json(report)) == report,
+                "noncanonical diagnostic",
+            )
+            require(
+                "--python 3.12 tetrabench==0.2.0" in str(error),
+                "missing install advice",
+            )
+        else:
+            raise RuntimeError("unsupported Python reached deployment")
     if docker:
         report = command("run", category, "--output", str(work / "docker-run"))
         require(report["outcome"] == "succeeded", "Docker run did not succeed")
@@ -148,6 +187,7 @@ def installed_smoke(work: Path, *, docker: bool, category: str | None) -> None:
         "docker": "passed" if docker else "not-run",
         "modal_graph": "passed",
         "modal_deployment": "not-run",
+        "runtime_preflight": "passed",
         "project": str(project),
         "cli": str(cli),
     }

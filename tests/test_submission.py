@@ -126,6 +126,34 @@ def _prepared() -> PreparedSubmission:
     )
 
 
+@pytest.mark.parametrize("method", ["recover", "recover_request"])
+def test_direct_recovery_guards_runtime_before_any_mutation(
+    tmp_path, monkeypatch, method
+):
+    from tetrabench.diagnostics import PreflightError
+    from tetrabench.preflight import check_runtime
+
+    prepared = _prepared()
+    store = _MemorySubmissionStore()
+    store.coordination_safe = False
+    controller = FakeDetachedController()
+    service = SubmissionService(store, controller, ReceiptStore(tmp_path / "receipts"))
+    checked = []
+
+    def unsupported(operation):
+        checked.append(operation)
+        return check_runtime(operation, python_version=(3, 13, 0))
+
+    monkeypatch.setattr("tetrabench.preflight.check_runtime", unsupported)
+    with pytest.raises(PreflightError) as failure:
+        getattr(service, method)(prepared if method == "recover" else prepared.request)
+    assert failure.value.code == "unsupported_python"
+    assert checked == ["recover"]
+    assert store.operations == []
+    assert controller.spawned == []
+    assert not list(tmp_path.iterdir())
+
+
 class _Crash(RuntimeError):
     pass
 
