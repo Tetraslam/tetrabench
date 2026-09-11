@@ -73,7 +73,7 @@ def replace_harness_document(path: Path, before: bytes, after: str) -> None:
 def load_harness_override(path: Path):
     """Load one bounded, portable model-run configuration independent of tasks."""
     from tetrabench.harness_config import HarnessConfig, NativeConfig
-    from tetrabench.harnesses import read_config_text, seal_harness
+    from tetrabench.harnesses import prepare_harness, read_config_text
 
     path = path.expanduser().absolute()
     try:
@@ -83,7 +83,7 @@ def load_harness_override(path: Path):
     if set(value) != {"harness"}:
         raise ValueError("run configuration must contain only a [harness] table")
     spec = HarnessConfig.model_validate(value["harness"])
-    resolved = seal_harness(spec, path.absolute().parent)
+    resolved = prepare_harness(spec, path.absolute().parent)
     native = resolved.native_config
     return spec.model_copy(
         update={
@@ -99,11 +99,11 @@ def load_harness_override(path: Path):
 
 def _seal_native_layer[LayerT: ProfilePatch](layer: LayerT, base: Path) -> LayerT:
     from tetrabench.harness_config import NativeConfig
-    from tetrabench.harnesses import seal_harness
+    from tetrabench.harnesses import prepare_harness
 
     if layer.harness is None:
         return layer
-    sealed = seal_harness(layer.harness, base)
+    sealed = prepare_harness(layer.harness, base)
     harness = layer.harness.model_copy(
         update={
             "native_config": NativeConfig(

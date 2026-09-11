@@ -37,21 +37,41 @@ from tetrabench.native_control import (
 NATIVE_VERSIONS = {
     "opencode": ("1.18.30", "1.18.30"),
     "codex": ("0.154.0", "0.154.0"),
-    "claude-code": ("2.1.267", "0.3.267"),
+    "claude-code": ("2.1.269", "0.3.269"),
     "pi": ("0.85.1", "0.85.1"),
 }
+VERIFIED_NATIVE_VERSIONS = {
+    name: frozenset({versions}) for name, versions in NATIVE_VERSIONS.items()
+}
+VERIFIED_NATIVE_VERSIONS["claude-code"] = frozenset(
+    {("2.1.267", "0.3.267"), ("2.1.269", "0.3.269")}
+)
+
+
+def native_adapter_version(harness: str, cli_version: str) -> str | None:
+    """Return only the metadata contract paired with this exact native CLI."""
+    return next(
+        (
+            adapter
+            for native, adapter in VERIFIED_NATIVE_VERSIONS.get(harness, ())
+            if native == cli_version
+        ),
+        None,
+    )
+
+
 NATIVE_SOURCES = {
     "opencode": "https://github.com/anomalyco/opencode/blob/v1.18.30/"
     "packages/opencode/src/provider/provider.ts",
     "codex": "https://github.com/openai/codex/blob/rust-v0.154.0/"
     "codex-rs/app-server-protocol/schema/typescript/v2/Model.ts",
-    "claude-code": "https://unpkg.com/@anthropic-ai/claude-agent-sdk@0.3.267/sdk.d.ts",
+    "claude-code": "https://unpkg.com/@anthropic-ai/claude-agent-sdk@0.3.269/sdk.d.ts",
     "pi": "https://github.com/earendil-works/pi/blob/v0.85.1/packages/ai/src/models.ts",
 }
 INSTALL_ACTIONS = {
     "opencode": "Install opencode-ai@1.18.30; supply the effective provider response.",
     "codex": "Install @openai/codex@0.154.0 and supply app-server model/list pages.",
-    "claude-code": "Install @anthropic-ai/claude-agent-sdk@0.3.267 with CLI 2.1.267; "
+    "claude-code": "Install @anthropic-ai/claude-agent-sdk@0.3.269 with CLI 2.1.269; "
     "supply supportedModels() from an explicitly authorized session.",
     "pi": "Install @earendil-works/pi-coding-agent@0.85.1 and pi-ai@0.85.1; "
     "supply ModelRuntime.getModel/ModelRegistry.find and getSupportedThinkingLevels.",
@@ -569,7 +589,7 @@ def discover(
     if (
         identity.harness_version,
         identity.native_adapter_version,
-    ) != NATIVE_VERSIONS.get(identity.harness):
+    ) not in VERIFIED_NATIVE_VERSIONS.get(identity.harness, ()):
         return CapabilitySnapshot(
             identity=identity,
             status="unavailable",
@@ -868,6 +888,17 @@ def observation_from_json(
 ) -> NativeObservation:
     """Bind a host-supplied capture; callers own truthful capture provenance."""
     parse_metadata(payload_json)
+    if (
+        source_url is None
+        and identity.harness == "claude-code"
+        and (identity.harness_version, identity.native_adapter_version)
+        in VERIFIED_NATIVE_VERSIONS["claude-code"]
+    ):
+        source_url = (
+            "https://unpkg.com/@anthropic-ai/claude-agent-sdk@"
+            + identity.native_adapter_version
+            + "/sdk.d.ts"
+        )
     return NativeObservation(
         identity,
         payload_json,

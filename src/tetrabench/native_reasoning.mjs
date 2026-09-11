@@ -59,11 +59,11 @@ export function projectPiModel(model) {
 }
 
 export async function captureClaudeModels(query, { allowNativeRead = false } = {}) {
-  // SDK 0.3.267 package.json claudeCodeVersion is 2.1.267.
+  // SDK 0.3.269 / CLI 2.1.269; the 0.3.267 / 2.1.267 contract is retained.
   // Never call query(), reinitialize(), or any prompt/stream method here.
   if (!allowNativeRead) throw new Error("Explicit native metadata read required");
   if (typeof query?.supportedModels !== "function") {
-    throw new Error("Claude Agent SDK 0.3.267 supportedModels API unavailable");
+    throw new Error("Claude Agent SDK supportedModels API unavailable");
   }
   const models = await query.supportedModels();
   return JSON.stringify(models.map((model) => pick(model, ["value", "resolvedModel",

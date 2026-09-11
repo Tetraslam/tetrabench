@@ -468,6 +468,7 @@ def test_setup_token_never_imports_or_persists_a_global_keychain(tmp_path, monke
     status = auth_login(
         "claude-code",
         spec,
+        version="2.1.267",
         executable="synthetic-native",
         runtime_parent=tmp_path / "runtime",
         environment={},

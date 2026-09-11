@@ -49,7 +49,7 @@ def test_claude_controls_are_typed_and_distinguish_tools_from_permissions(tmp_pa
     assert "--setting-sources=" in argv
     assert "--autocompact=200k" in argv
     assert "--permission-mode=manual" in argv
-    capture = CaptureEnvironment("claude-code", "2.1.267")
+    capture = CaptureEnvironment("claude-code", STABLE_VERSIONS["claude-code"])
     asyncio.run(instance.run("instruction", capture, AgentContext()))
     environments = [item.get("env", {}) for item in capture.commands]
     assert any(
@@ -85,7 +85,7 @@ def test_native_policy_does_not_force_claude_auxiliary_aliases(tmp_path, monkeyp
         ancillary_models="native",
         env={"ANTHROPIC_BASE_URL": "${ENDPOINT}"},
     )
-    capture = CaptureEnvironment("claude-code", "2.1.267")
+    capture = CaptureEnvironment("claude-code", STABLE_VERSIONS["claude-code"])
     asyncio.run(instance.run("instruction", capture, AgentContext()))
     for item in capture.commands:
         env = item.get("env", {})

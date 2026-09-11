@@ -50,6 +50,21 @@ class AuthSpec(BaseModel):
         return self
 
 
+class ProfileAuthReference(BaseModel):
+    """Authoring selector; never accepted in an immutable execution record."""
+
+    model_config = ConfigDict(extra="forbid", strict=True, frozen=True)
+    kind: Literal["profile"]
+    profile: Identifier
+
+
+class ProfileAuthSpec(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True, frozen=True)
+    schema_version: Literal[1] = 1
+    mode: Literal["chatgpt_oauth"]
+    reference: ProfileAuthReference
+
+
 # These select credentials or alternate billing routes, not ordinary model options.
 AUTH_ENV_NAMES = frozenset(
     {
@@ -97,15 +112,19 @@ AUTH_ENV_NAMES = frozenset(
 
 NATIVE_AUTH_PINS: dict[str, str] = {
     "codex": "0.154.0",
-    "claude-code": "2.1.267",
+    "claude-code": "2.1.269",
     "opencode": "1.18.30",
     "pi": "0.85.1",
 }
 
+NATIVE_AUTH_VERSIONS = {
+    name: frozenset({version}) for name, version in NATIVE_AUTH_PINS.items()
+} | {"claude-code": frozenset({"2.1.267", "2.1.269"})}
+
 
 def validate_auth_spec(
     harness: str,
-    spec: AuthSpec | None,
+    spec: AuthSpec | ProfileAuthSpec | None,
     *,
     env: Mapping[str, str] | None = None,
     version: str | None = None,
@@ -116,7 +135,7 @@ def validate_auth_spec(
         return
     if harness not in NATIVE_AUTH_PINS:
         raise ValueError("explicit auth is unsupported for this harness")
-    if version is not None and version != NATIVE_AUTH_PINS[harness]:
+    if version is not None and version not in NATIVE_AUTH_VERSIONS[harness]:
         raise ValueError("explicit auth requires the verified native version")
     if spec.mode == "api_key" and model is not None:
         credential_env_name(harness, spec.mode, model=model)

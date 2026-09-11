@@ -14,6 +14,7 @@ from tetrabench.harbor_api import Harbor022Api, NativeJobArtifacts
 from tetrabench.harness_config import ResolvedHarness
 from tetrabench.harnesses import compile_agent_config
 from tetrabench.records import RequestRecord
+from tetrabench.resources import materialize_resources
 from tetrabench.rewards import summarize_rewards
 
 
@@ -53,7 +54,7 @@ def compile_harbor_job(
     api: HarborApi,
     event_sink_key: str = "",
 ) -> Any:
-    """Compile one resolved request without interpreting model/provider names."""
+    """Reconstruct one resolved request's config without materializing resources."""
     expected_labels = {
         RUN_LABEL: request.run_id,
         ATTEMPT_LABEL: paths.root.name,
@@ -178,6 +179,8 @@ class HarborRunner:
             api=self._api,
         )
         harness = request.plan.harness
+        if harness is not None and harness.resources:
+            materialize_resources(harness.resources, paths.root / "harness-resources")
         credentials = nullcontext()
         if harness is not None and harness.auth is not None:
             if self._credential_context is None:

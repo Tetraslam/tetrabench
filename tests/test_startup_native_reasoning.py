@@ -10,7 +10,12 @@ from types import SimpleNamespace
 
 import pytest
 import tomlkit
-from native_consumer_support import native_environment, native_modules, native_run
+from native_consumer_support import (
+    VERSIONS,
+    native_environment,
+    native_modules,
+    native_run,
+)
 from test_reasoning_installed import native_config
 
 from tetrabench.canonical_json import sha256_hex
@@ -272,7 +277,7 @@ def test_actual_claude_alias_selection_is_not_resolved_id_ambiguity(
 ):
     config = HarnessConfig(
         name="claude-code",
-        version="2.1.267",
+        version=VERSIONS["claude-code"],
         model="anthropic/" + selector,
         discovery="isolated",
     )

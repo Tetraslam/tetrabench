@@ -44,9 +44,10 @@ These docs describe this checkout; features absent from your installed release
 require that local build, not an unpublished version from PyPI.
 The 0.3.0 candidate passed API-key and normal subscription evals for all four
 harnesses, plus actual native OAuth refresh and fresh-controller consumption for
-Codex, OpenCode, and Pi. Hosted CI passed at `3a48db2`; final independent release
-review, retention disposition, exact-release-artifact validation, and publication
-remain open. This is not a fully verified or published 0.3.0 release. See
+Codex, OpenCode, and Pi. That evidence used Claude 2.1.267. The newer onboarding
+helpers passed installed offline journeys with transport/terminal doubles;
+live onboarding and Claude 2.1.269 checks, full validation, and release gates remain open.
+This is not a fully verified or published 0.3.0 release. See
 [testing limits](docs/cli-reference.md#testing-and-limitations) for
 the source-candidate evidence, separate from published-release proofs.
 
@@ -119,11 +120,12 @@ stricter rules used by tetrabench's own benchmark catalog.
 | `task new` | Create an unlisted Harbor task | New task directory |
 | `task validate` | Seal and validate one fixture | None |
 | `task add` | Add a validated task to the project catalog | Atomic catalog update |
-| `doctor` | Validate config, catalog, context, and optional storage reads | None |
-| `plan` | Resolve a canonical secret-free execution plan | None |
+| `doctor` | Check local setup; optionally inspect storage/controller or auth metadata | Offline by default; explicit auth check may refresh private state |
+| `plan` | Resolve a canonical secret-free execution plan | Local reads; remote auth reads require `--online` |
 | `run --engine docker` | Run locally and wait | New private output directory |
 | `run --engine modal` | Submit detached; optionally observe with `--wait` | Cloud mutation |
 | `controller info` | Show the selected Modal deployment contract | None |
+| `controller configure` | Preview explicitly selected credentials for a controller | Secret/environment mutation only with confirmed `--write` |
 | `controller deploy` | Deploy the configured Modal controller | Cloud mutation, confirmation required |
 | `submit` | Compatibility alias for `run --engine modal --detach` | Cloud mutation |
 | `status`, `result` | Inspect a run using its recorded engine and location | Local or provider reads |
@@ -134,8 +136,8 @@ stricter rules used by tetrabench's own benchmark catalog.
 | `artifacts verify` | Stream and hash a Modal terminal's inputs and artifacts | Provider reads; no local download |
 
 Commands except `sections` accept `--json` for canonical machine-readable output.
-The `--json` forms of `controller deploy`, `cancel`, and `recover` require
-`--yes`.
+The `--json` forms of `controller deploy`, `cancel`, and `recover`, plus
+`controller configure --write --json`, require `--yes`.
 
 See the [CLI reference](docs/cli-reference.md) for exit codes, retained failure
 evidence, provider-read boundaries, cancellation and recovery behavior, and
@@ -164,11 +166,14 @@ Docker waits locally and rejects `--detach`. Modal defaults to detached;
 cancelling the remote run. `--wait` and `--detach` cannot be combined.
 The negative forms `--no-wait` and `--no-detach` are not supported.
 
+### API key, local by default
+
 User-specific overrides live at `~/.config/tetrabench/config.toml` on Linux.
 They can select models and storage locations without committing personal
 settings. Keep secret values in your secret manager or private native credential
 store; TOML contains references only. See [model API configuration](docs/cli-reference.md#model-api-configuration)
-for legacy profiles. For a controlled run, save this portable file as
+for legacy profiles. API-key runs need no host agent CLI or OAuth login: Harbor
+installs the selected harness in the sandbox. Save this portable file as
 `opencode-run.toml`:
 
 ```toml
@@ -190,31 +195,39 @@ format = "json"
 text = '{"compaction":{"auto":true}}'
 ```
 
+Supply `MODEL_API_KEY` through your secret manager. Before that model run, adapt
+the starter's `task.toml`: set `[environment] network_mode = "public"` and give
+`[agent] timeout_sec` enough time for installation and solving (for example, 300).
+Keep `[verifier.environment] network_mode = "no-network"`. Then run locally with
+the project's default Docker engine:
+
 ```console
-tetrabench agents
-tetrabench agents opencode --json
-tetrabench run example --engine docker --harness ./opencode-run.toml
+tetrabench doctor --harness ./opencode-run.toml
+tetrabench run example --harness ./opencode-run.toml --run-id api-local
+tetrabench result api-local
 ```
 
-Supply `MODEL_API_KEY` through your secret manager. Before that model run, adapt
-your own task's agent network policy and timeout: the generated starter permits
-neither network access nor enough time for agent installation. Keep its separate
-verifier offline. The example validates configuration, not model availability.
+No credential value belongs in TOML or command arguments. The optional
+`doctor --harness ./opencode-run.toml --check-provider` uses the declared key for
+native metadata, requires the matching host CLI, and sends no paid prompt; it is
+not an account or entitlement attestation. For cloud API-key execution, use the
+[named-environment setup below](#detached-modal-runs).
 
 `--harness` replaces the run's harness without editing task bytes. Project
 `[harness]` and user `[profiles.NAME.harness]` tables accept the same schema.
-The stable baseline as of 2026-09-10 is pinned per run:
+The preferred baseline frozen on 2026-09-11 is pinned per run:
 
 | Harness | Package | Baseline pin |
 | --- | --- | --- |
 | OpenCode | `opencode-ai` | `1.18.30` |
 | Codex | `@openai/codex` | `0.154.0` |
-| Claude Code | `@anthropic-ai/claude-code` | `2.1.267` |
+| Claude Code | `@anthropic-ai/claude-code` | `2.1.269` |
 | Earendil Pi | `@earendil-works/pi-coding-agent` | `0.85.1` |
 
 Check `agents NAME --json` for options and version restrictions. New native
-controls and explicit auth require these pins; older configurations retain their
-documented compatibility limits. OpenCode uses native `--auto`; Codex retains
+controls and explicit auth use these pins; Claude 2.1.267 remains accepted for
+historical records and explicit runs, without relabeling its live evidence as
+2.1.269. OpenCode uses native `--auto`; Codex retains
 Harbor's sandbox/approval override, `--dangerously-bypass-approvals-and-sandbox`.
 The exact version pin is checked against the installed agent CLI before it solves
 the task; it does not freeze all dependencies or hosted models. Tetrabench does
@@ -229,11 +242,50 @@ Use separate configurations for API billing and subscription billing. Explicit
 `auth.mode` accepts `api_key`, `chatgpt_oauth` (Codex, OpenCode, Pi), or
 `claude_setup_token` (Claude Code only). The
 [auth setup steps](docs/cli-reference.md#explicit-authentication) use the existing
-CLI and, for OAuth sessions, a private `auth.toml`; no custom Python setup is needed.
+CLI, which creates private local OAuth configuration and state; no manual binding,
+generation, runtime path, or Python setup is needed for a new local login.
 Each OAuth harness needs its own eval login and isolated home. Browser approval
 belongs to the native client. Claude's long-lived setup token is user-managed,
 not a refreshable session owned by an intermediary. No Claude subscription OAuth
 is supported in another harness.
+
+### Optional local ChatGPT login
+
+For a local ChatGPT login, install only the pinned Codex host CLI, then
+let tetrabench create an independent eval profile:
+
+```console
+npm install --global @openai/codex@0.154.0
+tetrabench auth login --profile codex-local --agent codex
+```
+
+Save `codex-oauth-run.toml`:
+
+```toml
+[harness]
+name = "codex"
+version = "0.154.0"
+model = "openai/gpt-6-astra"
+
+[harness.auth]
+mode = "chatgpt_oauth"
+reference = { kind = "profile", profile = "codex-local" }
+```
+
+With the network-enabled task above and `[harbor] concurrency = 1`, run:
+
+```console
+tetrabench auth status --profile codex-local
+tetrabench run example --harness ./codex-oauth-run.toml --run-id oauth-local
+tetrabench result oauth-local
+```
+
+Auth commands' `--profile` selects a login; `run --profile` selects engine/storage
+settings. Future runs resolve the login's current generation; old sealed runs do
+not change. Replacing a ready login requires `auth login --profile codex-local
+--replace`. See [local login](docs/cli-reference.md#local-eval-login) for
+OpenCode/Pi and logout/relogin, [Claude setup tokens](docs/cli-reference.md#claude-subscription-token),
+or the [remote OAuth journey](docs/cli-reference.md#remote-private-auth-state).
 
 For reasoning choices, install the matching native CLI on the inspection host,
 then run `tetrabench models inspect --harness ./opencode-run.toml`. Inspection is
@@ -269,7 +321,9 @@ Provision a private bucket and configure boto3's standard credential chain for
 the local submitter. For Secret creation below, inject the controller's separate
 `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` into that process environment
 through your secret manager. Do not put values in files or command arguments.
-Model runs also need their model API variables in the Secret; Oracle does not.
+API-key and setup-token runs also need their declared credential variables in the
+Secret; OAuth uses the selected auth profile and backend credentials described
+below. Oracle needs neither.
 Harbor children do not receive the controller's storage credentials.
 
 Tigris uses `https://t3.storage.dev`. Mutable coordination accepts known
@@ -283,33 +337,30 @@ uvx --from modal==1.5.4 modal setup
 tetrabench controller info --profile cloud
 ```
 
-On first deployment, create the exact environment printed above and its named
-Secret. The environment includes the profile and package version, so a Secret
-in the default or an older environment will not suffice. Replace
-`ENVIRONMENT_FROM_INFO` below; skip environment creation if it already exists.
-The native Modal API copies only the listed variables from the process:
+For the API-key harness above, preview the named variables, then confirm their
+transfer into the profile's Secret. `--create-environment` permits creation of
+that exact versioned environment; it does not provision a bucket or account:
 
 ```console
-uvx --from modal==1.5.4 modal environment create ENVIRONMENT_FROM_INFO
-uv run --no-project --python 3.12 --with modal==1.5.4 python - <<'PY'
-import os
-import modal
-
-modal.Secret.objects.create(
-    "tetrabench-controller",
-    {name: os.environ[name] for name in ("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY")},
-    environment_name="ENVIRONMENT_FROM_INFO",
-)
-PY
+tetrabench controller configure --profile cloud --harness ./opencode-run.toml \
+  --env AWS_ACCESS_KEY_ID --env AWS_SECRET_ACCESS_KEY --env MODEL_API_KEY \
+  --create-environment
+tetrabench controller configure --profile cloud --harness ./opencode-run.toml \
+  --env AWS_ACCESS_KEY_ID --env AWS_SECRET_ACCESS_KEY --env MODEL_API_KEY \
+  --create-environment --write
 ```
 
-From the submitter's credential environment, run:
+Only listed names are copied, with values supplied by your secret manager in the
+configure process. For Oracle, omit `--harness` and `--env MODEL_API_KEY`. For an
+existing Secret, `--update --write` merges selected keys; it neither removes old
+credential keys nor refreshes a running controller. Use separate run profiles for
+different billing modes. From the submitter's storage credential environment:
 
 ```console
-tetrabench doctor --profile cloud --online
 tetrabench controller deploy --profile cloud
+tetrabench doctor --profile cloud --harness ./opencode-run.toml --online
 
-tetrabench run example --engine modal --profile cloud --wait --run-id first-run
+tetrabench run example --profile cloud --harness ./opencode-run.toml --wait --run-id first-run
 tetrabench status first-run
 tetrabench result first-run
 # Explicitly audit remote input and artifact bytes:
@@ -318,8 +369,12 @@ tetrabench artifacts verify first-run
 tetrabench artifacts pull first-run ./first-run-artifacts
 ```
 
-Deployment automatically resolves the exact installed wheel and reports its
-SHA-256. Keep the original wheel for unpublished development builds.
+For Oracle, omit `--harness` from doctor/run too. For ChatGPT OAuth, follow the
+[existing-backend journey](docs/cli-reference.md#remote-private-auth-state), which
+also transfers the selected auth profile. `doctor --online` checks storage and
+controller metadata, not remote credential consumption. Deployment automatically
+resolves the exact installed wheel and reports its SHA-256. Keep the original wheel
+for unpublished development builds.
 `controller info` only reports configuration. Use `--detach` instead of `--wait`
 to return after submission. The installed-wheel Modal smoke completed one Oracle
 task with reward `1` and no surviving run-owned compute, resolving the local
@@ -401,7 +456,8 @@ Live AWS behavior and provider-initiated Modal preemption remain unproven.
 
 The developer-only `tools/install_native_consumers.py --prefix DIRECTORY`
 installs locked official consumers outside the checkout for native tests. It is
-not the end-user installation workflow. With Node 24.21.0 on `PATH`, run it via
+not the end-user installation workflow. Native verification used Node 24.21.0;
+Pi's engine minimum is 22.19.0, not Node 24 generally. With Node on `PATH`, run it via
 `uv run python`, then set `TETRABENCH_NATIVE_NODE_MODULES` to the reported
 `DIRECTORY/node_modules` when running `uv run pytest -m native`. These tests
 exercise pinned consumers without proving live authentication or remote runtime

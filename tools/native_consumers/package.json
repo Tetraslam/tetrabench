@@ -7,8 +7,8 @@
     "npm": "11.19.0"
   },
   "dependencies": {
-    "@anthropic-ai/claude-code": "2.1.267",
-    "@anthropic-ai/claude-code-linux-x64": "2.1.267",
+    "@anthropic-ai/claude-code": "2.1.269",
+    "@anthropic-ai/claude-code-linux-x64": "2.1.269",
     "@earendil-works/pi-coding-agent": "0.85.1",
     "@openai/codex": "0.154.0",
     "@openai/codex-linux-x64": "npm:@openai/codex@0.154.0-linux-x64",

@@ -118,6 +118,10 @@ def _auth_command(
     device_auth: bool = True,
     profile: str | None = None,
     auth_config: Path | None = None,
+    agent: str | None = None,
+    backend: Path | None = None,
+    replace: bool = False,
+    online: bool = False,
 ) -> None:
     import shutil
     from dataclasses import asdict
@@ -135,10 +139,31 @@ def _auth_command(
                 raise ValueError(
                     "choose --profile/--auth-config or --harness/--authority"
                 )
-            if not device_auth:
-                raise ValueError(
-                    "profile login uses device auth; use --harness for browser-auth"
+            if action == "login":
+                from tetrabench.auth_profiles import onboard_login
+
+                status = onboard_login(
+                    profile,
+                    agent=agent,
+                    backend_path=backend,
+                    replace=replace,
+                    config_path=auth_config,
+                    executable=executable,
+                    pi_module=pi_module,
+                    device_auth=device_auth,
                 )
+                if json_output:
+                    _canonical_echo(asdict(status))
+                else:
+                    out.print(f"Auth profile: {profile}", markup=False)
+                    out.print(
+                        f"{status.harness}: {status.mode}, {status.state}", markup=False
+                    )
+                    out.print(
+                        f"generation {status.generation}; account unverified",
+                        markup=False,
+                    )
+                return
             from tetrabench.auth_profiles import (
                 auth_profile_command,
                 load_auth_config_file,
@@ -161,6 +186,8 @@ def _auth_command(
                 executable=binary or "",
                 config_path=auth_config,
                 pi_module=pi_module,
+                allow_online=online,
+                device_auth=device_auth,
             )
             document = asdict(status)
             if json_output:
@@ -169,12 +196,28 @@ def _auth_command(
                 out.print(
                     f"{status.harness}: {status.mode}, {status.state}", markup=False
                 )
+                out.print(
+                    f"Auth profile: {profile}; generation {status.generation}; "
+                    "account unverified",
+                    markup=False,
+                )
             return
+        if agent is not None or backend is not None or replace:
+            raise ValueError(
+                "--agent, --backend and --replace require auth login --profile"
+            )
         if harness_path is None or auth_config is not None:
             raise ValueError(
                 "select --harness FILE or --profile NAME [--auth-config FILE]"
             )
         config = load_harness_override(harness_path)
+        from tetrabench.auth_config import ProfileAuthSpec
+
+        if isinstance(config.auth, ProfileAuthSpec):
+            raise ValueError(
+                "auth commands select managed logins with --profile NAME; "
+                "--harness retains explicit environment/local-authority references"
+            )
         if config.auth is None:
             raise ValueError(
                 "harness.auth must explicitly select the login mode and reference"
@@ -205,6 +248,7 @@ def _auth_command(
         options = {
             "store": store,
             "model": config.model,
+            "version": config.version,
             "executable": binary or "",
             "runtime_parent": user_runtime_path("tetrabench") / "native-auth",
             "environment": dict(os.environ),
@@ -244,6 +288,17 @@ def auth_login_command(
         ),
     ] = None,
     profile: Annotated[str | None, typer.Option("--profile")] = None,
+    agent: Annotated[
+        str | None,
+        typer.Option("--agent", help="New OAuth profile harness: codex, opencode, pi."),
+    ] = None,
+    backend: Annotated[
+        Path | None,
+        typer.Option("--backend", help="Private existing S3 backend definition."),
+    ] = None,
+    replace: Annotated[
+        bool, typer.Option("--replace", help="Replace a ready eval login.")
+    ] = False,
     auth_config: Annotated[Path | None, typer.Option("--auth-config")] = None,
     authority: Annotated[
         Path | None,
@@ -278,6 +333,9 @@ def auth_login_command(
         device_auth,
         profile,
         auth_config,
+        agent=agent,
+        backend=backend,
+        replace=replace,
     )
 
 
@@ -291,6 +349,10 @@ def auth_status_command(
     executable: Annotated[str | None, typer.Option("--executable")] = None,
     pi_module: Annotated[Path | None, typer.Option("--pi-module")] = None,
     json_output: Annotated[bool, typer.Option("--json")] = False,
+    online: Annotated[
+        bool,
+        typer.Option("--online", help="Permit reading the remote auth authority."),
+    ] = False,
 ) -> None:
     """Read the selected auth state without refreshing an OAuth session."""
     _auth_command(
@@ -303,6 +365,7 @@ def auth_status_command(
         json_output,
         profile=profile,
         auth_config=auth_config,
+        online=online,
     )
 
 
@@ -379,7 +442,7 @@ def _inspection_config(path: Path):
     import tomllib
 
     from tetrabench.harness_config import HarnessConfig, capability_config
-    from tetrabench.harnesses import read_config_text, seal_harness
+    from tetrabench.harnesses import prepare_harness, read_config_text
 
     text = read_config_text(path)
     values = tomllib.loads(text)
@@ -388,7 +451,7 @@ def _inspection_config(path: Path):
     fields = dict(values["harness"])
     fields.pop("capability_snapshot", None)
     config = capability_config(
-        seal_harness(HarnessConfig.model_validate(fields), path.parent)
+        prepare_harness(HarnessConfig.model_validate(fields), path.parent)
     )
     return text, config
 
@@ -430,6 +493,12 @@ def models_inspect_command(
     try:
         path = harness.expanduser().absolute()
         _, config = _inspection_config(path)
+        if allow_authenticated_read:
+            from tetrabench.auth_selection import resolve_harness_auth
+
+            config = resolve_harness_auth(
+                config, allow_online=True, config_path=auth_config
+            )
         with metadata_auth_context(
             config,
             allow_authenticated_read=allow_authenticated_read,
@@ -512,6 +581,20 @@ def models_adopt_command(
     try:
         path = harness.expanduser().absolute()
         before, source = _inspection_config(path)
+        authoring_source = source
+        from tetrabench.auth_config import ProfileAuthSpec
+
+        if isinstance(source.auth, ProfileAuthSpec) and not allow_authenticated_read:
+            raise ValueError(
+                "profile-auth adoption requires --allow-authenticated-read to pin "
+                "the selected generation; models inspect remains offline"
+            )
+        if allow_authenticated_read:
+            from tetrabench.auth_selection import resolve_harness_auth
+
+            source = resolve_harness_auth(
+                source, allow_online=True, config_path=auth_config
+            )
         with metadata_auth_context(
             source,
             allow_authenticated_read=allow_authenticated_read,
@@ -546,6 +629,8 @@ def models_adopt_command(
         adopted = bind_capability_adoption(source, snapshot, **selection)
         document = tomlkit.parse(before)
         table = document["harness"]
+        if source.auth != authoring_source.auth and source.auth is not None:
+            table["auth"] = source.auth.model_dump(mode="python")
         table.pop("args", None)
         table["options"] = {
             key: value for key, value in adopted.options.items() if value is not None
@@ -577,7 +662,7 @@ def models_adopt_command(
             current_text, current_source = _inspection_config(path)
             if current_text != before or harness_config_digest(
                 current_source
-            ) != harness_config_digest(source):
+            ) != harness_config_digest(authoring_source):
                 raise ValueError(
                     "harness configuration/resources changed during collection; "
                     "inspect again"
@@ -934,6 +1019,11 @@ def plan(
     engine: Annotated[
         str | None, typer.Option(help="Execution engine; built-ins: docker, modal.")
     ] = None,
+    harness: Annotated[Path | None, typer.Option("--harness")] = None,
+    online: Annotated[
+        bool,
+        typer.Option("--online", help="Resolve remote auth profiles; no model calls."),
+    ] = False,
     json_output: Annotated[
         bool,
         typer.Option("--json", help="Emit canonical JSON to stdout."),
@@ -941,11 +1031,23 @@ def plan(
 ) -> None:
     """Resolve a section into a canonical, secret-free plan."""
     try:
+        from tetrabench.config import load_harness_override
+
+        overrides = _engine_override(engine)
+        if harness is not None:
+            overrides = ConfigOverrides(
+                engine=overrides.engine if overrides else None,
+                harness=load_harness_override(harness),
+            )
         resolved = resolve_plan(
-            Path.cwd(), section, profile, overrides=_engine_override(engine)
+            Path.cwd(),
+            section,
+            profile,
+            overrides=overrides,
+            allow_online_auth=online,
         )
-    except (ValueError, ValidationError) as error:
-        _fail(error)
+    except (ValueError, OSError, RuntimeError, BotoCoreError, ClientError) as error:
+        _fail_command(error, json_output=json_output)
     if json_output:
         typer.echo(canonical_model_bytes(resolved).decode("utf-8"))
         return
@@ -1117,6 +1219,19 @@ def doctor(
         bool,
         typer.Option(help="Check read-only access to the selected storage profile."),
     ] = False,
+    harness: Annotated[Path | None, typer.Option("--harness")] = None,
+    engine: Annotated[str | None, typer.Option("--engine")] = None,
+    auth_profile: Annotated[
+        str | None,
+        typer.Option("--auth-profile", help="Assert selected OAuth profile name."),
+    ] = None,
+    auth_config: Annotated[Path | None, typer.Option("--auth-config")] = None,
+    check_provider: Annotated[
+        bool,
+        typer.Option(
+            "--check-provider", help="Authenticated metadata; no login or inference."
+        ),
+    ] = False,
     json_output: Annotated[
         bool,
         typer.Option("--json", help="Emit canonical JSON to stdout."),
@@ -1129,7 +1244,15 @@ def doctor(
     topology: CoordinationTopology | None = None
     try:
         check_runtime("doctor")
-        config = load_project_config(root, profile=profile)
+        from tetrabench.config import load_harness_override
+
+        overrides = _engine_override(engine)
+        if harness is not None:
+            overrides = ConfigOverrides(
+                engine=overrides.engine if overrides else None,
+                harness=load_harness_override(harness),
+            )
+        config = load_project_config(root, profile=profile, overrides=overrides)
         catalog = load_catalog(root, config.catalog_path)
         resolve_context(root, config.context)
         configured_catalog_path = Path(config.catalog_path)
@@ -1158,8 +1281,62 @@ def doctor(
                 topology = store.check_read_access()
             except (BotoCoreError, ClientError) as error:
                 _fail_doctor(error, json_output=json_output)
-    except (ValueError, ValidationError) as error:
+    except typer.Exit:
+        raise
+    except (ValueError, OSError, RuntimeError) as error:
         _fail_doctor(error, json_output=json_output)
+
+    from tetrabench.auth_diagnostics import (
+        check_controller_metadata,
+        doctor_auth_report,
+    )
+
+    try:
+        selected_engine_kind = config.execution.kind
+        controller_spec = (
+            controller_deployment_spec(config, profile)
+            if selected_engine_kind == "modal"
+            else None
+        )
+        auth_report = doctor_auth_report(
+            config.harness,
+            engine=selected_engine_kind,
+            concurrency=config.harbor.concurrency,
+            online=online,
+            check_provider=check_provider,
+            auth_profile=auth_profile,
+            auth_config=auth_config,
+            base=root,
+            artifact_buckets=[storage.bucket] if storage else (),
+        )
+        controller_report = None
+        if controller_spec is not None:
+            controller_report = check_controller_metadata(
+                controller_spec,
+                online=online and config.harness is not None,
+            )
+            auth_report["remote_runtime_checked"] = controller_report[
+                "remote_runtime_checked"
+            ]
+    except (
+        ValueError,
+        OSError,
+        RuntimeError,
+        BotoCoreError,
+        ClientError,
+        ModalError,
+    ) as error:
+        _fail_doctor(error, json_output=json_output)
+    auth_blocked = (
+        any(
+            auth_report[name]["status"] in {"blocked", "failed"}
+            for name in ("configured", "native_ready", "provider_checked")
+        )
+        or auth_report["provider_checked"].get("metadata_status") == "failed"
+    )
+    auth_blocked |= (
+        controller_report is not None and controller_report["status"] == "blocked"
+    )
 
     storage_report: dict[str, object] | None = None
     if storage is not None:
@@ -1181,7 +1358,12 @@ def doctor(
                 "checks": [
                     {"name": "project_configuration", "status": "ok"},
                     {"name": "catalog_and_local_context", "status": "ok"},
-                    {"name": "cloud_controller", "status": "not_attempted"},
+                    {
+                        "name": "cloud_controller",
+                        "status": controller_report["status"]
+                        if controller_report is not None
+                        else "not_attempted",
+                    },
                     {"name": "storage_bucket", "status": storage_status},
                     {"name": "storage_prefix", "status": storage_status},
                     {
@@ -1198,12 +1380,23 @@ def doctor(
                 "profile": profile,
                 "schema_version": 1,
                 "storage": storage_report,
+                "authentication": auth_report,
+                "controller": controller_report,
             }
         )
+        if auth_blocked:
+            raise typer.Exit(2)
         return
     out.print("[green]ok[/green] project configuration")
     out.print("[green]ok[/green] catalog and local context paths")
-    out.print("[dim]not attempted[/dim] cloud controller checks")
+    if controller_report is None or controller_report["status"] == "not_attempted":
+        out.print("[dim]not attempted[/dim] cloud controller checks")
+    else:
+        out.print(
+            f"cloud_controller: {controller_report['status']}; "
+            f"{controller_report['action']}",
+            markup=False,
+        )
     if online:
         if storage is None:
             raise RuntimeError("online doctor completed without storage configuration")
@@ -1227,6 +1420,17 @@ def doctor(
     else:
         out.print("[dim]not attempted[/dim] storage provider checks (offline)")
     out.print("[yellow]unproven[/yellow] storage writes (not attempted)")
+    for name in (
+        "configured",
+        "native_ready",
+        "provider_checked",
+        "account_verified",
+        "remote_runtime_checked",
+    ):
+        item = auth_report[name]
+        out.print(f"{name}: {item['status']}; {item['action']}", markup=False)
+    if auth_blocked:
+        raise typer.Exit(2)
 
 
 @controller_app.command("info")
@@ -1295,6 +1499,70 @@ def controller_deploy(
         if "wheel_filename" in report:
             out.print(f"[bold]Wheel:[/bold] {report['wheel_filename']}")
         out.print(f"[bold]Wheel SHA-256:[/bold] {report['wheel_sha256']}")
+
+
+@controller_app.command("configure")
+def controller_configure_command(
+    profile: Annotated[
+        str, typer.Option("--profile", help="Run profile selecting controller names.")
+    ],
+    auth_profile: Annotated[list[str] | None, typer.Option("--auth-profile")] = None,
+    harness: Annotated[Path | None, typer.Option("--harness")] = None,
+    env: Annotated[
+        list[str] | None,
+        typer.Option("--env", help="Explicit environment variable name; repeatable."),
+    ] = None,
+    auth_config: Annotated[Path | None, typer.Option("--auth-config")] = None,
+    write: Annotated[bool, typer.Option("--write")] = False,
+    update: Annotated[bool, typer.Option("--update")] = False,
+    create_environment: Annotated[bool, typer.Option("--create-environment")] = False,
+    yes: Annotated[bool, typer.Option("--yes")] = False,
+    json_output: Annotated[bool, typer.Option("--json")] = False,
+) -> None:
+    """Preview controller credential configuration; explicit --write transfers it."""
+    from tetrabench.controller_configure import configure_controller
+
+    try:
+        config = load_project_config(Path.cwd(), profile=profile)
+
+        def configure(*, perform_write: bool = False):
+            return configure_controller(
+                config,
+                profile=profile,
+                auth_profiles=auth_profile or (),
+                env_names=env or (),
+                harness=harness,
+                auth_config_path=auth_config,
+                update=update,
+                create_environment=create_environment,
+                write=perform_write,
+                confirmed=perform_write,
+            )
+
+        if write and json_output and not yes:
+            raise ValueError("controller configure --write --json requires --yes")
+        if write and not yes:
+            preview = configure()
+            _canonical_echo(preview)
+            if not typer.confirm(
+                "Write these selected values to this Modal Secret?", default=False
+            ):
+                raise typer.Exit(1)
+        report = configure(perform_write=write)
+    except typer.Exit:
+        raise
+    except (
+        ValueError,
+        OSError,
+        RuntimeError,
+        BotoCoreError,
+        ClientError,
+        ModalError,
+    ) as error:
+        _fail_command(error, json_output=json_output)
+    _canonical_echo(report)
+    if report.get("ok") is False:
+        raise typer.Exit(2)
 
 
 @app.command()

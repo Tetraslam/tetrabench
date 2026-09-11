@@ -29,7 +29,11 @@ from tetrabench.harnesses import (
 from tetrabench.models import ConfigOverrides
 from tetrabench.plan import canonical_model_bytes, parse_canonical_model
 from tetrabench.records import RequestRecord
-from tetrabench.resources import AGENT_RESOURCE_ROOT, MAX_RESOURCE_FILE_BYTES
+from tetrabench.resources import (
+    AGENT_RESOURCE_ROOT,
+    MAX_RESOURCE_FILE_BYTES,
+    materialize_resources,
+)
 from tetrabench.submission import prepare_run
 
 
@@ -165,6 +169,8 @@ def test_sealed_directory_binds_skills_through_harbor(tmp_path):
         tmp_path,
     )
     config = compile_agent_config(sealed, resource_directory=tmp_path / "runtime")
+    assert not (tmp_path / "runtime").exists()
+    materialize_resources(sealed.resources, tmp_path / "runtime")
     assert config.skills == [str(tmp_path / "runtime/skills/example")]
     assert (
         (Path(config.skills[0]) / "SKILL.md")
@@ -196,6 +202,7 @@ def test_native_seed_and_second_step_use_harbor_lifecycle(tmp_path, name):
         tmp_path,
     )
     config = compile_agent_config(sealed, resource_directory=tmp_path / "runtime")
+    materialize_resources(sealed.resources, tmp_path / "runtime")
     assert config.resume_trajectory is True
     instance: Any = AgentFactory.create_agent_from_config(
         config, logs_dir=tmp_path / "logs", load_trajectory=config.load_trajectory
@@ -326,6 +333,7 @@ def test_pi_load_uses_native_v3_session_and_harbor_resume(tmp_path):
         tmp_path,
     )
     config = compile_agent_config(sealed, resource_directory=tmp_path / "runtime")
+    materialize_resources(sealed.resources, tmp_path / "runtime")
     instance: Any = AgentFactory.create_agent_from_config(
         config, logs_dir=tmp_path / "logs", load_trajectory=config.load_trajectory
     )

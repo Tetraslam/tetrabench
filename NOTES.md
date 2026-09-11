@@ -2163,3 +2163,87 @@ Final independent release review, exact-release-artifact validation, and publica
 remain open. Mechanisms/continuation passed; Claude clean within-protocol retention
 is unproven and its release disposition awaits the user. No paid rerun is inferred
 as authorized or required. Version 0.3.0 remains unpublished.
+
+## 2026-09-11T19:46:03Z: Observed Claude native recovery accepted for 0.3.0
+
+Provenance: the user's reply after the parent explained Claude's transcript lookup
+after two summaries: "oh that seems fine. if the other harnesses worked and this
+is just the way cc is intended to be used and that was its natural first thought,
+that seems perfectly fine to me :)" The retained Claude summary report still
+records correct results and a failed clean-retention subclaim.
+
+This accepts the observed native mechanism/continuation/recovery for 0.3.0 and
+supersedes the pending user-disposition blocker. Summary-only/clean within-protocol
+retention remains unproven; no claim that the summaries retained facts or that
+transcript lookup is universally the first strategy follows. No paid rerun is implied.
+The parent reports CI `34632963343` successful at clean pushed `5382b78`; the live
+runtime/wheel evidence remains at `2d1ca9a`. Final independent release review,
+stable-version recheck, exact-release-artifact validation, and publication remain
+open. This entry changes acceptance status, not source behavior or historical evidence.
+
+## 2026-09-11T21:58:56Z: Onboarding docs aligned with implemented CLI; acceptance pending
+
+Provenance: five `/tmp/tetrabench-*-handoff.md` records for onboarding integration,
+auth, remote configuration, diagnostics, and Claude upgrade; current CLI/source;
+offline public `--help` and `agents claude-code --json` inspection. This is a
+documentation-only checkpoint, not a login, deployment, or installed-journey proof.
+
+Docs use explicit API-key env references, optional native login bootstrap and
+managed authoring profile references, and existing-backend remote login followed by
+controller configure preview/confirmed write/deploy. Runtime paths are managed;
+old sealed generations stay fixed. Diagnostics distinguish metadata from account
+or remote-runtime proof. Secret merge updates neither delete stale keys nor refresh
+running controllers; no automatic provisioning is advertised.
+
+Preferred Claude is frozen at 2.1.269 / SDK 0.3.269; historical 2.1.267 evidence
+and accepted transcript recovery remain unchanged. Integration reports 114 native
+passes, but the broad non-native run still has three resource lifecycle failures
+under investigation (2,602 passed with artifact tests excluded; 31 artifact cases
+passed separately on `/tmp`). Review, fresh installed public journeys, and new
+Claude live checks remain open. No full-pass or release-readiness claim follows.
+
+## 2026-09-11T22:45:20Z: Review fixes and installed offline journeys
+
+Provenance: integration review handoff, current doctor source, direct read of
+`/tmp/opencode/tetrabench-onboarding-journeys-proof/FINAL_REPORT.json`, and parent
+resource/validation checkpoint. Five P2 fixes are implemented; 249 focused cases
+passed. Hash seed 3 exposed retry-set JSON ordering; semantic-set comparison and
+seeded regressions supersede the unresolved three-resource-failure status above.
+The later 2,647-pass/one-obsolete-snippet-test run is not a full pass; the snippet
+test was replaced by CLI/SDK behavior coverage and full validation is underway.
+
+The dirty installed wheel passed 37 public CLI invocations with transport/terminal
+doubles and real Modal RPC construction, but synthetic Docker and graph-only
+deployment. No live login, score, remote setup, or Claude 2.1.269 proof is claimed.
+Pi requires Node >=22.19.0; verification used 24.21.0. Doctor's optional auth
+metadata check may refresh private custody without inference. Earlier Claude
+2.1.267 evidence and accepted transcript-recovery qualifications remain unchanged.
+
+## 2026-09-11T23:33:30Z: Complete dirty-candidate local validation
+
+Provenance: OpenCode validation in `/home/tetraslam/Programming/tetrabench`, retained
+logs/JUnit, before/after source manifests, and installed artifact reports under
+`/var/tmp/tetrabench-final-validation-20260911/`. No source changes, credentials,
+model/cloud calls, commits, pushes, or host sysctl changes were made.
+
+Complete selections passed 2,675 nonnative, 114 mandatory native, and 12 Docker
+tests, with zero skips. Nonnative/native used a private 6 GiB tmpfs over `/tmp`,
+actual UID 1000, and hash seed 3; nonnative retained host loopback. Native used
+network isolation, existing pinned consumers, and Node 24.21.0. Ruff/format, ty,
+Bandit over all source/tools, lock/dependency consistency and vulnerability audit,
+actionlint, strict package metadata, candidate-diff and history Gitleaks passed.
+Wheel/sdist reproduction, installed Docker reward one, offline Modal graph, and
+37 installed synthetic public CLI invocations passed. All 75 packaged source files
+matched the unchanged 216-file source/test/tool/dependency/workflow fingerprint.
+
+The initial nonnative selection had one `ENOTCONN` at
+`test_authority_fencing_calibration.py:478`; the complete rerun passed unchanged.
+The initial Docker selection had two admission-matrix failures; a child diagnostic
+proved shared `/tmp` quota exhaustion. All 12 passed with `/var/tmp` scratch.
+The whole-changed-file scan's sole finding was unchanged, previously allowlisted
+prose at NOTES line 1476; the actual diff scan was clean. Runner-only scan-config
+and metadata-file-selection mistakes were corrected and retained in the logs.
+Four empty networks from intentional failed-cleanup tests were identified by their
+trial directories and removed; Docker inventories returned to baseline and no
+validation test process remained. Live onboarding, current hosted CI, and release
+acceptance remain separate gates. Full hashes and qualifications are in `RESULTS.md`.

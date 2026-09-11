@@ -235,39 +235,6 @@ print(json.dumps({"wheel_sha256": sys.argv[1], "origin": origin}))
     )
 
 
-def test_documented_modal_secret_uses_only_named_process_environment(monkeypatch):
-    blocks = re.findall(r"```console\n(.*?)```", (ROOT / "README.md").read_text(), re.S)
-    commands = [block for block in blocks if "modal.Secret.objects.create(" in block]
-    assert len(commands) == 1
-    source = commands[0].split("<<'PY'\n", 1)[1].rsplit("\nPY", 1)[0]
-    monkeypatch.setenv("AWS_ACCESS_KEY_ID", "synthetic-controller-id")
-    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "synthetic-controller-secret")
-    monkeypatch.setenv("UNRELATED_SECRET", "must-not-forward")
-    calls = []
-    monkeypatch.setattr(
-        modal,
-        "Secret",
-        SimpleNamespace(
-            objects=SimpleNamespace(
-                create=lambda *args, **kwargs: calls.append((args, kwargs))
-            )
-        ),
-    )
-    exec(compile(source, "README.md:Modal Secret", "exec"), {})
-    assert calls == [
-        (
-            (
-                "tetrabench-controller",
-                {
-                    "AWS_ACCESS_KEY_ID": "synthetic-controller-id",
-                    "AWS_SECRET_ACCESS_KEY": "synthetic-controller-secret",
-                },
-            ),
-            {"environment_name": "ENVIRONMENT_FROM_INFO"},
-        )
-    ]
-
-
 @pytest.fixture
 def controller_artifact(built_wheel, tmp_path, monkeypatch):
     installed = tmp_path / "installed"
@@ -321,6 +288,113 @@ def test_real_modal_154_constructs_dynamic_serialized_function(
     assert modal.__version__ == "1.5.4"
     bundle = build_modal_controller(_spec())
     assert tuple(bundle.app.registered_functions) == ("controller",)
+
+
+@pytest.mark.parametrize("explicit_runtime", [False, True])
+def test_controller_resolves_private_auth_path_only_in_actual_runtime(
+    controller_artifact, tmp_path, monkeypatch, explicit_runtime
+):
+    from tetrabench.auth_profiles import AUTH_CONFIG_CONTENT_ENV, AUTH_CONFIG_FILE_ENV
+    from tetrabench.harness_config import ResolvedHarness
+
+    host_home = tmp_path / "host-home"
+    remote_home = tmp_path / "controller-home"
+    host_home.mkdir(mode=0o700)
+    remote_home.mkdir(mode=0o700)
+    monkeypatch.setenv("HOME", str(host_home))
+    monkeypatch.delenv(AUTH_CONFIG_FILE_ENV, raising=False)
+    content = {
+        "schema_version": 1,
+        "profiles": {
+            "chosen": {
+                "harness": "codex",
+                "binding": "dedicated",
+                "generation": 1,
+                "backend": {
+                    "kind": "s3",
+                    "approved_private_backend": True,
+                    "storage": {"provider": "tigris", "bucket": "auth-only"},
+                    "access_key": {"kind": "env", "name": "TETRABENCH_AUTH_KEY"},
+                    "secret_key": {"kind": "env", "name": "TETRABENCH_AUTH_SECRET"},
+                },
+            }
+        },
+    }
+    if explicit_runtime:
+        content["runtime_directory"] = str(remote_home / "explicit-runtime")
+    monkeypatch.setenv(AUTH_CONFIG_CONTENT_ENV, json.dumps(content))
+    fake = _FakeModal()
+    bundle = build_modal_controller(_spec(), modal_module=fake)
+    assert not list(host_home.iterdir())
+    observed = []
+    harness = ResolvedHarness.model_validate(
+        {
+            "name": "codex",
+            "version": "0.154.0",
+            "model": "openai/gpt-5",
+            "auth": {
+                "mode": "chatgpt_oauth",
+                "reference": {
+                    "kind": "native_session",
+                    "profile": "chosen",
+                    "binding": "dedicated",
+                    "generation": 1,
+                },
+            },
+        }
+    )
+
+    class Scope:
+        def __init__(self, *args, directory, **kwargs):
+            observed.append(directory)
+            assert directory.stat().st_uid == os.geteuid()
+            assert directory.stat().st_mode & 0o777 == 0o700
+
+        def finalize(self, **kwargs):
+            pass
+
+    class Runtime:
+        def __init__(self, store, volume, runner, observer, **kwargs):
+            self.runner = runner
+
+        def run(self, invocation, **kwargs):
+            paths = SimpleNamespace(root=tmp_path / "artifacts")
+            with self.runner._credential_context(harness, paths):
+                pass
+            return SimpleNamespace(
+                attempt_id="synthetic",
+                detail=None,
+                state="synthetic",
+                run_id="synthetic",
+                terminal_sha256=None,
+            )
+
+    monkeypatch.setattr(
+        fake, "current_function_call_id", lambda: "fc-synthetic", raising=False
+    )
+    monkeypatch.setattr("tetrabench.runtime_auth.RuntimeAuthScope", Scope)
+    monkeypatch.setattr("tetrabench.runtime_auth.profile_store", lambda *a, **k: None)
+    monkeypatch.setattr("tetrabench.modal_app.ControllerRuntime", Runtime)
+    monkeypatch.setattr("tetrabench.modal_app.create_s3_store", lambda *a: object())
+    monkeypatch.setattr("tetrabench.modal_app.ModalChildObserver", lambda *a, **k: None)
+    monkeypatch.setattr("tetrabench.modal_app.S3ChildIdentitySource", lambda *a: None)
+    monkeypatch.setattr(
+        "tetrabench.modal_app.parse_controller_invocation",
+        lambda *a: SimpleNamespace(
+            storage=SimpleNamespace(bucket="artifact-only"), run_id="synthetic"
+        ),
+    )
+    # Switch HOME only after the deployable closure was constructed on the host.
+    monkeypatch.setenv("HOME", str(remote_home))
+    try:
+        fake.apps[0].function_body(b"synthetic", "synthetic")
+    finally:
+        bundle.artifacts.cleanup()
+    assert len(observed) == 1 and observed[0].is_relative_to(remote_home)
+    if explicit_runtime:
+        assert observed[0].parent == remote_home / "explicit-runtime"
+    assert not list(host_home.iterdir())
+    assert not observed[0].exists()
 
 
 def test_installed_distribution_metadata_has_exact_runtime_dependencies() -> None:

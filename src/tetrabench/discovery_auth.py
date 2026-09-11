@@ -109,9 +109,18 @@ def metadata_auth_context(
             raise AuthError("--auth-config requires --allow-authenticated-read")
         yield None
         return
+    from tetrabench.auth_selection import resolve_harness_auth
+
+    config = resolve_harness_auth(
+        config, allow_online=True, config_path=auth_config, environment=environment
+    )
     spec = config.auth
     if spec is None:
         raise AuthError("--allow-authenticated-read requires an explicit harness.auth")
+    from tetrabench.auth_config import AuthSpec
+
+    if not isinstance(spec, AuthSpec):
+        raise AuthError("authenticated metadata requires a resolved auth reference")
     validate_explicit_auth_configuration(config)
     env = dict(os.environ if environment is None else environment)
     store = None
@@ -127,6 +136,7 @@ def metadata_auth_context(
         from tetrabench.auth_profiles import (
             load_auth_config_file,
             load_auth_profile,
+            profile_runtime_directory,
             profile_store,
         )
 
@@ -135,7 +145,7 @@ def metadata_auth_context(
         store = profile_store(
             profile, engine="docker", environment=env, artifact_buckets=()
         )
-        parent = Path(private.runtime_directory)
+        parent = profile_runtime_directory(private, environment=env)
     from tetrabench.native_discovery import native_installation
 
     installation = native_installation(config.name, modules=modules, node=node)
@@ -175,6 +185,7 @@ def metadata_auth_context(
             pi_module=pi_module,
             consumer_id=owner,
             model=config.model,
+            version=config.version,
         ) as runtime:
             if (
                 runtime.last_auth_status is None

@@ -54,16 +54,33 @@ existing catalog content. The catalog and its lock must be outside the fixture
 tree. A sibling advisory lock serializes tetrabench writers; arbitrary programs
 editing the catalog concurrently are outside that cooperative lock.
 
-`tetrabench plan SECTION [--profile PROFILE] [--engine docker|modal]` prints a
-secret-free plan and its digest. JSON mode emits the plan alone. An empty
-selection is valid but not runnable.
+`tetrabench plan SECTION [--profile PROFILE] [--engine docker|modal]
+[--harness FILE] [--online]` prints a secret-free plan and its digest. JSON mode
+emits the plan alone. An empty selection is valid but not runnable. A local OAuth
+profile resolves read-only; an S3-backed profile requires `--online`. Run preparation
+resolves the selected authority before sealing the immutable request.
 
 `tetrabench doctor` checks project configuration, catalog selection, section
-READMEs, and explicit context. It does not construct a provider client unless
-`--online` is present. Online mode calls only bucket and prefix read operations:
-`HeadBucket`, `GetBucketLocation`, and a list limited to one key. It reports
-whether the bucket topology is safe for mutable admission and never tests or
-claims write access.
+READMEs, explicit context, and auth setup. `--harness FILE` and `--engine` select
+what to diagnose; `--auth-profile NAME` asserts the selected login, not a billing
+override. The default performs no provider calls, login, refresh, or inference.
+
+`--online` checks storage via `HeadBucket`, `GetBucketLocation`, and a one-key list.
+With an explicit Modal harness it also checks named environment/Secret/Function
+metadata, not Secret values or a running child's credentials. Storage writes and
+remote runtime readiness remain unproven. `--online` alone does not authorize
+model-provider metadata access.
+
+Optional `doctor --harness FILE --check-provider` uses declared credentials for
+native metadata, with native refresh/private write-back if needed. It requires
+the matching host CLI but performs no login or inference and sends no paid prompt.
+Read `metadata_status` separately: bundled/cached metadata is not an attested
+provider GET, verified account, or universal entitlement. For Modal this checks
+from the submitter, not the remote controller; ordinary remote API-key checks do
+not require the model key on the submitter.
+Operational metadata failures exit 2; unsupported or unproven metadata alone may
+exit 0 and does not imply successful provider verification. Doctor configuration
+errors are canonical JSON on stderr with exit 2 when `--json` is selected.
 
 ## Engine configuration
 
@@ -150,9 +167,10 @@ still contain workload-emitted secrets and must be treated as private.
 
 ### Controlled harness configuration
 
-This checkout's 0.3.0 candidate has live API-key and normal subscription evidence
-for all four harnesses, plus native OAuth refresh and fresh-controller consumption
-for Codex, OpenCode, and Pi. Release gates remain open. See
+Earlier 0.3.0 candidates have live API-key and normal subscription evidence for
+all four harnesses, plus native OAuth refresh/fresh-controller consumption for
+Codex, OpenCode, and Pi. Claude live evidence is at 2.1.267, not the preferred
+2.1.269. New onboarding journeys and 2.1.269 live acceptance remain pending. See
 [testing limits](#testing-and-limitations); this is not a fully verified or
 published 0.3.0 release.
 
@@ -162,11 +180,11 @@ credential variables, version restrictions, and limitations. Only the four
 listed adapters are registered; arbitrary agent import paths or shell arguments
 are not accepted.
 
-| Name | Native package | Stable pin (2026-09-10) | Native configuration |
+| Name | Native package | Preferred pin (frozen 2026-09-11) | Native configuration |
 | --- | --- | --- | --- |
 | `opencode` | `opencode-ai` | `1.18.30` | JSON or JSONC |
 | `codex` | `@openai/codex` | `0.154.0` | TOML or JSON |
-| `claude-code` | `@anthropic-ai/claude-code` | `2.1.267` | JSON |
+| `claude-code` | `@anthropic-ai/claude-code` | `2.1.269` | JSON |
 | `pi` | `@earendil-works/pi-coding-agent` | `0.85.1` | JSON with `settings` and/or `models` objects |
 
 Use `agents NAME --json` for the complete option types and conflicts. OpenCode
@@ -189,10 +207,11 @@ Required fields are `name`, exact `version = "x.y.z"`, and `model = "provider/mo
 Controlled OpenCode accepts `1.18.29` and `1.18.30`. Its run
 command uses `--auto`, not Harbor 0.22's unsupported
 `--dangerously-skip-permissions`. Other OpenCode pins, including `1.2.15`, fail
-validation before installation. `agents opencode --json` reports this restriction
-in `supported_versions`; the other adapters do not have that allowlist. New
+validation before installation. `agents NAME --json` reports version restrictions;
+Claude accepts exactly 2.1.267 and 2.1.269 for these native controls. New
 controls, resource/session configuration, discovery policy, and explicit auth
-require the stable pins above. `latest` is not accepted in a run configuration.
+use the pins above; Claude's exact 2.1.267 contract remains accepted for explicit
+runs and historical records. `latest` is not accepted in a run configuration.
 OpenCode and Pi preserve nested model IDs; Codex and Claude Code reject them
 because their Harbor adapters truncate them. Pi requires version 0.74.0 or later
 and uses Harbor's native Earendil installer. During setup, tetrabench probes the
@@ -268,7 +287,7 @@ text = 'model_context_window = 100000'
 ```toml
 [harness]
 name = "claude-code"
-version = "2.1.267"
+version = "2.1.269"
 model = "anthropic/claude-sonnet-4-6"
 
 [harness.options]
@@ -376,14 +395,19 @@ prompts; the task's Docker/Modal boundary still matters.
 
 ### Explicit authentication
 
-The secret-free `AuthSpec` is `[harness.auth]`: `schema_version` defaults to `1`,
-`mode` selects billing, and `reference` selects authority. It supports:
+In `[harness.auth]`, `schema_version` defaults to `1`, `mode` selects billing, and
+`reference` selects authority. Authoring files support:
 
 | Mode | Harnesses | Reference | Operator owns |
 | --- | --- | --- | --- |
 | `api_key` | All four | `{ kind = "env", name = "SOURCE_VARIABLE" }` | Key provisioning and rotation |
-| `chatgpt_oauth` | Codex, OpenCode, Pi | `{ kind = "native_session", profile = "NAME", generation = 1, binding = "BINDING" }` | Separate native login per harness and private state backend |
+| `chatgpt_oauth` | Codex, OpenCode, Pi | `{ kind = "profile", profile = "NAME" }` | Separate native login per harness and private state backend |
 | `claude_setup_token` | Claude Code only | `{ kind = "env", name = "SOURCE_VARIABLE" }` | Long-lived subscription setup token and renewal |
+
+Profile references resolve once to an exact `native_session` before immutable
+sealing. Existing `{ kind = "native_session", profile = "NAME", generation = 1,
+binding = "BINDING" }` inputs remain supported and fixed; canonical run records
+never contain a floating profile reference.
 
 The four API-key examples are the [README OpenCode file](../README.md#project-configuration)
 and `codex-run.toml`, `claude-run.toml`, `pi-run.toml` above. Supply the named
@@ -404,83 +428,80 @@ inspection needs a Codex API-key session.
 
 #### Local eval login
 
-Install the matching native CLI on the host where you invoke `auth login`:
-`opencode`, `codex`, or `claude` must be on that process's `PATH`. Pi needs Node
-and the installed Earendil Pi package. The tetrabench Python install does not
-install these host CLIs; Harbor's later sandbox installation is separate.
-Use the native package/version table above. If needed,
-pass `--executable /absolute/path/to/codex` (or `opencode`/`claude`); for Pi,
-`--executable` selects **Node**, and `--pi-module` selects the pinned package's
-`dist/index.js`. These are actual installed files, not command strings or npm
-package names. Normal Pi discovery resolves the package from `pi` on `PATH`.
+API-key and existing Claude setup-token evals need no host agent CLI: Harbor
+installs it in the sandbox. Native login and model metadata inspection need the
+matching host installation. Install only the harness you use:
 
-Create `~/.config/tetrabench/auth.toml` outside the repo, mode `0600`, with private
-`0700` directories on a single-machine local filesystem. Replace `/home/alice`
-with your absolute home path; this parser does not expand `~` or env placeholders:
+| Harness | Host installation |
+| --- | --- |
+| Codex | `npm install --global @openai/codex@0.154.0` |
+| OpenCode | `npm install --global opencode-ai@1.18.30` |
+| Pi | `npm install --global @earendil-works/pi-coding-agent@0.85.1` |
+| Claude Code | `npm install --global @anthropic-ai/claude-code@2.1.269` |
 
-```toml
-schema_version = 1
-runtime_directory = "/home/alice/.local/state/tetrabench/auth-runtime"
+Pi requires Node **22.19.0 or later** and the installed package; Node 24.21.0 was
+used for verification, not imposed as the general minimum. Normal discovery
+uses `pi` on `PATH`; `--executable` selects Node, not the Pi script, and optional
+`--pi-module` selects that package's `dist/index.js`. For other harnesses,
+`--executable` selects the actual `codex`, `opencode`, or `claude` file. Explicit
+historical Claude 2.1.267 runs/inspection require that exact host version.
 
-[profiles.codex-eval]
-harness = "codex"
-binding = "laptop-evals"
-generation = 1
+From a project with a network-enabled agent task and `[harbor] concurrency = 1`:
 
-[profiles.codex-eval.backend]
-kind = "local"
-approved_private_backend = true
-state_directory = "/home/alice/.local/state/tetrabench/auth-state"
+```console
+tetrabench auth login --profile codex-local --agent codex
+tetrabench auth status --profile codex-local
 ```
 
-`approved_private_backend` records your selection; it does not prove filesystem
-or cloud privacy. Keep auth state and runtime directories outside task, context,
-resource, output, and artifact roots. This file holds references/configuration,
-not token literals. Native credential files are private runtime state and must
-never be committed or added to a resource bundle.
-
-Save a separate `codex-oauth-run.toml`:
+The helper checks the installed pin, creates private configuration/state, generates
+the binding, and asks the native client to obtain approval in an isolated eval
+home. It does not copy an interactive login. No manual `auth.toml`, generation, or
+runtime path is needed. Save `codex-oauth-run.toml`:
 
 ```toml
 [harness]
 name = "codex"
 version = "0.154.0"
-model = "openai/gpt-5"
+model = "openai/gpt-6-astra"
 
 [harness.auth]
 mode = "chatgpt_oauth"
-reference = { kind = "native_session", profile = "codex-eval", generation = 1, binding = "laptop-evals" }
+reference = { kind = "profile", profile = "codex-local" }
 ```
 
 ```console
-tetrabench auth login --profile codex-eval
-tetrabench auth status --profile codex-eval --json
+tetrabench doctor --harness ./codex-oauth-run.toml
+tetrabench run example --harness ./codex-oauth-run.toml --run-id oauth-local
+tetrabench result oauth-local
 ```
 
-`auth login --profile` selects a **private auth profile**, not a run profile in
-`config.toml`. The profile name, binding, generation, and harness must match the
-run reference. Local runs load the default `auth.toml`; for another path, set
+`auth login/status/logout/reseed --profile` selects a **login profile** in private
+`auth.toml`; `run/plan/doctor/controller --profile` selects a **run profile** in
+`config.toml`. New logins require `--agent`; existing logins infer it. Local runs
+load the default `auth.toml`; for another path, set
 `TETRABENCH_AUTH_CONFIG_FILE` in the runtime environment. Auth commands also
 accept `--auth-config FILE`. Do not set both file and content sources.
 
-Login opens a fresh eval-only native home; it never copies a global auth store.
-The native client owns device/browser approval. Profile login uses device auth;
-the lower-level `--harness FILE --authority DIR --local-filesystem` form also
-accepts `--browser-auth`. Neither form bypasses approval. `status` reads the
-declared state without refreshing and does not prove server acceptance.
+Ready logins require explicit `auth login --profile codex-local --replace`.
+`auth logout --profile codex-local`, then `auth login --profile codex-local`, uses
+the next generation. Future profile-based runs resolve it automatically; old
+sealed runs and capability snapshots stay unchanged. Replacement cannot rebind
+the harness/backend or take over a claimed session. Managed profiles omit a fixed
+generation; existing fixed-generation profiles remain fixed.
 
-For OpenCode and Pi, create independent `opencode-eval` and `pi-eval` entries in
-the same private file, each with its own harness, binding, and state directory;
-repeat `auth login --profile NAME`. Match those references in separate run files
-using pins `1.18.30` and `0.85.1`. OpenCode's ChatGPT route requires `openai/...`;
-Pi's requires `openai-codex/...`. Do not clone one harness's tokens into another.
+Native device approval is the default; `--browser-auth` selects browser approval.
+`status` never refreshes or proves server acceptance. A failed first login may leave
+an uninitialized profile; inspect status after an ambiguous result rather than
+automatically repeating login. The lower-level `--harness FILE` auth form remains
+available but cannot be combined with `--profile`.
 
-Set `concurrency = 1` under `[harbor]` in the project (or under the selected
-user profile's `harbor` table) for ChatGPT OAuth;
-the runtime rejects parallel trials sharing that lineage. Run selection uses
-`tetrabench run example --engine docker --harness ./codex-oauth-run.toml`, after
-adapting the starter's network/timeout as described above. The retained live OAuth
-smokes used Modal; this Docker example is not separate live OAuth evidence.
+For OpenCode or Pi, use `auth login --profile NAME --agent opencode` or
+`auth login --profile NAME --agent pi` with a distinct name, then a separate run
+file with that harness/pin and profile reference.
+OpenCode's ChatGPT route requires `openai/...`; Pi's requires `openai-codex/...`.
+Never clone one harness's tokens into another. Parallel trials sharing a lineage
+are rejected. Keep private auth state outside task, resource, output, and artifact
+trees; it is not portable project content.
 
 #### Claude subscription token
 
@@ -489,47 +510,69 @@ Save `claude-subscription-run.toml` separately from the API-key configuration:
 ```toml
 [harness]
 name = "claude-code"
-version = "2.1.267"
-model = "anthropic/claude-sonnet-4-6"
+version = "2.1.269"
+model = "anthropic/claude-opus-5"
 
 [harness.auth]
 mode = "claude_setup_token"
 reference = { kind = "env", name = "CLAUDE_EVAL_TOKEN" }
 ```
 
-Run `tetrabench auth login --harness ./claude-subscription-run.toml`. It invokes
-native `claude setup-token` in an isolated home. Complete the native approval,
-store the resulting long-lived token in your secret manager, and inject it as
-`CLAUDE_EVAL_TOKEN` for the run. Tetrabench does not save the setup token. You own
+For a network-enabled agent task, inject an existing setup token as
+`CLAUDE_EVAL_TOKEN` through your secret manager:
+
+```console
+tetrabench run example --harness ./claude-subscription-run.toml --run-id claude-local
+tetrabench result claude-local
+```
+
+To obtain a token, first install the matching host CLI above, then run
+`tetrabench auth login --harness ./claude-subscription-run.toml`. It invokes native
+`claude setup-token` in an isolated home; complete approval and store the result
+in your secret manager. Tetrabench does not save the setup token. You own
 renewal on expiry; an intermediary cannot refresh it as a Codex OAuth lineage.
 Claude subscription credentials are not supported in OpenCode, Codex, or Pi.
 
 #### Remote private auth state
 
-Modal OAuth requires an explicitly selected private S3-compatible auth backend,
-in a **different bucket from run artifacts**. A local auth directory, Modal
-Volume, or static token snapshot in a Modal Secret is not durable refresh
-authority. Provisioning and operator approval are separate prerequisites, not
-performed by this configuration. This submitter-side login example uses a local
-private runtime directory; replace `/home/alice` with your actual home:
+Use an existing private artifact bucket and a **different private auth bucket**.
+The CLI provisions neither buckets, keys, IAM policies, nor accounts. A local
+auth directory or a token snapshot in a Modal Secret cannot replace the durable
+remote auth backend. This journey uses a new `cloud-oauth` run profile, separate
+from any API-key controller.
+
+In `~/.config/tetrabench/config.toml`, add the following (keep only one top-level
+`schema_version` if the file already exists):
 
 ```toml
 schema_version = 1
-runtime_directory = "/home/alice/.local/state/tetrabench/auth-runtime"
 
-[profiles.codex-cloud]
-harness = "codex"
-binding = "cloud-evals"
-generation = 1
+[profiles.cloud-oauth.engine]
+kind = "modal"
 
-[profiles.codex-cloud.backend]
+[profiles.cloud-oauth.engine.settings]
+app_name = "tetrabench-oauth"
+function_name = "controller"
+secret_name = "tetrabench-oauth-controller"
+
+[profiles.cloud-oauth.storage]
+provider = "tigris"
+bucket = "your-private-artifact-bucket"
+region = "auto"
+prefix = "tetrabench"
+```
+
+Save `~/.config/tetrabench/cloud-auth-backend.toml` outside the project, mode `0600`,
+with this root-level backend definition, not an `[auth]` or `[profiles]` wrapper:
+
+```toml
 kind = "s3"
 approved_private_backend = true
 trust_organization_admins = false
 access_key = { kind = "env", name = "TETRABENCH_AUTH_ACCESS_KEY_ID" }
 secret_key = { kind = "env", name = "TETRABENCH_AUTH_SECRET_ACCESS_KEY" }
 
-[profiles.codex-cloud.backend.storage]
+[storage]
 provider = "tigris"
 bucket = "your-private-auth-bucket"
 region = "auto"
@@ -537,25 +580,64 @@ endpoint_url = "https://t3.storage.dev"
 prefix = "eval-auth"
 ```
 
-Supply those dedicated `TETRABENCH_AUTH_*` variables from your secret manager;
-auth storage does not fall back to the artifact store's AWS credential chain.
-An optional `session_token` uses another distinct env reference with that prefix.
-`auth login --profile codex-cloud --auth-config FILE` publishes only to the
-explicitly selected backend, after its privacy/topology checks. It needs no
-custom Python bootstrap.
+Supply the dedicated auth variables through your secret manager. Install the
+host Codex pin, configure Modal access, and obtain a fresh remote-backed login:
 
-On the controller, supply the same profile/binding/generation/backend through
-`TETRABENCH_AUTH_CONFIG_FILE` pointing to a private file available there, or
-`TETRABENCH_AUTH_CONFIG_CONTENT` containing its **JSON** representation in the
-named Secret. Resolve `runtime_directory` beneath the verified controller user's
-private ephemeral home, using the absolute equivalent of
-`HOME/.tetrabench-native-auth/runtime`, outside collected artifacts. Neither
-`HOME` nor `~` expands in this field; do not copy the laptop path or assume a
-`/root` UID/home. The tested Modal image's `/tmp` was writable without the sticky
-bit, so even a `0700` child failed the private-ancestry check. Use the private-home
-path rather than weakening that check. Supply the dedicated auth-backend
-variables separately in that Secret; credential values never enter run TOML.
-The submitter does not automatically upload its private config or environment.
+```console
+npm install --global @openai/codex@0.154.0
+uvx --from modal==1.5.4 modal setup
+tetrabench auth login --profile codex-cloud --agent codex \
+  --backend ~/.config/tetrabench/cloud-auth-backend.toml
+tetrabench auth status --profile codex-cloud --online
+```
+
+Save `codex-cloud-run.toml` in your project:
+
+```toml
+[harness]
+name = "codex"
+version = "0.154.0"
+model = "openai/gpt-6-astra"
+
+[harness.auth]
+mode = "chatgpt_oauth"
+reference = { kind = "profile", profile = "codex-cloud" }
+```
+
+Inject the controller's separate artifact credentials as `AWS_ACCESS_KEY_ID` and
+`AWS_SECRET_ACCESS_KEY`, plus the auth-backend variables, into the configure process.
+Preview first; `--write` prompts before creating the named Secret/environment:
+
+```console
+tetrabench controller configure --profile cloud-oauth --auth-profile codex-cloud \
+  --harness ./codex-cloud-run.toml --create-environment \
+  --env AWS_ACCESS_KEY_ID --env AWS_SECRET_ACCESS_KEY \
+  --env TETRABENCH_AUTH_ACCESS_KEY_ID --env TETRABENCH_AUTH_SECRET_ACCESS_KEY
+tetrabench controller configure --profile cloud-oauth --auth-profile codex-cloud \
+  --harness ./codex-cloud-run.toml --create-environment --write \
+  --env AWS_ACCESS_KEY_ID --env AWS_SECRET_ACCESS_KEY \
+  --env TETRABENCH_AUTH_ACCESS_KEY_ID --env TETRABENCH_AUTH_SECRET_ACCESS_KEY
+```
+
+From the submitter's artifact credential environment, with the auth-backend variables
+still supplied, deploy and run your network-enabled task (`[harbor] concurrency = 1`):
+
+```console
+tetrabench controller deploy --profile cloud-oauth
+tetrabench doctor --profile cloud-oauth --harness ./codex-cloud-run.toml --online
+tetrabench run example --profile cloud-oauth --harness ./codex-cloud-run.toml --wait --run-id oauth-cloud
+tetrabench result oauth-cloud
+```
+
+The helper transports only selected auth profiles and explicit env names. It
+omits the host runtime path; the actual controller selects its private runtime
+directory. Manual runtime paths or JSON transport are unnecessary. Explicit custom
+runtime paths remain supported but must be absolute, without `~` or env expansion.
+`approved_private_backend` records approval, not proof of privacy. Configure checks
+privacy before transfer, not login readiness. Auth storage never falls back to the
+artifact credential chain. Optional session credentials require their own explicit
+env references and `--env` selections. See [controller configuration](#controller-deployment)
+for updates and partial failures.
 
 The backend needs privacy-read permissions as well as scoped object access:
 
@@ -578,10 +660,11 @@ Native clients own token refresh. The session framework serializes each refresh
 lineage, requires private native write-back and proof that the previous consumer
 stopped, and leaves ambiguous claims blocked. There is no timeout takeover,
 parallel copying, or automatic reuse after uncertain refresh. Use a separate
-login for concurrent work. `auth reseed --profile NAME` requires the next
-generation and a fresh native login; retained run/physical-stop evidence is
-required for a claimed predecessor. It does not stop compute for you. Update the
-run reference to match the new generation. `auth logout --profile NAME` asks
+login for concurrent work. `auth reseed --profile NAME` requires a fresh native
+login and retained run/physical-stop evidence for a claimed predecessor; it does
+not stop compute for you. Managed profiles select the next generation, while fixed
+profiles must explicitly target it. Future authoring profile references resolve
+the new generation; old sealed runs never change. `auth logout --profile NAME` asks
 before removing that eval login (`--yes` for JSON); provider revocation is not
 implied.
 
@@ -589,8 +672,8 @@ Normal deployed OAuth delivery passed for Codex, OpenCode, and Pi using fresh
 independent logins and the approved backend. Separate pinned-native refresh proofs
 changed both access and refresh credentials, persisted them, and verified their
 use by fresh actual Modal controllers, each with reward `1` and clean shutdown.
-This does not prove every refresh-failure recovery scenario. See the scoped backend and
-artifact evidence [below](#testing-and-limitations). Keep native logs private:
+This does not prove every refresh-failure recovery scenario. See the scoped backend
+and artifact evidence [below](#testing-and-limitations). Keep native logs private:
 excluding known credential files is not universal secret scrubbing.
 
 ### Model inspection and adoption
@@ -609,8 +692,9 @@ to capture JSON or write a Python collector. The callable
 `collect_installed(config, base=...)` provides the same acquisition for API
 consumers. Metadata comes from OpenCode's provider interface, Codex's app-server
 `model/list`, Claude's supported-model interface, or Pi's model registry/runtime.
-Claude metadata compatibility is tied to CLI 2.1.267 / Agent SDK 0.3.267, distinct
-from the tetrabench package version.
+Claude metadata uses exact CLI/SDK pairs: preferred 2.1.269 / 0.3.269 and historical
+2.1.267 / 0.3.267, distinct from the tetrabench package version. Old snapshots are
+not rewritten or reused for a different CLI pin.
 
 The matching CLI must be installed on the inspection host's `PATH` with required
 Node tooling. `--native-modules DIRECTORY` selects an existing `node_modules`
@@ -646,6 +730,12 @@ Config that can execute plugins/hooks/helpers requires `--allow-config-execution
 for offline inspection and is refused for authenticated collection. Session-bearing
 configs are also refused; use a separate metadata-only configuration. The callable
 API requires both `allow_authenticated_read=True` and an acquired `NativeRuntime`.
+
+Offline inspection accepts authoring profile references without reading authority.
+For a profile reference, `models adopt` requires `--allow-authenticated-read`, even
+for preview; adoption writes a concrete generation-bound `native_session` and
+capability snapshot. Login/replacement never rewrites that snapshot. Ordinary
+API-key or concrete-reference offline adoption is unchanged.
 
 `adopt` collects afresh, previews the change, and writes only with `--write`, after
 rechecking the source configuration and referenced resource bytes.
@@ -722,6 +812,13 @@ across multiple compactions.
 
 ### Testing and limitations
 
+The onboarding candidate passed 114 offline native cases, including preferred
+Claude 2.1.269, and 37 installed CLI invocations with transport/terminal doubles.
+The latter used a dirty wheel, synthetic Docker execution, and graph-only deploy;
+live onboarding and 2.1.269 checks remain pending. Integration/resource fixes are
+implemented and full validation is underway, as tracked in the plan.
+The older evidence below does not close those gates.
+
 The source candidate passed API-key eval flows through the public CLI for
 OpenCode, Codex, Claude Code, and Pi. Subscription evidence combines the normal
 smokes at `55dc637` with installed Claude and renewal/successor proofs at `2d1ca9a`
@@ -772,11 +869,12 @@ smoke preserved the requested `anthropic/claude-opus-5[1m]` selector and reporte
 native usage `contextWindow = 1000000`. It did not exercise a million-token input
 or establish million-token retention or universal entitlement. Local error-handling
 tests do not establish natural setup-token expiry/renewal; no token-aging experiment
-is required. Hosted CI passed at `3a48db2`. Final independent release review,
-exact-release-artifact validation, and publication remain open. Mechanisms and
-continuation passed, but Claude's clean within-protocol retention is unproven;
-its release disposition awaits the user, without an inferred paid-rerun requirement
-or authorization.
+is required. Earlier hosted CI passed at `5382b78`, before the onboarding changes.
+Fresh journey/live validation, independent review, current CI, exact-release-artifact
+validation, and publication remain open. The user accepted the observed native
+mechanism/continuation/transcript
+recovery for 0.3.0. Claude summary-only/clean within-protocol retention remains
+unproven; acceptance does not establish that the summaries retained the facts.
 Current blockers and retained provenance belong in the [project record](../IMPLEMENTATION_PLAN.md#native-fidelity-and-authentication-working-record).
 None of these tests guarantees all models, routes, or future native versions.
 
@@ -888,14 +986,24 @@ requiring a source checkout. Successful deployment reports the wheel's SHA-256
 in human output and as `wheel_sha256` in JSON.
 `controller info` determines the exact environment where the named Secret must
 exist. That namespace includes the profile and package version. On first deploy,
-create the environment and Secret there, not in the default or an older
-version's environment. The [first-deploy commands](../README.md#detached-modal-runs)
-use Modal's native API to create the Secret from explicitly named process
-environment variables, without a secrets file or secret values in argv. Inject
-the controller credentials for that command, then use the submitter credentials
-for deployment and runs. Model runs also need their model API variables in the
-Secret. Tetrabench does not create credentials or automatically copy your local
-environment into the Secret.
+use `controller configure --profile NAME --env NAME ... --create-environment`
+for an offline preview. Add `--write` to confirm creation; JSON writes require
+`--yes`. Include `--harness FILE` for its credential names and repeat
+`--auth-profile NAME` for each selected remote OAuth login. All required artifact,
+auth-backend, and model env names must be explicitly selected; values are read only
+for the confirmed write. See the [API-key example](../README.md#detached-modal-runs)
+or [remote OAuth journey](#remote-private-auth-state).
+
+Configuration creates a Secret by default; `--update --write` uses Modal's merge
+update. Unrelated keys, including stale credentials, remain. Selected auth-profile
+JSON replaces that one variable, not every other Secret key. Prefer separate run
+profiles/Secrets for different billing modes. Configure does not deploy, remove
+stale keys, refresh running containers, or establish credential/runtime readiness.
+Run `controller deploy` separately. Environment creation and Secret write are
+separate operations; partial/unknown state is printed with `ok = false` and exit 2.
+Inspect that state before retrying. There is no application retry or rollback;
+the native SDK may retry transport with its idempotency key. Use one writer per
+Secret. No bucket, key, IAM, or account provisioning is performed.
 
 The deployed Function has zero retries, a 24-hour timeout, and the selected
 Volume. Submission calls it by name with canonical invocation bytes and their

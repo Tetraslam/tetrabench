@@ -4,10 +4,60 @@
 
 - Project state: P0 through P6 are complete for their local/static contracts. Live Tigris/Modal evidence includes cancellation, forced controller interruption/recovery, and the E-046 Single-region `iad` cutover. Scoped auth-backend CAS/privacy evidence is recorded below; general provider IAM/privacy/encryption guarantees, AWS behavior, and true provider preemption remain `unproven`.
 - Published baseline: Tetrabench 0.2.0 is published on PyPI. PR 33 merged with passing CI; the unchanged GitHub release artifacts passed installed local/Modal Oracle and controlled Astra proofs before protected publication. Public installation and artifact hashes were independently verified.
-- Current action: obtain the user's retention disposition and finish independent release review and exact-release-artifact validation. Hosted CI passed at `3a48db2`. Normal auth for all four harnesses and native OAuth refresh/fresh-controller consumption for Codex, OpenCode, and Pi remain live-proven. Version 0.3.0 is unpublished; CI success alone does not establish release readiness. Future eval choice belongs to the user.
+- Current action: finish live public onboarding/Claude 2.1.269 proofs before final review and release validation/publication. Full local candidate validation passed at the checkpoint below, including 37 installed offline CLI invocations with doubles. Five integration review fixes and the resource-order fix are implemented. The preferred versions are frozen below. Earlier CI/live proofs do not validate these changes. The user's acceptance of observed Claude 2.1.267 continuation/recovery stands; summary-only retention remains unproven. Version 0.3.0 is unpublished. Future eval choice belongs to the user.
 - Task-catalog gate: E-132's corrected-byte local/detached execution and audit gates and E-143's exact-four calibration all pass. `authority-fencing` is admitted in `benchmarks/catalog.toml`; later systems and GitHub-workflow tasks remain absent pending their own complete gates.
 - Authoring UX: D-127 is merged through PR 26 with focused local and real-Docker evidence. It creates user-owned starter projects and tasks independently of the repository catalog.
 - Canonical record updated: 2026-09-11.
+
+### Onboarding candidate working record
+
+| Boundary | Contract |
+| --- | --- |
+| Behavior | Five onboarding improvements: explicit API-key setup without host agents; native login bootstrap; managed authoring profile references; preview/confirmed controller configuration; optional auth diagnostics. No implicit billing fallback or provider provisioning. |
+| Authority and atomic unit | Existing SessionStore owns login generations. One local config replacement and one auth CAS are separate commits; resolve ready authority once before sealing a run. Old sealed runs/snapshots remain unchanged. |
+| Lifecycle | Login creates private config/state and manages omitted runtime paths. Ready replacement is explicit; claimed state cannot be taken over. Actual controller HOME owns remote runtime paths. Secret updates merge selected keys and do not refresh running containers or remove old credentials. |
+| Native primitives | Pinned native login, existing private stores/CAS, and Modal 1.5.4 Secret create/update with optional separate environment creation. Offline preview transfers nothing; only named env values and selected auth profiles cross on confirmed write. |
+| Evidence still required | Final review, current hosted CI, and live installed API-key local/cloud, local OAuth lifecycle, remote backend/login/configure/deploy/run, and diagnostics. Full local tests passed below. Installed offline journeys passed with transport/terminal doubles, not live bootstrap/configure acceptance. |
+
+Preferred freeze at 2026-09-11T20:15:24Z: Claude CLI 2.1.269 / SDK 0.3.269;
+OpenCode 1.18.30, Codex 0.154.0, Pi 0.85.1 unchanged. Exact historical Claude
+2.1.267 / SDK 0.3.267 remains supported; its live summaries and setup-token smoke
+are not 2.1.269 evidence. New Claude API-key/setup-token live checks remain pending.
+
+Prior integration passed 114 mandatory native cases, 2,602 non-native cases with
+three resource failures, and 31 artifact cases separately. The unresolved-resource
+status is superseded: Python hash seed 3 exposed retry-set JSON ordering; the
+existing semantic-set comparison in `harbor_api` fixes it. Seeded tests retain
+member, timing, and other-list-order checks. Five reviewed P2 fixes cover browser
+reseed, doctor JSON/error exits/controller status, and Pi prerequisites; 249 focused
+cases passed. A later broad run passed 2,647 with one obsolete README-snippet test,
+since replaced by public CLI/SDK behavior coverage. Those partial checkpoints are
+superseded by the complete local selections below.
+
+Final local validation at 2026-09-11T23:33:30Z passed all 2,801 tests across complete
+selections: 2,675 nonnative, 114 mandatory native, and 12 Docker, each with zero
+skips. Ruff, formatting (210 files), ty, Bandit over all `src`/`tools`, lock,
+dependency consistency/audit, actionlint, candidate-diff and history Gitleaks,
+wheel/sdist build, strict metadata, sdist reproduction, installed Docker smoke,
+and 37 installed synthetic public CLI invocations passed. Source fingerprint
+`f996fcf81cc26a104566df1c4af9f516e85616b3d38bdafc92819dda370d4308`
+was unchanged before/after. Wheel SHA-256:
+`f6f63aa1aa380ebad8ef4810534566425ef29a8cdf217d9eb9391a3de78436dd`.
+Evidence and sdist hash: `/var/tmp/tetrabench-final-validation-20260911/RESULTS.md`.
+The first nonnative run hit an intermittent socket-shutdown `ENOTCONN`; the full
+rerun passed without a source fix. Docker initially hit shared `/tmp` quota;
+all 12 passed with daemon-visible `/var/tmp` scratch. Both failures are retained,
+not omitted. Four test-owned empty networks were removed; original Docker
+inventories were restored. This checkpoint makes no live onboarding or release claim.
+
+Installed offline evidence: 37 public CLI invocations passed on a dirty captured
+wheel, using transport/terminal doubles and real Modal 1.5.4 RPC construction.
+Docker stopped at a synthetic boundary and deployment was graph-only: no live
+login, native score, or remote acceptance follows. Report:
+`/tmp/opencode/tetrabench-onboarding-journeys-proof/FINAL_REPORT.json`.
+Provenance: `/tmp/tetrabench-onboarding-{integration,auth,remote,diagnostics}-handoff.md`,
+`/tmp/tetrabench-claude-upgrade-handoff.md`, current source, local CLI help, and the
+parent's resource/broad-validation checkpoint.
 
 ### Native fidelity and authentication working record
 
@@ -21,7 +71,7 @@
 | Initial stable baseline | OpenCode 1.18.30; Codex 0.154.0; Claude Code 2.1.267; Earendil Pi 0.85.1, checked against official non-prerelease metadata on 2026-09-10. Recheck before final version adoption. |
 | Exclusions | No replacement generic summarizer, no implicit OpenAI-compaction implementation in OpenCode/Pi, no Claude OAuth proxy, no new eval roadmap, no changes to Codex approval/sandbox bypass. No complete billing or universal capability guarantee without named evidence. |
 
-- [x] Current-stable adapters, version-aware option validation, native ancillary and context controls.
+- [x] Original baseline adapters, version-aware option validation, native ancillary and context controls; the newer onboarding/freeze evidence is tracked above.
 - [x] Portable harness resources, discovery policies, and supported session continuation.
 - [x] Native model/reasoning inspection and reproducible configuration adoption.
 - [x] Codex direct OpenAI API-key flow and live smoke.
@@ -34,10 +84,10 @@
 - [x] Earendil Pi Codex OAuth bootstrap and normal live smoke.
 - [x] Pi actual native refresh, durable write-back, and fresh Modal controller proof.
 - [x] OpenCode and Pi OpenRouter API-key smoke at current stable pins.
-- [ ] Retention acceptance disposition by the user: mechanisms/continuation passed, but Claude clean within-protocol retention remains unproven; no paid rerun is inferred as authorized or required.
+- [x] User accepted observed native mechanism/continuation/recovery for 0.3.0; Claude summary-only/clean within-protocol retention remains unproven.
 - [x] Candidate independent re-review and local validation at the checkpoint below.
-- [x] Hosted CI checkpoint `34631236019` at `3a48db2`.
-- [ ] Final independent release review, exact-release-artifact validation, publication, and public install proof.
+- [x] Hosted CI checkpoints `34631236019` at `3a48db2` and `34632963343` at `5382b78`.
+- [ ] Onboarding/Claude 2.1.269 acceptance, final independent release review, current CI, exact-release-artifact validation, publication, and public install proof.
 
 Initial normal-subscription checkpoint (superseded only for pending gates and
 profile revisions by the later proofs below): the user approved the single-person
@@ -122,8 +172,10 @@ namespace policy too early. That pending-CI status is superseded by
 at `3a48db2`: both jobs and every step passed, including 107 mandatory native,
 2,488 other tests, 12 Docker tests, and package/security checks. Code, tests, tools,
 and dependencies are unchanged since live-tested `2d1ca9a`. This accepts that CI
-checkpoint, not a future docs-only commit. Final independent release review,
-retention disposition, exact-release-artifact validation, and publication remain open.
+checkpoint, not a future docs-only commit. The parent reports subsequent
+[run 34632963343](https://github.com/Tetraslam/tetrabench/actions/runs/34632963343)
+at `5382b78` successful. Final independent release review, stable-version recheck,
+exact-release-artifact validation, and publication remain open.
 
 Provenance: retained `REPORT.json`, `FINAL_AUDIT.json`, and `WORKING_RECORD.md` in
 `/tmp/opencode/tetrabench-030-subscription-55dc637-20260911/`;
@@ -178,9 +230,11 @@ finished all stages, but read the original transcript against that verification
 task's protocol; clean within-protocol fact retention is not established. All
 used reduced verification thresholds rather than stock-window performance
 settings. No paid rerun was used to hide that qualification.
-Mechanism/continuation acceptance does not resolve Claude's clean-retention claim.
-Its release disposition awaits the user; no paid rerun is inferred as authorized
-or required.
+The user accepted this observed native mechanism, continuation, and transcript
+recovery as qualifying for 0.3.0, superseding the pending-disposition blocker.
+Summary-only/clean within-protocol retention remains unproven; this acceptance
+does not establish that the summaries retained the facts or generalize the
+observed recovery strategy. No paid rerun is implied.
 
 Known native summary costs are now counted once in auxiliary evidence. Native
 reported/catalog-priced amounts remain partial, and standalone Codex compaction

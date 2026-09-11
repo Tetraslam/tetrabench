@@ -15,8 +15,11 @@ import base64
 import os
 import re
 import selectors
+import shlex
+import shutil
 import signal
 import subprocess  # nosec B404
+import tempfile
 import time
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
@@ -536,10 +539,136 @@ def native_auth_command(
     raise AuthError("unsupported native auth harness")
 
 
-def verify_native_version(harness: str, output: bytes) -> None:
+def verify_native_version(
+    harness: str, output: bytes, *, requested_version: str | None = None
+) -> None:
+    expected = requested_version or NATIVE_AUTH_PINS[harness]
     versions = re.findall(rb"(?<![0-9.])[0-9]+\.[0-9]+\.[0-9]+(?![0-9.])", output)
-    if versions != [NATIVE_AUTH_PINS[harness].encode()]:
+    if versions != [expected.encode()]:
         raise AuthError("native auth executable does not match the verified version")
+
+
+def native_auth_install_command(harness: str, *, version: str | None = None) -> str:
+    packages = {
+        "codex": "@openai/codex",
+        "opencode": "opencode-ai",
+        "pi": "@earendil-works/pi-coding-agent",
+        "claude-code": "@anthropic-ai/claude-code",
+    }
+    if harness not in packages:
+        raise AuthError("unsupported native auth harness")
+    return shlex.join(
+        [
+            "npm",
+            "install",
+            "-g",
+            packages[harness] + "@" + (version or NATIVE_AUTH_PINS[harness]),
+        ]
+    )
+
+
+@dataclass(frozen=True)
+class NativePrerequisite:
+    executable: str
+    pi_module: Path | None
+    version: str
+
+
+def pi_auth_module(entrypoint: str) -> Path:
+    entry = Path(entrypoint).resolve()
+    if entry.parent.name == "bundle" and entry.parent.parent.name == "dist":
+        return entry.parent.parent / "index.js"
+    return entry.with_name("index.js")
+
+
+PI_NODE_MIN_VERSION = (22, 19, 0)
+
+
+def pi_node_version_supported(version: str) -> bool:
+    """The pinned Earendil 0.85.1 package declares node >=22.19.0."""
+    if re.fullmatch(r"[0-9]{1,10}\.[0-9]{1,10}\.[0-9]{1,10}", version) is None:
+        return False
+    return tuple(int(part) for part in version.split(".")) >= PI_NODE_MIN_VERSION
+
+
+def preflight_native_auth(
+    harness: str,
+    *,
+    executable: str | None = None,
+    pi_module: Path | None = None,
+    environment: Mapping[str, str] | None = None,
+    requested_version: str | None = None,
+) -> NativePrerequisite:
+    """Exact native prerequisite check before durable profile/backend creation."""
+    env = os.environ if environment is None else environment
+    version = requested_version or NATIVE_AUTH_PINS.get(harness)
+    install = native_auth_install_command(harness, version=version)
+    try:
+        path = env.get("PATH", os.defpath)
+        executable = executable or shutil.which(
+            "node"
+            if harness == "pi"
+            else "claude"
+            if harness == "claude-code"
+            else harness,
+            path=path,
+        )
+        if not executable or version is None:
+            raise AuthError("native executable unavailable")
+        if harness == "pi":
+            if pi_module is None:
+                entry = shutil.which("pi", path=path)
+                if entry is None:
+                    raise AuthError("Pi package unavailable")
+                pi_module = pi_auth_module(entry)
+            if (
+                not pi_module.is_absolute()
+                or pi_module.name != "index.js"
+                or pi_module.parent.name != "dist"
+                or not pi_module.is_file()
+            ):
+                raise AuthError("Pi package version mismatch")
+            with (pi_module.parent.parent / "package.json").open("rb") as stream:
+                data = stream.read(MAX_AUTH_BYTES + 1)
+            if len(data) > MAX_AUTH_BYTES:
+                raise AuthError("Pi package metadata exceeds limit")
+            package = private_json(data)
+            if (
+                package.get("name") != "@earendil-works/pi-coding-agent"
+                or package.get("version") != version
+            ):
+                raise AuthError("Pi package version mismatch")
+        with tempfile.TemporaryDirectory(prefix="tetrabench-auth-prereq-") as directory:
+            root = Path(directory)
+            isolated = isolated_auth_environment(harness, root, base=env)
+            result = run_native(
+                [executable, "--version"], environment=isolated, cwd=root, timeout=15
+            )
+            if result.returncode:
+                raise AuthError("native version command failed")
+            if harness == "pi":
+                node = re.fullmatch(
+                    rb"v([0-9]{1,10}\.[0-9]{1,10}\.[0-9]{1,10})\s*", result.output
+                )
+                if node is None or not pi_node_version_supported(
+                    node[1].decode("ascii")
+                ):
+                    raise AuthError("Pi requires Node")
+            else:
+                verify_native_version(harness, result.output, requested_version=version)
+        return NativePrerequisite(executable, pi_module, version)
+    except (OSError, ValueError, AuthError):
+        minimum = ".".join(str(part) for part in PI_NODE_MIN_VERSION)
+        node_hint = (
+            f" (Pi requires Node >={minimum} and pi on PATH; auth login also accepts "
+            "--executable /path/to/node --pi-module /path/to/dist/index.js)"
+            if harness == "pi"
+            else ""
+        )
+        raise AuthError(
+            "native auth prerequisite unavailable or wrong version; "
+            f"install: {install}{node_hint}"
+        ) from None
 
 
 _RUST_DEBUG_PATH = rb'"(?:[^"\\\x00-\x1f\x7f]|\\[ -~])*"'

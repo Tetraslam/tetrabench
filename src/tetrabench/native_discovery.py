@@ -18,7 +18,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
-from tetrabench.auth_config import NativeAuthReference
+from tetrabench.auth_config import NativeAuthReference, ProfileAuthReference
 from tetrabench.auth_sessions import AuthError
 from tetrabench.canonical_json import sha256_hex
 from tetrabench.capabilities import (
@@ -31,15 +31,15 @@ from tetrabench.capabilities import (
     safe_url,
 )
 from tetrabench.discovery import (
-    NATIVE_VERSIONS,
     attach_catalog,
     catalog_controls,
     discover,
+    native_adapter_version,
     observation_from_json,
 )
 from tetrabench.discovery_http import read_public_metadata, refresh_public_metadata
 from tetrabench.harness_config import HarnessConfig, ResolvedHarness, SealedResource
-from tetrabench.harnesses import native_configuration_layers, seal_harness
+from tetrabench.harnesses import native_configuration_layers, prepare_harness
 from tetrabench.nativeauth import isolated_auth_environment, run_native
 from tetrabench.reasoning import harness_config_digest, suggested_snippets
 from tetrabench.runtime_startup import (
@@ -156,7 +156,7 @@ def _prepared(config: HarnessConfig, base: Path) -> HarnessConfig:
         values = config.model_dump(mode="python")
         values.pop("capability_snapshot", None)
         config = HarnessConfig.model_validate(values)
-    resolved = seal_harness(config, base)
+    resolved = prepare_harness(config, base)
     values = resolved.model_dump(mode="python")
     if values.get("native_config"):
         values["native_config"].pop("sha256", None)
@@ -168,7 +168,7 @@ def _auth_reference(config: HarnessConfig) -> tuple[str, str | None]:
     if auth is None:
         return "unresolved" if config.env else "none", None
     reference = auth.reference
-    if isinstance(reference, NativeAuthReference):
+    if isinstance(reference, (NativeAuthReference, ProfileAuthReference)):
         return auth.mode, reference.profile
     return auth.mode, "env:" + reference.name
 
@@ -197,9 +197,8 @@ def _identity(
     return CapabilityIdentity(
         harness=config.name,
         harness_version=config.version,
-        native_adapter_version=NATIVE_VERSIONS.get(config.name, ("unknown", "unknown"))[
-            1
-        ],
+        native_adapter_version=native_adapter_version(config.name, config.version)
+        or "unknown",
         requested_model=config.model,
         resolved_model=route.get("model", model),
         provider_id=route_data["provider"],
@@ -258,7 +257,7 @@ def collect_installed(
         raise MetadataError("unknown native verification policy")
     prepared = _prepared(config, base)
     identity = _identity(prepared)
-    if config.version != NATIVE_VERSIONS.get(config.name, (None, None))[0]:
+    if native_adapter_version(config.name, config.version) is None:
         return CapabilitySnapshot(
             identity=identity,
             status="unavailable",
@@ -464,8 +463,8 @@ def collect_installed(
             }
             if prepared.resources:
                 from tetrabench.resources import (
-                    AGENT_RESOURCE_ROOT,
                     materialize_resources,
+                    relocate_resource_references,
                     rewrite_resource_references,
                 )
 
@@ -477,17 +476,13 @@ def collect_installed(
                 ]
                 if len(resources) != len(prepared.resources):
                     raise MetadataError("native discovery resources must be sealed")
-                materialize_resources(resources, destination)
+                materialize_resources(resources, destination, relocate_references=True)
                 if layers.config_directory is not None:
-                    request["config_directory"] = layers.config_directory.replace(
-                        AGENT_RESOURCE_ROOT, str(destination), 1
+                    request["config_directory"] = relocate_resource_references(
+                        layers.config_directory, destination
                     )
                 rewritten = rewrite_resource_references(native, resources)
-                request["native"] = json.loads(
-                    metadata_text(rewritten).replace(
-                        AGENT_RESOURCE_ROOT, str(destination)
-                    )
-                )
+                request["native"] = relocate_resource_references(rewritten, destination)
             argv = [*prefix, sys.executable, "-m", "tetrabench.native_discovery_worker"]
             if runtime:
                 result = runtime.run(

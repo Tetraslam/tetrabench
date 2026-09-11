@@ -24,6 +24,7 @@ VERSIONS = {
 # File-level coverage, not a frozen test count. The option-boundary module also
 # contains historical, Python-only fixtures; the other native suites are all-in.
 REQUIRED_NATIVE_SUITES = {
+    "test_claude_version_contracts.py": False,
     "test_harness_option_boundaries.py": False,
     "test_stable_native_consumers.py": True,
     "test_nativeauth_consumers.py": True,

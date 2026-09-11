@@ -463,7 +463,45 @@ def assert_portable(value: Any, resources: list[SealedResource], key: str = "") 
             resource_path(path.removeprefix(AGENT_RESOURCE_ROOT + "/"), resources)
 
 
-def materialize_resources(resources: list[SealedResource], destination: Path) -> None:
+def relocate_resource_references(value: Any, destination: Path) -> Any:
+    """Relocate sealed runtime references in a private discovery copy only."""
+    if isinstance(value, dict):
+        return {
+            key: relocate_resource_references(child, destination)
+            for key, child in value.items()
+        }
+    if isinstance(value, list):
+        return [relocate_resource_references(child, destination) for child in value]
+    if isinstance(value, str):
+        return value.replace(AGENT_RESOURCE_ROOT + "/", str(destination) + "/")
+    return value
+
+
+def _resource_bytes(resource: SealedResource, reference_root: Path | None) -> bytes:
+    validate_resource(resource)
+    suffix = Path(resource.destination).suffix
+    if reference_root is not None and suffix in {".json", ".jsonc", ".toml"}:
+        from tetrabench.harness_config import NativeConfig
+        from tetrabench.harnesses import parse_native
+
+        value = parse_native(NativeConfig(format=suffix[1:], text=resource.text))
+        relocated = relocate_resource_references(value, reference_root)
+        if relocated != value:
+            if suffix == ".toml":
+                import toml
+
+                return toml.dumps(relocated).encode()
+            return json.dumps(relocated, ensure_ascii=False, allow_nan=False).encode()
+    return resource.text.encode()
+
+
+def materialize_resources(
+    resources: list[SealedResource],
+    destination: Path,
+    *,
+    relocate_references: bool = False,
+) -> None:
+    """Write a fresh bundle; relocation never changes its sealed source identity."""
     from tetrabench.context import (
         SealedContext,
         SealedContextFile,
@@ -471,20 +509,25 @@ def materialize_resources(resources: list[SealedResource], destination: Path) ->
     )
     from tetrabench.records import ContentObject, ContextManifest, ContextManifestFile
 
+    validate_resources(resources)
+    contents = [
+        _resource_bytes(item, destination if relocate_references else None)
+        for item in resources
+    ]
     if destination.exists():
         raise ValueError("harness resource materialization must use a fresh directory")
     destination.mkdir(mode=0o700)
     files = tuple(
         SealedContextFile(
             descriptor=ContentObject(
-                sha256=item.sha256,
-                size=len(item.text.encode()),
-                key=f"objects/sha256/{item.sha256}",
+                sha256=sha256_hex(content),
+                size=len(content),
+                key=f"objects/sha256/{sha256_hex(content)}",
                 media_type="text/plain",
             ),
-            content=item.text.encode(),
+            content=content,
         )
-        for item in resources
+        for content in contents
     )
     manifest = ContextManifest(
         schema_version=1,

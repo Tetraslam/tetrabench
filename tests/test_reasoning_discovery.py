@@ -395,7 +395,7 @@ def test_codex_pagination_rejects_repeats_truncation_and_no_opt_in():
 def test_claude_resolved_alias_effort_and_adaptive_independent():
     # sdk.d.ts ModelInfo, 0.3.267 with package claudeCodeVersion 2.1.267.
     config = HarnessConfig(name="claude-code", version="2.1.267", model="route/alias")
-    identity = identity_for("claude-code", config)
+    identity = identity_for("claude-code", config, native_adapter_version="0.3.267")
     payload = [
         {
             "value": "alias",

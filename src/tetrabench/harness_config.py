@@ -12,7 +12,7 @@ from pydantic import (
     model_validator,
 )
 
-from tetrabench.auth_config import AuthSpec
+from tetrabench.auth_config import AuthSpec, ProfileAuthSpec
 from tetrabench.capabilities import CapabilitySnapshot, CapabilitySnapshotRef
 
 MAX_NATIVE_CONFIG_BYTES = 128 * 1024
@@ -114,7 +114,9 @@ class HarnessConfig(BaseModel):
     session: HarnessSession | None = Field(
         default=None, exclude_if=lambda value: value is None
     )
-    auth: AuthSpec | None = Field(default=None, exclude_if=lambda value: value is None)
+    auth: AuthSpec | ProfileAuthSpec | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
     capability_snapshot: CapabilitySnapshotRef | None = Field(
         default=None, exclude_if=lambda value: value is None
     )
@@ -134,12 +136,17 @@ class HarnessConfig(BaseModel):
             if self.auth is not None and snapshot.identity.auth_mode != self.auth.mode:
                 raise ValueError("capability authentication mode drift")
             if self.auth is not None:
-                from tetrabench.auth_config import NativeAuthReference
+                from tetrabench.auth_config import (
+                    NativeAuthReference,
+                    ProfileAuthReference,
+                )
 
                 reference = self.auth.reference
                 profile = (
                     reference.profile
-                    if isinstance(reference, NativeAuthReference)
+                    if isinstance(
+                        reference, (NativeAuthReference, ProfileAuthReference)
+                    )
                     else "env:" + reference.name
                 )
                 if snapshot.identity.profile_ref != profile:
@@ -193,30 +200,41 @@ class ResolvedHarness(BaseModel):
             capability_snapshot=self.capability_snapshot,
         )
         HarnessConfig.model_validate(fields, context={"historical_record": True})
-        from tetrabench.resources import validate_resource_contents, validate_resources
-
-        validate_resources(self.resources)
-        if self.session and self.session.load_trajectory:
-            alias = self.session.load_trajectory.removeprefix("resource:")
-            if not any(item.destination == alias for item in self.resources):
-                raise ValueError("session seed is not a sealed resource file")
-        validate_resource_contents(
-            self.resources,
-            self.env,
-            self.name,
-            self.version,
-            primary_model=self.model if self.ancillary_models == "primary" else None,
-            session_file=self.session.load_trajectory.removeprefix("resource:")
-            if self.session and self.session.load_trajectory
-            else None,
-        )
-        from tetrabench.harnesses import STABLE_VERSIONS, parse_native
-        from tetrabench.resources import assert_portable
-
-        if self.version == STABLE_VERSIONS[self.name]:
-            assert_portable(parse_native(self.native_config), self.resources)
-            assert_portable(self.options, self.resources)
+        validate_prepared_resources(self)
         return self
+
+
+def validate_prepared_resources(config: HarnessConfig | ResolvedHarness) -> None:
+    """Resource safety applies before discovery as well as immutable execution."""
+    from tetrabench.harnesses import parse_native, supports_native_controls
+    from tetrabench.resources import (
+        assert_portable,
+        validate_resource_contents,
+        validate_resources,
+    )
+
+    resources = [item for item in config.resources if isinstance(item, SealedResource)]
+    if len(resources) != len(config.resources):
+        raise ValueError("prepared harness still contains unsealed resource sources")
+    validate_resources(resources)
+    session_file = (
+        config.session.load_trajectory.removeprefix("resource:")
+        if config.session and config.session.load_trajectory
+        else None
+    )
+    if session_file and not any(item.destination == session_file for item in resources):
+        raise ValueError("session seed is not a sealed resource file")
+    validate_resource_contents(
+        resources,
+        config.env,
+        config.name,
+        config.version,
+        primary_model=config.model if config.ancillary_models == "primary" else None,
+        session_file=session_file,
+    )
+    if supports_native_controls(config.name, config.version):
+        assert_portable(parse_native(config.native_config), resources)
+        assert_portable(config.options, resources)
 
 
 def capability_config(config: HarnessConfig | ResolvedHarness) -> HarnessConfig:

@@ -49,6 +49,7 @@ from tetrabench.nativeauth import (
     native_auth_command,
     native_auth_path,
     parse_native_status,
+    pi_auth_module,
     refuse_ambient_conflicts,
     run_native,
     verify_native_version,
@@ -199,6 +200,7 @@ def _prepare_runtime(
     environment: Mapping[str, str],
     pi_module: Path | None,
     model: str | None = None,
+    version: str | None = None,
 ) -> NativeRuntime:
     source = (
         spec.reference.name if isinstance(spec.reference, EnvAuthReference) else None
@@ -219,7 +221,7 @@ def _prepare_runtime(
         if pi_module is None:
             entrypoint = shutil.which("pi", path=env["PATH"])
             if entrypoint:
-                pi_module = Path(entrypoint).resolve().with_name("index.js")
+                pi_module = pi_auth_module(entrypoint)
         if pi_module is None or not pi_module.is_absolute():
             raise AuthError(
                 "Pi auth requires the installed coding-agent dist/index.js path"
@@ -232,7 +234,7 @@ def _prepare_runtime(
             )
             if (
                 package.get("name") != "@earendil-works/pi-coding-agent"
-                or package.get("version") != NATIVE_AUTH_PINS["pi"]
+                or package.get("version") != (version or NATIVE_AUTH_PINS["pi"])
                 or pi_module.name != "index.js"
                 or pi_module.parent.name != "dist"
             ):
@@ -245,10 +247,12 @@ def _prepare_runtime(
         if spec.mode == "api_key":
             env["TETRABENCH_AUTH_PROVIDER"] = api_key_provider(model)[0]
     else:
-        version = runtime.run([executable, "--version"])
-        if version.returncode:
+        observed_version = runtime.run([executable, "--version"])
+        if observed_version.returncode:
             raise AuthError("native auth executable version check failed")
-        verify_native_version(harness, version.output)
+        verify_native_version(
+            harness, observed_version.output, requested_version=version
+        )
     return runtime
 
 
@@ -278,6 +282,7 @@ def auth_session(
     pi_module: Path | None = None,
     consumer_id: str | None = None,
     model: str | None = None,
+    version: str | None = None,
 ) -> Iterator[NativeRuntime]:
     """Restore, execute, then persist only native auth, including ordinary errors.
 
@@ -285,10 +290,10 @@ def auth_session(
     failed writeback. The finally path does not restore an earlier auth copy.
     API key and setup-token sessions do not acquire the shared OAuth lock.
     """
-    validate_auth_spec(harness, spec, model=model)
+    validate_auth_spec(harness, spec, model=model, version=version)
     with _runtime_directory(runtime_parent, artifact_roots, store) as root:
         runtime = _prepare_runtime(
-            harness, spec, root, executable, environment, pi_module, model
+            harness, spec, root, executable, environment, pi_module, model, version
         )
         if isinstance(spec.reference, NativeAuthReference):
             if store is None:
@@ -351,9 +356,10 @@ def auth_login(
     previous_generation: int | None = None,
     stopped_owner: Callable[[str], bool] | None = None,
     model: str | None = None,
+    version: str | None = None,
 ) -> AuthStatus:
     """Explicit user-facing login. Parent owns confirmation/browser approval."""
-    validate_auth_spec(harness, spec, model=model)
+    validate_auth_spec(harness, spec, model=model, version=version)
     source_name = (
         spec.reference.name if isinstance(spec.reference, EnvAuthReference) else None
     )
@@ -370,6 +376,7 @@ def auth_login(
             artifact_roots=artifact_roots,
             pi_module=pi_module,
             model=model,
+            version=version,
         ) as runtime:
             return AuthStatus(
                 harness=harness, mode=spec.mode, state="ready", native=runtime.status()
@@ -382,8 +389,12 @@ def auth_login(
             bootstrap_env.pop(spec.reference.name, None)
             isolated = isolated_auth_environment(harness, root, base=bootstrap_env)
             runtime = NativeRuntime(harness, spec, root, executable, isolated)
-            version = runtime.run([executable, "--version"])
-            verify_native_version(harness, version.output)
+            observed_version = runtime.run([executable, "--version"])
+            if observed_version.returncode:
+                raise AuthError("native auth executable version check failed")
+            verify_native_version(
+                harness, observed_version.output, requested_version=version
+            )
         else:
             if store is None:
                 raise AuthError(
@@ -397,7 +408,14 @@ def auth_login(
                 stopped_owner=stopped_owner,
             )
             runtime = _prepare_runtime(
-                harness, spec, root, executable, bootstrap_env, pi_module, model
+                harness,
+                spec,
+                root,
+                executable,
+                bootstrap_env,
+                pi_module,
+                model,
+                version,
             )
         result = runtime.run(
             native_auth_command(
@@ -497,7 +515,7 @@ def auth_logout(
         # Never delete a user's secret-manager item or global native keychain.
         return AuthStatus(harness=harness, mode=spec.mode, state="setup_required")
     current = auth_status(harness, spec, store=store)
-    if current.state == "logged_out":
+    if current.state in {"logged_out", "absent"}:
         return current
     parent = runtime_options.get("runtime_parent")
     if not isinstance(parent, Path):

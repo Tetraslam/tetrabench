@@ -19,6 +19,7 @@ from tetrabench.harness_config import (
     SealedNativeConfig,
     SealedResource,
 )
+from tetrabench.native_control import CLAUDE_APPLIED_SETTINGS_VERSIONS
 
 _MODEL = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:/@+-]*\Z")
 _CLAUDE_CONTEXT_MODEL = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:/@+-]*\[1m\]\Z")
@@ -29,7 +30,7 @@ def _valid_model_selector(name: str, version: str, value: str) -> bool:
         _MODEL.fullmatch(value)
         or (
             name == "claude-code"
-            and version == "2.1.267"
+            and version in CLAUDE_APPLIED_SETTINGS_VERSIONS
             and _CLAUDE_CONTEXT_MODEL.fullmatch(value)
         )
     )
@@ -71,9 +72,18 @@ SUPPORTED_OPENCODE_VERSIONS = ("1.18.29", "1.18.30")
 STABLE_VERSIONS = {
     "opencode": "1.18.30",
     "codex": "0.154.0",
-    "claude-code": "2.1.267",
+    "claude-code": "2.1.269",
     "pi": "0.85.1",
 }
+
+
+def supports_native_controls(name: str, version: str) -> bool:
+    """Compatibility is independent of the preferred installation version."""
+    return (
+        version in CLAUDE_APPLIED_SETTINGS_VERSIONS
+        if name == "claude-code"
+        else version == STABLE_VERSIONS.get(name)
+    )
 
 
 @dataclass(frozen=True)
@@ -396,11 +406,14 @@ def capabilities() -> list[dict[str, object]]:
             "version": "exact x.y.z required",
             "supported_versions": list(SUPPORTED_OPENCODE_VERSIONS)
             if item.name == "opencode"
+            else list(CLAUDE_APPLIED_SETTINGS_VERSIONS)
+            if item.name == "claude-code"
             else None,
             "minimum_version": "0.74.0" if item.name == "pi" else None,
             "stable_version": STABLE_VERSIONS[item.name],
             "runtime_snapshot_guard": "native-startup (strict-startup optional)",
             "version_evidence": {
+                "baseline_frozen_at": "2026-09-11T20:15:24Z",
                 "accepted_baseline": STABLE_VERSIONS[item.name],
                 "metadata_verified": STABLE_VERSIONS[item.name],
                 "native_consumer_tested": [STABLE_VERSIONS[item.name]],
@@ -529,17 +542,19 @@ def normalized_options(
         if (
             spec.name == "claude-code"
             and key == "reasoning_effort"
-            and not (historical and spec.version != STABLE_VERSIONS["claude-code"])
+            and not (
+                historical and not supports_native_controls(spec.name, spec.version)
+            )
         ):
             choices = (
                 ["low", "medium", "high", "xhigh", "max"]
-                if spec.version == "2.1.267"
+                if spec.version in CLAUDE_APPLIED_SETTINGS_VERSIONS
                 else ["low", "medium", "high", "max"]
             )
         if (
             spec.name == "claude-code"
             and key == "permission_mode"
-            and spec.version == "2.1.267"
+            and spec.version in CLAUDE_APPLIED_SETTINGS_VERSIONS
         ):
             choices = [
                 "acceptEdits",
@@ -861,13 +876,13 @@ def validate_harness(
         },
         "pi": {"thinking", "model_api"},
     }
-    if spec.version != STABLE_VERSIONS[spec.name] and (
+    if not supports_native_controls(spec.name, spec.version) and (
         set(options) - old_options[spec.name]
         or spec.discovery
         or spec.session
         or spec.resources
     ):
-        raise ValueError("new native controls require the current verified stable pin")
+        raise ValueError("new native controls require a verified native pin")
     if spec.name == "codex" and spec.discovery == "isolated":
         raise ValueError(
             "Codex isolated discovery is not advertised; use native config"
@@ -1325,7 +1340,8 @@ def read_config_text(path: Path) -> str:
         raise ValueError("cannot seal native configuration file") from None
 
 
-def seal_harness(spec: HarnessConfig, base: Path) -> ResolvedHarness:
+def prepare_harness(spec: HarnessConfig, base: Path) -> HarnessConfig:
+    """Seal resources/configuration without resolving authoring auth selectors."""
     from tetrabench.resources import prepare_resources
 
     native = spec.native_config
@@ -1355,27 +1371,57 @@ def seal_harness(spec: HarnessConfig, base: Path) -> ResolvedHarness:
         sealed = SealedNativeConfig(
             format="json", text=text, sha256=sha256_hex(text.encode())
         )
-    resolved = ResolvedHarness(
+    prepared = HarnessConfig(
         name=spec.name,
         version=spec.version,
         model=spec.model,
         options=options,
         env=spec.env,
-        native_config=sealed,
+        native_config=NativeConfig(format=sealed.format, text=sealed.text)
+        if sealed
+        else None,
         ancillary_models=spec.ancillary_models,
-        resources=resources,
+        resources=list(resources),
         discovery=spec.discovery,
         session=spec.session,
         auth=spec.auth,
         capability_snapshot=spec.capability_snapshot,
     )
+    from tetrabench.harness_config import validate_prepared_resources
+
+    validate_prepared_resources(prepared)
+    return prepared
+
+
+def seal_harness(spec: HarnessConfig, base: Path) -> ResolvedHarness:
+    from tetrabench.auth_config import ProfileAuthSpec
+
+    if isinstance(spec.auth, ProfileAuthSpec):
+        raise ValueError("resolve the selected auth profile before sealing a run")
+    prepared = prepare_harness(spec, base)
+    fields = prepared.model_dump(mode="python", exclude={"args", "native_config"})
+    native = prepared.native_config
+    fields["native_config"] = (
+        SealedNativeConfig(
+            format=native.format,
+            text=native.text,
+            sha256=sha256_hex(native.text.encode()),
+        )
+        if native is not None and native.text is not None
+        else None
+    )
+    resolved = ResolvedHarness.model_validate(fields)
     # Prove the real native constructor accepts the sealed translation before
     # reserving output or contacting a provider. Do not resolve credential refs.
     import tempfile
 
     from harbor.agents.factory import AgentFactory
 
+    from tetrabench.resources import materialize_resources
+
     with tempfile.TemporaryDirectory(prefix="tetrabench-harness-") as temporary:
+        if resolved.resources:
+            materialize_resources(resolved.resources, Path(temporary) / "resources")
         config = compile_agent_config(
             resolved, resource_directory=Path(temporary) / "resources"
         )
@@ -1393,14 +1439,12 @@ def seal_harness(spec: HarnessConfig, base: Path) -> ResolvedHarness:
 def compile_agent_config(
     spec: ResolvedHarness, *, resource_directory: Path | None = None
 ) -> Any:
+    """Reconstruct native configuration without reading or writing resource files."""
     from harbor.models.trial.config import AgentConfig
 
     adapter = get_harness(spec.name)
     session_options: dict[str, Any] = {}
     if spec.resources and resource_directory is not None:
-        from tetrabench.resources import materialize_resources
-
-        materialize_resources(spec.resources, resource_directory)
         skill_directories = sorted(
             {
                 item.destination.split("/")[1]

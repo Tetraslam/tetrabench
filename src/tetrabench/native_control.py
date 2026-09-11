@@ -64,8 +64,11 @@ def _model_descriptor(
     return matches[0]
 
 
+CLAUDE_APPLIED_SETTINGS_VERSIONS = ("2.1.267", "2.1.269")
+
+
 def _claude_base(model: str) -> str:
-    # Claude 2.1.267's trailing context modifier, not a provider-ID rewrite.
+    # Verified Claude contracts' trailing context modifier, not a provider-ID rewrite.
     return re.sub(r"\[1m\]$", "", model, flags=re.IGNORECASE)
 
 
@@ -79,12 +82,12 @@ def claude_model_metadata(
 ) -> dict[str, Any]:
     """Separate applied startup settings from picker-derived capabilities.
 
-    CLI 2.1.267 get_settings.applied is runtime state; effective is merged config.
+    Verified get_settings.applied is runtime state; effective is merged config.
     A default picker row survives availableModels filtering, even for a blocked
     explicit selection. Never use that row to bypass an explicit allowlist.
     Neither applied settings nor picker presence establishes account entitlement.
     """
-    if version != "2.1.267":
+    if version not in CLAUDE_APPLIED_SETTINGS_VERSIONS:
         raise ControlError("unsupported Claude applied-settings contract")
     applied, effective = settings.get("applied"), settings.get("effective")
     if not isinstance(applied, dict) or not isinstance(effective, dict):

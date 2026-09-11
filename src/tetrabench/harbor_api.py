@@ -118,6 +118,14 @@ def _retry_semantics(retry: Any) -> Any:
     return value
 
 
+def _job_config_value(config: JobConfig) -> Any:
+    value = _exact_model_value(config)
+    # Harbor's exception filters are sets. JSON round-trips and hash seeds can
+    # change their iteration order without changing the retry policy.
+    value["retry"] = _retry_semantics(config.retry)
+    return value
+
+
 def _safe_component(value: str, *, field: str) -> str:
     if Path(value).name != value or value in {"", ".", ".."}:
         raise ValueError(f"Harbor persisted an unsafe {field}")
@@ -389,7 +397,7 @@ class Harbor022Api:
                     )
                 }
             )
-        if _exact_model_value(persisted_config) != _exact_model_value(expected_config):
+        if _job_config_value(persisted_config) != _job_config_value(expected_config):
             raise ValueError("Harbor job config changed after compilation")
         persisted_lock = JobLock.model_validate_json(lock_path.read_text())
         if persisted_lock.n_concurrent_trials != persisted_config.n_concurrent_trials:

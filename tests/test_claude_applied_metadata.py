@@ -3,7 +3,7 @@
 import json
 
 import pytest
-from native_consumer_support import native_environment, native_modules
+from native_consumer_support import VERSIONS, native_environment, native_modules
 
 from tetrabench.canonical_json import sha256_hex
 from tetrabench.harness_config import (
@@ -164,7 +164,11 @@ def test_real_claude_applied_state_and_context_picker(tmp_path, disabled, select
         data, effective = claude_control_metadata(process)
     assert data["account"]["tokenSource"] == "none"
     result = claude_model_metadata(
-        data, effective, requested=selector, version="2.1.267", environment=env
+        data,
+        effective,
+        requested=selector,
+        version=VERSIONS["claude-code"],
+        environment=env,
     )
     assert result["applied"]["model"] == (
         selector if disabled and selector == "opus[1m]" else MODEL
@@ -200,7 +204,7 @@ def test_real_claude_discovery_keeps_native_restrictions(
     assert modules is not None
     config = HarnessConfig(
         name="claude-code",
-        version="2.1.267",
+        version=VERSIONS["claude-code"],
         model="anthropic/" + MODEL,
         discovery="isolated",
         native_config=NativeConfig(

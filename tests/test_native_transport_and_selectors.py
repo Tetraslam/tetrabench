@@ -8,7 +8,7 @@ from typing import Any
 import pytest
 from harbor.agents.factory import AgentFactory
 from harbor.models.agent.context import AgentContext
-from native_consumer_support import native_environment, native_modules
+from native_consumer_support import VERSIONS, native_environment, native_modules
 from test_controlled_harnesses import CaptureEnvironment
 
 from tetrabench.auth_config import AuthSpec, NativeAuthReference
@@ -99,11 +99,14 @@ def test_native_opencode_api_url_really_uses_model_transport_override(
     assert snapshot.identity.resolved_model == "transport-fixture"
 
 
-def test_claude_context_suffix_preserved_in_model_aliases_and_quoted_flags(tmp_path):
+@pytest.mark.parametrize("version", ["2.1.267", "2.1.269"])
+def test_claude_context_suffix_preserved_in_model_aliases_and_quoted_flags(
+    tmp_path, version
+):
     model = "claude-opus-5[1m]"
     spec = HarnessConfig(
         name="claude-code",
-        version="2.1.267",
+        version=version,
         model="anthropic/" + model,
         options={"fallback_model": model},
     )
@@ -111,7 +114,7 @@ def test_claude_context_suffix_preserved_in_model_aliases_and_quoted_flags(tmp_p
         compile_agent_config(seal_harness(spec, tmp_path)), logs_dir=tmp_path
     )
     assert "--fallback-model=" + model in shlex.split(instance.build_cli_flags())
-    capture = CaptureEnvironment("claude-code", "2.1.267")
+    capture = CaptureEnvironment("claude-code", version)
     asyncio.run(instance.run("not executed", capture, AgentContext()))
     assert any(
         row.get("env", {}).get("ANTHROPIC_MODEL") == model for row in capture.commands
@@ -122,6 +125,7 @@ def test_claude_context_suffix_preserved_in_model_aliases_and_quoted_flags(tmp_p
     )
 
 
+@pytest.mark.parametrize("version", ["2.1.267", "2.1.269"])
 @pytest.mark.parametrize(
     "selector",
     [
@@ -133,10 +137,10 @@ def test_claude_context_suffix_preserved_in_model_aliases_and_quoted_flags(tmp_p
         "claude-opus-5[*]",
     ],
 )
-def test_context_suffix_does_not_expand_the_injection_surface(selector):
+def test_context_suffix_does_not_expand_the_injection_surface(selector, version):
     with pytest.raises(ValueError):
         HarnessConfig(
-            name="claude-code", version="2.1.267", model="anthropic/" + selector
+            name="claude-code", version=version, model="anthropic/" + selector
         )
 
 
@@ -187,6 +191,8 @@ def test_actual_claude_initialization_model_selectors_are_accepted(tmp_path):
     assert contextual, rows
     for selector in contextual:
         spec = HarnessConfig(
-            name="claude-code", version="2.1.267", model="anthropic/" + selector
+            name="claude-code",
+            version=VERSIONS["claude-code"],
+            model="anthropic/" + selector,
         )
         assert seal_harness(spec, tmp_path).model == "anthropic/" + selector
