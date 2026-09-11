@@ -6,12 +6,14 @@ import contextlib
 import secrets
 import threading
 from collections.abc import Callable, Iterator, Mapping
+from importlib.metadata import version
 from pathlib import Path
 from typing import Any, Protocol
 
 import modal
 from harbor.environments.modal import ModalEnvironment
 
+from tetrabench.modal_environment import EnvNameModalDinD
 from tetrabench.plan import canonical_model_bytes
 from tetrabench.records import AttemptEvent
 
@@ -78,6 +80,8 @@ class TetrabenchModalEnvironment(ModalEnvironment):
         labels: dict[str, str] | None = None,
         **kwargs: Any,
     ) -> None:
+        if version("harbor") != "0.22.0":
+            raise RuntimeError("Harbor 0.22.0 is required for Modal exec forwarding")
         if _sandbox_v2_requested(kwargs.get("modal_sandbox_v2", False)):
             raise ValueError("tetrabench rejects Modal sandbox v2 for Harbor 0.22.0")
         owned = {
@@ -108,6 +112,8 @@ class TetrabenchModalEnvironment(ModalEnvironment):
             labels=supplied,
             **kwargs,
         )
+        if self._compose_mode:
+            self._strategy = EnvNameModalDinD(self)
 
     def _record(
         self,

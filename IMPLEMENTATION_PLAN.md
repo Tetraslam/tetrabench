@@ -80,8 +80,12 @@ Known native summary costs are now counted once in auxiliary evidence. Native
 reported/catalog-priced amounts remain partial, and standalone Codex compaction
 charges were unavailable. Tigris's precise organization-admin ACL grant has a
 separately reviewed opt-in flag, default false; no live credential backend has
-been approved or seeded. The hosted native-test namespace fix remains to be
-confirmed after pushing the follow-up.
+been approved or seeded. Hosted run `34591098904` passed the native-test namespace
+fix and all CI gates. A follow-up closes the Modal Compose/DinD credential-argv
+gap: values use SDK Secrets and name-only Docker env flags, with final scoped
+infrastructure validation. Its actual native DinD main/sidecar probe passed
+32 SDK/protobuf command captures with no value in command arguments, normal
+network/file/volume operations, and complete owned-resource cleanup.
 
 ### Controlled experiment release working record
 
