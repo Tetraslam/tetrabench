@@ -2114,3 +2114,37 @@ native refresh and real fresh-controller consumers. These live acceptance gates,
 including deployed refresh failure cleanup, remain `unproven`; no 0.3.0 release
 claim follows from local validation. This supersedes the earlier fixing/review-
 pending status without changing that immutable entry.
+
+## 2026-09-11T18:01:01Z: Live subscription and renewal gates complete; release gates open
+
+Provenance: direct reads of `FINAL_REPORT.json`, `RENEWAL_FINAL_REPORT.json`, and
+`SUCCESSOR_PI_FINAL_REPORT.json` in `/tmp/opencode/tetrabench-030-2d1ca9a-build/`,
+plus `/tmp/opencode/tetrabench-controller-binding-diagnosis/REPORT.json`. Parent
+checkpoint supplies CI/test status. This supersedes the prior pending live gates
+and the retained reports' intermediate partial/not-deployed statuses.
+
+Claude setup-token smoke applied the exact requested `[1m]` suffix, responded as
+`claude-opus-5`, reported `contextWindow = 1000000`, and earned reward `1`.
+Cleanup passed; its 35-object/17-entry scan had zero known matches. This is not
+million-token input/retention or universal entitlement proof. Natural setup-token
+expiry/renewal remains user-owned and unobserved, distinct from tested error handling;
+no waiting-for-expiry experiment is required. Earlier retention-protocol violations
+remain qualified.
+
+All three OAuth clients changed access and refresh credentials once, persisted
+them, and passed fresh actual Modal controller claimed/staged-byte verification,
+reward `1`, stopped owners, and two empty sweeps. Final generation is 1; ready/unowned
+revisions are Codex 7, OpenCode 8, Pi 8. The first phase ended on billing-read
+throttling before renewal. OpenCode's first successor correctly rejected an old
+rolling-deployment container before auth; the private recreate fix passed without
+repeating renewal or retrying a model score. Scans remain phase-local: the final
+65 objects/3 binary objects had zero known matches, using current Codex/OpenCode
+and initial/renewed Pi values, not a cross-parent historical bank. Totals are
+`$0.404485` API-equivalent and `$0.02897999` provisional compute, not bills. Private
+resources remain retained with no run-owned compute.
+
+The prior full 2,488 non-native/107 native/12 Docker checkpoint stands. The latest
+amended step passed 2,487 with one quota failure that passed separately, not a new
+full pass. Hosted CI failed 45 renewal cases after early namespace-policy restoration;
+the uncommitted CI-only window fix awaits hosted rerun. Final independent review,
+CI, and exact-release-artifact gates remain open. No 0.3.0 publication occurred.

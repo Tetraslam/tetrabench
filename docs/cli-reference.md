@@ -150,9 +150,9 @@ still contain workload-emitted secrets and must be treated as private.
 
 ### Controlled harness configuration
 
-This checkout's 0.3.0 candidate has live API-key evidence for all four harnesses
-and normal subscription smoke evidence for Codex, OpenCode, and Pi. Claude
-subscription acceptance and actual OAuth refresh remain pending. See
+This checkout's 0.3.0 candidate has live API-key and normal subscription evidence
+for all four harnesses, plus native OAuth refresh and fresh-controller consumption
+for Codex, OpenCode, and Pi. Release gates remain open. See
 [testing limits](#testing-and-limitations); this is not a fully verified or
 published 0.3.0 release.
 
@@ -585,10 +585,11 @@ run reference to match the new generation. `auth logout --profile NAME` asks
 before removing that eval login (`--yes` for JSON); provider revocation is not
 implied.
 
-Normal deployed OAuth delivery and private state write-back passed for Codex,
-OpenCode, and Pi using fresh independent logins and the approved backend. No access
-or refresh credential changed, so actual refresh persistence, next-consumer use,
-and refresh-failure recovery remain live-unproven. See the scoped backend and
+Normal deployed OAuth delivery passed for Codex, OpenCode, and Pi using fresh
+independent logins and the approved backend. Separate pinned-native refresh proofs
+changed both access and refresh credentials, persisted them, and verified their
+use by fresh actual Modal controllers, each with reward `1` and clean shutdown.
+This does not prove every refresh-failure recovery scenario. See the scoped backend and
 artifact evidence [below](#testing-and-limitations). Keep native logs private:
 excluding known credential files is not universal secret scrubbing.
 
@@ -722,21 +723,24 @@ across multiple compactions.
 ### Testing and limitations
 
 The source candidate passed API-key eval flows through the public CLI for
-OpenCode, Codex, Claude Code, and Pi. Subscription evidence from the unchanged
-installed candidate wheel at clean `55dc637` is recorded below as of 2026-09-11.
-It is not a published 0.3.0 artifact:
+OpenCode, Codex, Claude Code, and Pi. Subscription evidence combines the normal
+smokes at `55dc637` with installed Claude and renewal/successor proofs at `2d1ca9a`
+on 2026-09-11. Neither candidate is a published 0.3.0 artifact:
 
 | Harness | Normal subscription smoke | Refresh or renewal acceptance |
 | --- | --- | --- |
-| Codex 0.154.0 | Astra, reward `1` | No credential change; actual refresh and next-consumer proof pending |
-| OpenCode 1.18.30 | Astra, reward `1` | No credential change; actual refresh and next-consumer proof pending |
-| Pi 0.85.1 | Astra, reward `1` | No credential change; actual refresh and next-consumer proof pending |
-| Claude Code 2.1.267 | Setup token recognized; `[1m]` metadata selection blocked before inference | Normal smoke and `[1m]` server acceptance pending; setup-token renewal is user-owned |
+| Codex 0.154.0 | Astra, reward `1` | Access and refresh changed, persisted; fresh Modal controller verified claimed/staged bytes and earned reward `1` |
+| OpenCode 1.18.30 | Astra, reward `1` | Access and refresh changed, persisted; fresh Modal controller verified claimed/staged bytes and earned reward `1` |
+| Pi 0.85.1 | Astra, reward `1` | Access and refresh changed, persisted; fresh Modal controller verified claimed/staged bytes and earned reward `1` |
+| Claude Code 2.1.267 | Setup token; exact `[1m]` applied, response `claude-opus-5`, reward `1` | Natural setup-token expiry/renewal is user-owned and was not observed |
 
-All three successful owners stopped and passed two empty child sweeps; profiles
-returned ready/unowned after private write-back. The final audit scanned 91
-published objects, including binary artifacts, with zero known credential or
-private-auth-resource matches across literal, base64, and URL-encoded forms.
+Owners stopped and two empty child sweeps passed; OAuth profiles returned
+ready/unowned after private write-back. Initial normal-smoke scans covered 91
+objects; Claude's later scan covered 35 objects/17 inventory entries. The final
+successor-phase scan covered 65 objects, including three binary objects, with zero
+known credential/private-auth-resource matches in literal, base64, and URL-encoded
+forms. Scans are phase-local: the last parent held current Codex/OpenCode values
+and initial/renewed Pi values, not a historical credential bank across parents.
 Unknown transformations and workload-emitted secrets are not covered. These
 short tasks establish neither subscription long-context retention nor actual
 subscription charges/quota; a native zero cost is not proof of free usage.
@@ -763,9 +767,13 @@ Those continuation tests used reduced verification thresholds, not stock-window
 performance settings. Claude's `[1m]` is a native
 [extended-context model suffix](https://code.claude.com/docs/en/model-config#extended-context).
 Applied selection and catalog metadata prove neither entitlement nor context
-capacity; catalog omission does not prove server rejection. The suffix/picker
-correction and refresh containment passed local validation and independent
-re-review, but live Claude subscription and refresh acceptance remain pending.
+capacity; catalog omission does not prove server rejection. The live setup-token
+smoke preserved the requested `anthropic/claude-opus-5[1m]` selector and reported
+native usage `contextWindow = 1000000`. It did not exercise a million-token input
+or establish million-token retention or universal entitlement. Local error-handling
+tests do not establish natural setup-token expiry/renewal; no token-aging experiment
+is required. Final release review, hosted CI, and exact-release-artifact validation
+remain open; the candidate live proofs do not establish release readiness.
 Current blockers and retained provenance belong in the [project record](../IMPLEMENTATION_PLAN.md#native-fidelity-and-authentication-working-record).
 None of these tests guarantees all models, routes, or future native versions.
 

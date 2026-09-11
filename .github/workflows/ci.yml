@@ -86,14 +86,19 @@ jobs:
       - name: Run required Docker tests
         run: TETRABENCH_EXPECT_DOCKER_TESTS=12 uv run pytest --strict-markers -m docker
 
-      - name: Run required native consumer tests without authentication
+      - name: Run non-Docker test suites
         shell: bash
         run: |
           # Ubuntu 24.04 restricts nested unprivileged namespaces via AppArmor.
-          # Restore the ephemeral runner policy even when a consumer fails.
+          # Native consumers and synthetic renewal tests both need them.
+          # Restore the ephemeral runner policy even when either suite fails.
           # https://github.com/actions/runner-images/issues/10443
           namespace_policy=kernel.apparmor_restrict_unprivileged_userns
           if [[ -e /proc/sys/kernel/apparmor_restrict_unprivileged_userns ]]; then
+            if [[ "${RUNNER_ENVIRONMENT:-}" != github-hosted ]]; then
+              echo "Namespace policy override requires a GitHub-hosted runner." >&2
+              exit 1
+            fi
             namespace_policy_before="$(sysctl -n "$namespace_policy")"
             trap 'sudo sysctl -w "$namespace_policy=$namespace_policy_before"' EXIT
             sudo sysctl -w "$namespace_policy=0"
@@ -108,8 +113,8 @@ jobs:
             TETRABENCH_NATIVE_NODE_MODULES="$TETRABENCH_NATIVE_NODE_MODULES" \
             "$(command -v uv)" run --no-sync --offline pytest --strict-markers -m native
 
-      - name: Run remaining non-Docker test suite
-        run: uv run pytest --strict-markers -m "not docker and not native"
+          # Keep synthetic containment tests inside the same policy window.
+          uv run pytest --strict-markers -m "not docker and not native"
 
       - name: Build wheel and source distribution
         run: uv build

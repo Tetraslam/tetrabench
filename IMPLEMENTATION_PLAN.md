@@ -4,7 +4,7 @@
 
 - Project state: P0 through P6 are complete for their local/static contracts. Live Tigris/Modal evidence includes cancellation, forced controller interruption/recovery, and the E-046 Single-region `iad` cutover. Scoped auth-backend CAS/privacy evidence is recorded below; general provider IAM/privacy/encryption guarantees, AWS behavior, and true provider preemption remain `unproven`.
 - Published baseline: Tetrabench 0.2.0 is published on PyPI. PR 33 merged with passing CI; the unchanged GitHub release artifacts passed installed local/Modal Oracle and controlled Astra proofs before protected publication. Public installation and artifact hashes were independently verified.
-- Current action: attempt the installed Claude subscription smoke with the requested `[1m]` suffix preserved, then single-use native OAuth refresh and real fresh-controller consumers. Independent re-review and local validation passed. Codex, OpenCode, and Pi normal subscription smokes passed without refresh; Claude subscription and actual refresh acceptance remain live `unproven`. Keep 0.3.0 unreleased until the open acceptance gates, including the context-retention qualifications below, are resolved. Future eval choice belongs to the user.
+- Current action: finish release review, the hosted CI rerun, and exact-release-artifact validation. Normal auth is live-proven for all four harnesses; Codex, OpenCode, and Pi actual native refresh, persistence, and fresh Modal controller consumers passed. The reviewed CI-only namespace-window fix awaits hosted validation; 0.3.0 remains unpublished and is not release-ready. Preserve the context-retention qualifications below. Future eval choice belongs to the user.
 - Task-catalog gate: E-132's corrected-byte local/detached execution and audit gates and E-143's exact-four calibration all pass. `authority-fencing` is admitted in `benchmarks/catalog.toml`; later systems and GitHub-workflow tasks remain absent pending their own complete gates.
 - Authoring UX: D-127 is merged through PR 26 with focused local and real-Docker evidence. It creates user-owned starter projects and tasks independently of the repository catalog.
 - Canonical record updated: 2026-09-11.
@@ -26,19 +26,20 @@
 - [x] Native model/reasoning inspection and reproducible configuration adoption.
 - [x] Codex direct OpenAI API-key flow and live smoke.
 - [x] Native Codex ChatGPT OAuth bootstrap and normal live smoke.
-- [ ] Codex actual native refresh, durable write-back, and next-consumer proof.
+- [x] Codex actual native refresh, durable write-back, and fresh Modal controller proof.
 - [x] Claude Code direct Anthropic API-key flow and live smoke.
-- [ ] Claude setup-token live smoke and expiry/renewal evidence; token presence alone passed. Setup-token renewal is user-owned, not OAuth refresh.
+- [x] Claude setup-token live smoke with the requested `[1m]` suffix preserved. Natural expiry/renewal remains user-owned and unobserved, not a required token-aging experiment.
 - [x] OpenCode Codex OAuth bootstrap and normal live smoke.
-- [ ] OpenCode actual native refresh, durable write-back, and next-consumer proof.
+- [x] OpenCode actual native refresh, durable write-back, and fresh Modal controller proof.
 - [x] Earendil Pi Codex OAuth bootstrap and normal live smoke.
-- [ ] Pi actual native refresh, durable write-back, and next-consumer proof.
+- [x] Pi actual native refresh, durable write-back, and fresh Modal controller proof.
 - [x] OpenCode and Pi OpenRouter API-key smoke at current stable pins.
 - [ ] Multiple native-compaction/summarization boundary runs, fact retention, and mechanism evidence.
 - [x] Candidate independent re-review and local validation at the checkpoint below.
-- [ ] Installed live release validation, publication, and public install proof.
+- [ ] Final independent release review, hosted CI, exact-release-artifact validation, publication, and public install proof.
 
-Current subscription evidence (2026-09-11): the user approved the single-person
+Initial normal-subscription checkpoint (superseded only for pending gates and
+profile revisions by the later proofs below): the user approved the single-person
 organization-admin opt-in. Fresh, independent native eval logins and the dedicated
 backend were used by the three successful smokes; no interactive login was copied.
 The retained unchanged wheel from clean `55dc637` produced reward `1` for Codex
@@ -51,6 +52,29 @@ zero known credential or private-auth-resource matches. Literal, base64, and
 URL-encoded scans do not establish universal secret scrubbing. Subscription
 billing/quota and unreported auxiliary usage remain unknown.
 
+Completed renewal evidence at `2d1ca9a`: Codex, OpenCode, and Pi each used its pinned
+native client once; both access and refresh credentials changed, persisted, and
+were privately verified against the bytes claimed and staged by a fresh actual
+Modal controller. Each consumer earned reward `1`, its owner stopped, and two
+child sweeps were empty. Final profiles are generation 1, ready/unowned, at
+revisions 7 (Codex), 8 (OpenCode), and 8 (Pi). Private deployments, Secrets, Volumes,
+and evidence remain retained; no run-owned compute remains.
+
+The first phase stopped on a throttled billing read after Claude passed and before
+any renewal. A separately authorized parent resumed with a new scan baseline.
+OpenCode's first successor then correctly failed the request-binding guard before
+auth acquisition: rolling deployment reached a still-warm Codex-bound container.
+The private driver's recreate deployment fixed that boundary without changing the
+production guard, repeating refresh, or retrying a model score. The later successor
+passed. Earlier partial report statuses are superseded by those completed phases.
+
+Scans are phase-local, not one credential bank retained across parents. The final
+65-object scan included three binary objects and found zero known credential or
+auth-resource matches. That parent held current Codex/OpenCode credentials and
+both initial/renewed Pi credentials; earlier pre-rotation scans remain separate
+evidence. Cumulative API-equivalent cost is `$0.404485`; compute is `$0.02897999`,
+provisional. Neither is a subscription bill or quota reconciliation.
+
 The actual S3SessionStore passed scoped private ACL/owner checks, create/read/update
 CAS, duplicate/stale rejection, and competing claims with one winner. Unsafe
 takeover/reseed was rejected. Anonymous synthetic-object GET, artifact-location
@@ -61,8 +85,15 @@ exposes an unrelated bucket's public/private status bit through
 does not establish general IAM isolation, encryption, or any live AWS guarantee.
 The public trust default remains false.
 
-Claude 2.1.267 recognized its setup token, but `[1m]` metadata selection blocked
-before inference; no Claude scoring attempt ran in that retained proof. Agent
+Claude's earlier `[1m]` metadata blocker is superseded by the installed 2.1.267
+setup-token smoke: requested `anthropic/claude-opus-5[1m]`, applied exact
+`claude-opus-5[1m]`, response model `claude-opus-5`, native usage
+`contextWindow = 1000000`, and reward `1`. Its owner stopped, two sweeps were empty,
+and the 35-object/17-inventory-entry scan found zero known secret/resource matches.
+This did not exercise a million-token input or prove long-context retention or
+universal entitlement. Natural setup-token expiry/renewal was not observed; it is
+user-owned. Tested error handling is separate from that live unknown and does not
+require waiting for a long-lived token to expire. Agent
 source inspection and pinned-binary observations identified suffix handling and
 picker omission as the cause, superseding the catalog-only diagnosis. `[1m]` is a
 native model suffix; applied selection or catalog metadata proves neither server
@@ -73,16 +104,21 @@ The `setsid` escape finding is fixed by a trusted supervisor using a native Linu
 PID namespace to contain all descendants. Independent re-review
 `ses_f6ef6522dffeDOEh823MEUef11` exercised synthetic `setsid`, double-fork,
 `CLONE_PARENT`, and wrapper-kill adversaries and reported no findings. This
-supersedes the prior fixing/review-pending checkpoint; deployed refresh containment
-and failure cleanup remain live `unproven`.
+supersedes the prior fixing/review-pending checkpoint. Live renewal containment
+probes and normal cleanup passed; synthetic adversaries do not establish every
+deployed failure/recovery scenario.
 
-Local validation passed 2,488 non-native tests, 107 mandatory native tests, and
+Prior local validation passed 2,488 non-native tests, 107 mandatory native tests, and
 12 Docker tests, plus whole Bandit, lock, actionlint, Ruff, formatting, ty, strict
 Twine/package checks, installed wheel/sdist Docker smokes, and the locked dependency
 audit. Latest candidate wheel SHA-256:
 `7f8b79a5055c85ebede91afeb09fc5b583e8d6ff5a4627f7e4653fa8121acd5a`.
-These checks do not replace live Claude subscription acceptance, actual native
-refresh/write-back, or real fresh-controller consumption of refreshed state.
+The later amended test step passed 2,487 cases with one quota-related failure;
+that case passed separately. This is not a new uninterrupted full-suite pass.
+Hosted CI initially failed 45 renewal cases after the native step restored the
+namespace policy too early. The reviewed minimal CI-only window fix awaits its
+hosted rerun, with no production change. Final independent release review and
+exact release-artifact gates remain open despite completed candidate live proofs.
 
 Provenance: retained `REPORT.json`, `FINAL_AUDIT.json`, and `WORKING_RECORD.md` in
 `/tmp/opencode/tetrabench-030-subscription-55dc637-20260911/`;
@@ -93,7 +129,13 @@ and the parent validation checkpoint for local checks/wheel identity. User messa
 provide approval only. See also the official
 [extended-context documentation](https://code.claude.com/docs/en/model-config#extended-context).
 The backend report's pre-login state and subscription report's request for further approval
-are superseded by the later evidence and user approval, not erased.
+are superseded by the later evidence and user approval, not erased. Completed
+phases are retained in `FINAL_REPORT.json`, `RENEWAL_FINAL_REPORT.json`, and
+`SUCCESSOR_PI_FINAL_REPORT.json` under
+`/tmp/opencode/tetrabench-030-2d1ca9a-build/`, with the causal diagnosis in
+`/tmp/opencode/tetrabench-controller-binding-diagnosis/REPORT.json`. The last
+successor report supersedes the diagnosis's not-yet-deployed status. CI/test
+follow-up status comes from the parent checkpoint, not those live reports.
 
 Initial checkpoint (superseded by the live evidence above): implementation covered
 explicit auth references for all four harnesses, native OAuth custody and refresh
