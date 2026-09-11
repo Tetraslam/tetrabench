@@ -21,6 +21,8 @@ jobs:
     name: Python 3.12
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    env:
+      TETRABENCH_REQUIRE_NATIVE_CONSUMERS: "1"
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -53,6 +55,19 @@ jobs:
       - name: Install locked dependencies
         run: uv sync --locked --all-groups
 
+      - name: Set up native-consumer Node LTS
+        uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6.3.0
+        with:
+          node-version: "24.21.0"
+          package-manager-cache: false
+
+      - name: Install locked official native consumers
+        run: |
+          uv run --locked python tools/install_native_consumers.py \
+            --prefix "$RUNNER_TEMP/tetrabench-native"
+          printf 'TETRABENCH_NATIVE_NODE_MODULES=%s/node_modules\n' \
+            "$RUNNER_TEMP/tetrabench-native" >> "$GITHUB_ENV"
+
       - name: Lint
         run: uv run ruff check .
 
@@ -69,10 +84,21 @@ jobs:
         run: docker info
 
       - name: Run required Docker tests
-        run: TETRABENCH_EXPECT_DOCKER_TESTS=11 uv run pytest --strict-markers -m docker
+        run: TETRABENCH_EXPECT_DOCKER_TESTS=12 uv run pytest --strict-markers -m docker
 
-      - name: Run non-Docker test suite
-        run: uv run pytest --strict-markers -m "not docker"
+      - name: Run required native consumer tests without authentication
+        shell: bash
+        run: |
+          # Offline native parsing gets its own network namespace, not credentials.
+          sudo unshare --net -- setpriv \
+            --reuid="$(id -u)" --regid="$(id -g)" --init-groups \
+            env PATH="$PATH" HOME="$RUNNER_TEMP/tetrabench-native/home" \
+            TETRABENCH_REQUIRE_NATIVE_CONSUMERS=1 \
+            TETRABENCH_NATIVE_NODE_MODULES="$TETRABENCH_NATIVE_NODE_MODULES" \
+            "$(command -v uv)" run --no-sync --offline pytest --strict-markers -m native
+
+      - name: Run remaining non-Docker test suite
+        run: uv run pytest --strict-markers -m "not docker and not native"
 
       - name: Build wheel and source distribution
         run: uv build

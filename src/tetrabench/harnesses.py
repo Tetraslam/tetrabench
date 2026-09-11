@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 import os
 import re
-import stat
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
@@ -18,13 +17,29 @@ from tetrabench.harness_config import (
     NativeConfig,
     ResolvedHarness,
     SealedNativeConfig,
+    SealedResource,
 )
 
 _MODEL = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:/@+-]*\Z")
+_CLAUDE_CONTEXT_MODEL = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:/@+-]*\[1m\]\Z")
+
+
+def _valid_model_selector(name: str, version: str, value: str) -> bool:
+    return bool(
+        _MODEL.fullmatch(value)
+        or (
+            name == "claude-code"
+            and version == "2.1.267"
+            and _CLAUDE_CONTEXT_MODEL.fullmatch(value)
+        )
+    )
+
+
 _VARIABLE = re.compile(r"[A-Z][A-Z0-9_]*\Z")
 _REFERENCE = re.compile(r"\$\{([A-Z][A-Z0-9_]*)\}\Z")
 _SENSITIVE = re.compile(
     r"api.?key|api.?token|auth.?token|authorization|password|secret|access.?token|"
+    r"refresh.?token|id.?token|"
     r"^token$|^key$|private.?key|bearer.?token|^cookie$|^set-cookie$",
     re.I,
 )
@@ -52,7 +67,13 @@ _AUTH_ENV = frozenset(
         "TOGETHER_API_KEY",
     }
 )
-SUPPORTED_OPENCODE_VERSIONS = ("1.18.29",)
+SUPPORTED_OPENCODE_VERSIONS = ("1.18.29", "1.18.30")
+STABLE_VERSIONS = {
+    "opencode": "1.18.30",
+    "codex": "0.154.0",
+    "claude-code": "2.1.267",
+    "pi": "0.85.1",
+}
 
 
 @dataclass(frozen=True)
@@ -70,7 +91,7 @@ _ADAPTERS = {
         "tetrabench.harness_agents:ControlledOpenCode",
         "opencode-ai",
         "json",
-        ("variant", "title"),
+        ("variant", "title", "agent", "pure"),
     ),
     "codex": HarnessAdapter(
         "codex",
@@ -94,6 +115,22 @@ _ADAPTERS = {
             "disallowed_tools",
             "permission_mode",
             "max_thinking_tokens",
+            "max_output_tokens",
+            "disable_adaptive_thinking",
+            "autocompact",
+            "disable_auto_compact",
+            "tools",
+            "system_prompt",
+            "system_prompt_file",
+            "append_system_prompt_file",
+            "agent",
+            "agents",
+            "mcp_config",
+            "setting_sources",
+            "strict_mcp_config",
+            "disable_slash_commands",
+            "no_session_persistence",
+            "fork_session",
         ),
     ),
     "pi": HarnessAdapter(
@@ -101,7 +138,28 @@ _ADAPTERS = {
         "tetrabench.harness_agents:ControlledPi",
         "@earendil-works/pi-coding-agent",
         "json",
-        ("thinking", "model_api"),
+        (
+            "thinking",
+            "model_api",
+            "tools",
+            "exclude_tools",
+            "no_tools",
+            "no_builtin_tools",
+            "offline",
+            "no_extensions",
+            "no_skills",
+            "no_prompt_templates",
+            "no_themes",
+            "no_context_files",
+            "system_prompt",
+            "append_system_prompt",
+            "extension",
+            "skill",
+            "prompt_template",
+            "no_session",
+            "name",
+            "session_id",
+        ),
     ),
 }
 
@@ -117,6 +175,37 @@ def registered_harnesses() -> tuple[HarnessAdapter, ...]:
     return tuple(_ADAPTERS.values())
 
 
+def resolve_authoring_version(name: str, version: str) -> str:
+    """Explicit authoring-only registry read; never called by plan/run/replay."""
+    if version != "latest":
+        if not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", version):
+            raise ValueError("version must be latest or an exact x.y.z")
+        return version
+    from urllib.parse import quote
+    from urllib.request import urlopen
+
+    package = get_harness(name).package
+    try:
+        with urlopen(
+            "https://registry.npmjs.org/" + quote(package, safe="") + "/latest",
+            timeout=15,
+        ) as response:  # nosec B310
+            data = response.read(1024 * 1024 + 1)
+        if len(data) > 1024 * 1024:
+            raise ValueError("native package metadata exceeds limit")
+        metadata = json.loads(data)
+        concrete = metadata["version"]
+        if (
+            metadata.get("name") != package
+            or not isinstance(concrete, str)
+            or not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", concrete)
+        ):
+            raise ValueError("native registry did not return a stable exact version")
+        return concrete
+    except (OSError, ValueError, KeyError, TypeError):
+        raise ValueError("cannot resolve stable native package metadata") from None
+
+
 def supported_environment(name: str) -> tuple[str, ...]:
     if name == "codex":
         return ("OPENAI_API_KEY", "OPENAI_BASE_URL")
@@ -127,13 +216,13 @@ def supported_environment(name: str) -> tuple[str, ...]:
             "ANTHROPIC_BASE_URL",
             "CLAUDE_CODE_OAUTH_TOKEN",
         )
-    excluded = {"CLAUDE_CODE_OAUTH_TOKEN"}
-    if name != "pi":
-        excluded.add("ANTHROPIC_OAUTH_TOKEN")
+    excluded = {"CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_OAUTH_TOKEN"}
     return tuple(sorted(_AUTH_ENV - excluded))
 
 
-def _native_environment_references(name: str, native: Any) -> set[str]:
+def _native_environment_references(
+    name: str, native: Any, version: str | None = None
+) -> set[str]:
     references: set[str] = set()
     if isinstance(native, dict):
         for key, value in native.items():
@@ -152,20 +241,25 @@ def _native_environment_references(name: str, native: Any) -> set[str]:
                     item for item in value.values() if isinstance(item, str)
                 )
             if name == "pi" and key == "apiKey" and isinstance(value, str):
-                references.add(value)
+                if version == STABLE_VERSIONS["pi"]:
+                    references.update(re.findall(r"\$\{([A-Z][A-Z0-9_]*)\}", value))
+                else:
+                    references.add(value)
             if name == "pi" and key == "headers" and isinstance(value, dict):
                 references.update(
                     item
                     for item in value.values()
                     if isinstance(item, str) and _VARIABLE.fullmatch(item)
                 )
-            references.update(_native_environment_references(name, value))
+            references.update(_native_environment_references(name, value, version))
     elif isinstance(native, list):
         for value in native:
-            references.update(_native_environment_references(name, value))
+            references.update(_native_environment_references(name, value, version))
     elif isinstance(native, str):
         if name == "opencode":
             references.update(re.findall(r"\{env:([A-Z][A-Z0-9_]*)\}", native))
+        if name == "pi" and version == STABLE_VERSIONS["pi"]:
+            references.update(re.findall(r"\$\{([A-Z][A-Z0-9_]*)\}", native))
     return references
 
 
@@ -204,13 +298,34 @@ def _option_details(adapter: HarnessAdapter) -> dict[str, Any]:
     if adapter.name == "opencode":
         details["title"] = {"type": "str", "default": "tetrabench", "required": True}
     if adapter.name == "codex":
+        details["reasoning_effort"].update(
+            default=None, choices=None, capability_source="native model/route discovery"
+        )
+    if adapter.name == "claude-code":
         details["reasoning_effort"]["choices"] = [
-            "none",
+            "low",
+            "medium",
+            "high",
+            "xhigh",
+            "max",
+        ]
+        details["permission_mode"]["choices"] = [
+            "acceptEdits",
+            "auto",
+            "bypassPermissions",
+            "manual",
+            "dontAsk",
+            "plan",
+        ]
+    if adapter.name == "pi":
+        details["thinking"]["choices"] = [
+            "off",
             "minimal",
             "low",
             "medium",
             "high",
             "xhigh",
+            "max",
         ]
     if adapter.name == "pi":
         details["model_api"] = {
@@ -224,7 +339,41 @@ def _option_details(adapter: HarnessAdapter) -> dict[str, Any]:
                 "google-vertex",
             ],
         }
-    return details
+    for name in adapter.options:
+        details.setdefault(
+            name,
+            {
+                "type": "bool"
+                if name in _BOOL_OPTIONS
+                else "int"
+                if name in _INT_OPTIONS
+                else "str",
+                "default": None,
+            },
+        )
+    return {key: details[key] for key in adapter.options}
+
+
+_BOOL_OPTIONS = {
+    "pure",
+    "disable_adaptive_thinking",
+    "disable_auto_compact",
+    "strict_mcp_config",
+    "disable_slash_commands",
+    "no_session_persistence",
+    "fork_session",
+    "no_tools",
+    "no_builtin_tools",
+    "offline",
+    "no_extensions",
+    "no_skills",
+    "no_prompt_templates",
+    "no_themes",
+    "no_context_files",
+    "no_session",
+}
+_INT_OPTIONS = {"max_turns", "max_thinking_tokens", "max_output_tokens"}
+_EMPTY_OPTIONS = {"tools", "setting_sources"}
 
 
 def capabilities() -> list[dict[str, object]]:
@@ -241,13 +390,35 @@ def capabilities() -> list[dict[str, object]]:
             "native_config": item.native_format,
             "native_config_formats": ["json", "toml"]
             if item.name == "codex"
+            else ["json", "jsonc"]
+            if item.name == "opencode"
             else ["json"],
             "version": "exact x.y.z required",
             "supported_versions": list(SUPPORTED_OPENCODE_VERSIONS)
             if item.name == "opencode"
             else None,
             "minimum_version": "0.74.0" if item.name == "pi" else None,
-            "nested_model_ids": item.name in {"opencode", "pi"},
+            "stable_version": STABLE_VERSIONS[item.name],
+            "runtime_snapshot_guard": "native-startup (strict-startup optional)",
+            "version_evidence": {
+                "accepted_baseline": STABLE_VERSIONS[item.name],
+                "metadata_verified": STABLE_VERSIONS[item.name],
+                "native_consumer_tested": [STABLE_VERSIONS[item.name]],
+                "model_live_verified": ["1.18.29"] if item.name == "opencode" else [],
+                "historical_records": "Old bytes retained; no new live proof implied",
+            },
+            "discovery": ["native", "isolated"] if item.name != "codex" else ["native"],
+            "resources": {
+                "references": "resource:DESTINATION",
+                "max_files": 128,
+                "max_file_bytes": 128 * 1024,
+                "max_total_bytes": 512 * 1024,
+            },
+            "session": {
+                "resume_trajectory": True,
+                "load_trajectory": item.name in {"codex", "claude-code", "pi"},
+            },
+            "nested_model_ids": item.name in {"opencode", "pi", "codex"},
             "ancillary_models": ["primary", "native"],
             "limitations": "Known native routing only; no universal billing cap",
         }
@@ -262,7 +433,9 @@ def _native_class(name: str) -> Any:
     return AgentFactory.get_agent_class(AgentName(name))
 
 
-def normalized_options(spec: HarnessConfig) -> dict[str, Any]:
+def normalized_options(
+    spec: HarnessConfig, *, historical: bool = False
+) -> dict[str, Any]:
     adapter = get_harness(spec.name)
     options = dict(spec.options)
     descriptors = {
@@ -303,11 +476,18 @@ def normalized_options(spec: HarnessConfig) -> dict[str, Any]:
         key = cli[flag]
         if key in options:
             raise ValueError("duplicate/conflicting harness option and argument")
+        if key in _BOOL_OPTIONS:
+            if equal and value not in {"true", "false"}:
+                raise ValueError("boolean harness argument requires true or false")
+            options[key] = value != "false" if equal else True
+            continue
         if not equal:
             value = next(args, "")
-        if not value or (not equal and value.startswith("--")):
+        if (not value and key not in _EMPTY_OPTIONS) or (
+            not equal and value.startswith("--")
+        ):
             raise ValueError("harness argument requires a value")
-        if key in {"max_turns", "max_thinking_tokens"}:
+        if key in _INT_OPTIONS:
             if not value.isdecimal():
                 raise ValueError("harness argument requires a nonnegative integer")
             options[key] = int(value)
@@ -318,49 +498,68 @@ def normalized_options(spec: HarnessConfig) -> dict[str, Any]:
     for key, value in options.items():
         if value is None:
             continue
-        if key in {"max_turns", "max_thinking_tokens"}:
+        if key in _BOOL_OPTIONS:
+            if type(value) is not bool:
+                raise ValueError("harness option requires a boolean")
+            continue
+        if key in _INT_OPTIONS:
             if (
                 type(value) is not int
                 or value < 0
-                or (key == "max_turns" and value == 0)
+                or (key != "max_thinking_tokens" and value == 0)
             ):
                 raise ValueError("harness limit must be a positive integer")
         elif (
             not isinstance(value, str)
-            or not value.strip()
+            or (not value.strip() and key not in _EMPTY_OPTIONS)
             or len(value) > 8192
             or "\x00" in value
         ):
             raise ValueError("harness option requires bounded nonempty text")
         descriptor = descriptors.get(key)
+        choices = descriptor.choices if descriptor is not None else None
+        if spec.name == "codex" and key == "reasoning_effort":
+            # Model/route discovery owns supported efforts. This is only safe
+            # native TOML string syntax, not a universal model capability enum.
+            if spec.version != STABLE_VERSIONS["codex"] and not re.fullmatch(
+                r"[a-z][a-z0-9_-]{0,63}", str(value)
+            ):
+                raise ValueError("invalid native reasoning effort")
+            choices = None
         if (
-            spec.name == "codex"
+            spec.name == "claude-code"
             and key == "reasoning_effort"
-            and value
-            not in {
-                "none",
-                "minimal",
-                "low",
-                "medium",
-                "high",
-                "xhigh",
-            }
+            and not (historical and spec.version != STABLE_VERSIONS["claude-code"])
         ):
-            raise ValueError("unsupported Codex reasoning_effort")
-        if (
-            descriptor is not None
-            and descriptor.choices
-            and value not in descriptor.choices
-        ):
-            raise ValueError(
-                f"unsupported {key}; choices: {', '.join(descriptor.choices)}"
+            choices = (
+                ["low", "medium", "high", "xhigh", "max"]
+                if spec.version == "2.1.267"
+                else ["low", "medium", "high", "max"]
             )
+        if (
+            spec.name == "claude-code"
+            and key == "permission_mode"
+            and spec.version == "2.1.267"
+        ):
+            choices = [
+                "acceptEdits",
+                "auto",
+                "bypassPermissions",
+                "manual",
+                "dontAsk",
+                "plan",
+            ]
+        if spec.name == "pi" and key == "thinking" and spec.version == "0.85.1":
+            choices = ["off", "minimal", "low", "medium", "high", "xhigh", "max"]
+        if choices and value not in choices:
+            raise ValueError(f"unsupported {key}; choices: {', '.join(choices)}")
         if key == "max_budget_usd" and not re.fullmatch(
             r"(?:0|[1-9][0-9]*)(?:\.[0-9]+)?", str(value)
         ):
             raise ValueError("max_budget_usd must be a nonnegative decimal string")
         if key == "fallback_model" and (
-            not isinstance(value, str) or not _MODEL.fullmatch(value)
+            not isinstance(value, str)
+            or not _valid_model_selector(spec.name, spec.version, value)
         ):
             raise ValueError("invalid fallback model identifier")
         if (
@@ -375,7 +574,23 @@ def normalized_options(spec: HarnessConfig) -> dict[str, Any]:
             raise ValueError(
                 "fallback model must use the primary provider without nested IDs"
             )
-    if spec.name == "opencode":
+        if key == "autocompact" and not re.fullmatch(
+            r"auto|[1-9][0-9]*(?:[kKmM])?", str(value)
+        ):
+            raise ValueError("autocompact requires auto or a native token window")
+        if key == "autocompact" and value != "auto":
+            text = str(value).lower()
+            count = int(text.rstrip("km")) * (
+                1000 if text.endswith("k") else 1000000 if text.endswith("m") else 1
+            )
+            if not 100000 <= count <= 1000000:
+                raise ValueError("Claude autocompact window must be 100k-1M tokens")
+        if key == "setting_sources" and any(
+            part not in {"", "user", "project", "local"}
+            for part in str(value).split(",")
+        ):
+            raise ValueError("unsupported Claude setting source")
+    if spec.name == "opencode" and spec.ancillary_models == "primary":
         if options.get("title", "tetrabench") is None:
             raise ValueError("controlled OpenCode requires a fixed nonempty title")
         options.setdefault("title", "tetrabench")
@@ -404,7 +619,10 @@ def parse_native(config: NativeConfig | SealedNativeConfig | None) -> dict[str, 
         if config.format == "toml":
             value = tomllib.loads(config.text)
         else:
-            value = json.loads(
+            from jsonc import loads as loads_jsonc
+
+            loader = loads_jsonc if config.format == "jsonc" else json.loads
+            value = loader(
                 config.text,
                 object_pairs_hook=_no_duplicates,
                 parse_constant=lambda _: (_ for _ in ()).throw(ValueError()),
@@ -420,7 +638,13 @@ def parse_native(config: NativeConfig | SealedNativeConfig | None) -> dict[str, 
 
 
 def _check_native_secrets(
-    value: Any, env: dict[str, str], name: str, depth: int = 0
+    value: Any,
+    env: dict[str, str],
+    name: str,
+    depth: int = 0,
+    *,
+    version: str | None = None,
+    mcp: bool = False,
 ) -> None:
     if depth > 32:
         raise ValueError("native_config nesting exceeds 32")
@@ -459,7 +683,11 @@ def _check_native_secrets(
                         for variable in groups
                         if variable
                     )
-                    if name in {"codex", "claude-code"} and credential_header:
+                    if (
+                        name in {"codex", "claude-code"}
+                        and credential_header
+                        and not (name == "claude-code" and mcp)
+                    ):
                         raise ValueError(
                             "Codex http_headers are literal; "
                             "use env_http_headers for credentials"
@@ -467,7 +695,12 @@ def _check_native_secrets(
                             else "Claude settings headers cannot interpolate; "
                             "use harness.env authentication"
                         )
-                    if name == "pi" and credential_header and references:
+                    if (
+                        name == "pi"
+                        and version != STABLE_VERSIONS["pi"]
+                        and credential_header
+                        and references
+                    ):
                         raise ValueError(
                             "Pi headers require bare environment names for credentials"
                         )
@@ -480,13 +713,24 @@ def _check_native_secrets(
                             "OpenCode header references use {env:VARIABLE}"
                         )
             if key.lower() in {"env", "auth", "auth.json"}:
+                if (
+                    key == "env"
+                    and mcp
+                    and isinstance(child, dict)
+                    and all(
+                        isinstance(item, str)
+                        and item in {f"${{{variable}}}" for variable in env}
+                        for item in child.values()
+                    )
+                ):
+                    continue
                 raise ValueError(
                     "native auth/env overlays unsupported; use harness.env references"
                 )
             if _SENSITIVE.search(key) and child is not None:
                 forms = (
                     list(env)
-                    if name == "pi"
+                    if name == "pi" and version != STABLE_VERSIONS["pi"]
                     else [
                         f"{{env:{key}}}" if name == "opencode" else f"${{{key}}}"
                         for key in env
@@ -494,17 +738,22 @@ def _check_native_secrets(
                 )
                 if name == "opencode" and key.lower() == "authorization":
                     forms += [f"Bearer {{env:{variable}}}" for variable in env]
+                if key.lower() == "authorization" and (
+                    (name == "claude-code" and mcp)
+                    or (name == "pi" and version == STABLE_VERSIONS["pi"])
+                ):
+                    forms += [f"Bearer ${{{variable}}}" for variable in env]
                 if child not in forms:
                     raise ValueError(
                         "native credentials must reference harness.env variables"
                     )
-            _check_native_secrets(child, env, name, depth + 1)
+            _check_native_secrets(child, env, name, depth + 1, version=version, mcp=mcp)
     elif isinstance(value, list):
         for child in value:
-            _check_native_secrets(child, env, name, depth + 1)
+            _check_native_secrets(child, env, name, depth + 1, version=version, mcp=mcp)
     elif isinstance(value, str):
-        if "{file:" in value or value.startswith("~/"):
-            raise ValueError("native_config cannot refer to unresolved host files")
+        # File references are sealed and rewritten before constructing a resolved
+        # harness. They are never interpolated as credentials.
         # Reject URL credentials/query strings without echoing the supplied value.
         if "://" in value:
             from urllib.parse import urlsplit
@@ -516,35 +765,63 @@ def _check_native_secrets(
                 )
 
 
-def validate_harness(spec: HarnessConfig) -> None:
+def validate_harness(
+    spec: HarnessConfig, *, historical: bool = False, _check_layers: bool = True
+) -> None:
+    from tetrabench.auth_config import validate_auth_spec
+
+    validate_auth_spec(
+        spec.name, spec.auth, env=spec.env, version=spec.version, model=spec.model
+    )
     adapter = get_harness(spec.name)
     if spec.name == "opencode" and spec.version not in SUPPORTED_OPENCODE_VERSIONS:
         raise ValueError(
-            "supported controlled OpenCode version: 1.18.29 (native --auto); "
+            "supported controlled OpenCode versions: 1.18.29, 1.18.30 (native --auto); "
             "other versions require adapter verification"
         )
-    if not _MODEL.fullmatch(spec.model) or "/" not in spec.model:
+    if (
+        not _valid_model_selector(spec.name, spec.version, spec.model)
+        or "/" not in spec.model
+    ):
         raise ValueError(
             "harness.model requires a shell-safe provider/model identifier"
         )
     if any(not part for part in spec.model.split("/")):
         raise ValueError("harness.model contains an empty component")
-    if spec.name in {"codex", "claude-code"} and spec.model.count("/") > 1:
+    if (
+        spec.name == "claude-code"
+        or (spec.name == "codex" and spec.version != STABLE_VERSIONS["codex"])
+    ) and spec.model.count("/") > 1:
         raise ValueError(
             "this Harbor adapter truncates nested model IDs; use provider/model"
         )
     if spec.name == "pi" and tuple(map(int, spec.version.split("."))) < (0, 74, 0):
         raise ValueError("controlled Pi requires Earendil pi-coding-agent >=0.74.0")
     native = parse_native(spec.native_config)
-    native_references = _native_environment_references(spec.name, native)
+    native_references = _native_environment_references(spec.name, native, spec.version)
+    from tetrabench.harness_config import ResourceSource, SealedResource
+
+    for resource in spec.resources:
+        if isinstance(resource, SealedResource):
+            native_references.update(
+                re.findall(r"\$\{([A-Z][A-Z0-9_]*)\}", resource.text)
+            )
+            native_references.update(
+                re.findall(r"\{env:([A-Z][A-Z0-9_]*)\}", resource.text)
+            )
     pending_path = (
         spec.native_config is not None and spec.native_config.path is not None
-    )
+    ) or any(isinstance(item, ResourceSource) for item in spec.resources)
     for key, reference in spec.env.items():
         match = _REFERENCE.fullmatch(reference)
         if not _VARIABLE.fullmatch(key) or match is None:
             raise ValueError("harness.env values must be ${VARIABLE} references")
-        conventional = key in supported_environment(spec.name)
+        conventional = key in supported_environment(spec.name) or (
+            historical
+            and spec.name == "pi"
+            and spec.version != STABLE_VERSIONS["pi"]
+            and key == "ANTHROPIC_OAUTH_TOKEN"
+        )
         if (
             (
                 not conventional
@@ -567,15 +844,104 @@ def validate_harness(spec: HarnessConfig) -> None:
         )
     ):
         raise ValueError("choose API credentials or Claude OAuth, not both")
-    options = normalized_options(spec)
+    options = normalized_options(spec, historical=historical)
+    old_options = {
+        "opencode": {"variant", "title"},
+        "codex": {"reasoning_effort", "reasoning_summary", "web_search"},
+        "claude-code": {
+            "max_turns",
+            "reasoning_effort",
+            "max_budget_usd",
+            "fallback_model",
+            "append_system_prompt",
+            "allowed_tools",
+            "disallowed_tools",
+            "permission_mode",
+            "max_thinking_tokens",
+        },
+        "pi": {"thinking", "model_api"},
+    }
+    if spec.version != STABLE_VERSIONS[spec.name] and (
+        set(options) - old_options[spec.name]
+        or spec.discovery
+        or spec.session
+        or spec.resources
+    ):
+        raise ValueError("new native controls require the current verified stable pin")
+    if spec.name == "codex" and spec.discovery == "isolated":
+        raise ValueError(
+            "Codex isolated discovery is not advertised; use native config"
+        )
+    if spec.discovery == "isolated" and "setting_sources" in options:
+        raise ValueError("setting_sources conflicts with isolated discovery")
+    if spec.discovery == "isolated" and any(
+        options.get(key) is False
+        for key in (
+            "no_extensions",
+            "no_skills",
+            "no_prompt_templates",
+            "no_themes",
+            "no_context_files",
+            "strict_mcp_config",
+        )
+    ):
+        raise ValueError("native discovery option conflicts with isolated discovery")
+    if options.get("autocompact") and options.get("disable_auto_compact"):
+        raise ValueError("autocompact window conflicts with disabled auto compaction")
+    if (
+        options.get("system_prompt") is not None
+        and options.get("system_prompt_file") is not None
+    ):
+        raise ValueError("choose one system prompt source")
+    if spec.session:
+        if spec.session.load_trajectory and spec.name not in {
+            "codex",
+            "claude-code",
+            "pi",
+        }:
+            raise ValueError(
+                "Harbor load_trajectory is supported for Codex, Claude Code and Pi"
+            )
+        if (
+            spec.session.resume_trajectory
+            and (options.get("no_session") or options.get("no_session_persistence"))
+        ) or (
+            spec.name == "pi"
+            and spec.session.load_trajectory
+            and options.get("no_session")
+        ):
+            raise ValueError("session resume requires native persistence")
+        if (
+            spec.name == "pi"
+            and spec.session.load_trajectory
+            and not spec.session.load_trajectory.endswith(".jsonl")
+        ):
+            raise ValueError("Pi imports native JSONL sessions, not ATIF")
+    if options.get("session_id") is not None:
+        if spec.session and (
+            spec.session.resume_trajectory or spec.session.load_trajectory
+        ):
+            raise ValueError("session_id conflicts with Harbor trajectory continuation")
+        import uuid
+
+        try:
+            uuid.UUID(str(options["session_id"]))
+        except ValueError:
+            raise ValueError("native session_id must be a UUID") from None
+    if options.get("fork_session") and not (
+        spec.session
+        and (spec.session.resume_trajectory or spec.session.load_trajectory)
+    ):
+        raise ValueError("fork_session requires a resumed or imported session")
     config = spec.native_config
     if (
         config
         and config.format != adapter.native_format
         and not (spec.name == "codex" and config.format == "json")
+        and not (spec.name == "opencode" and config.format == "jsonc")
     ):
         raise ValueError("native_config format is unsupported by this harness")
-    _check_native_secrets(native, spec.env, spec.name)
+    _check_native_secrets(native, spec.env, spec.name, version=spec.version)
     if spec.name == "codex":
         providers = native.get("model_providers", {})
         if not isinstance(providers, dict):
@@ -675,80 +1041,391 @@ def validate_harness(spec: HarnessConfig) -> None:
                         "use ancillary_models='native' for role files"
                     )
 
+    if _check_layers:
+        validate_explicit_auth_configuration(spec)
+
+
+@dataclass(frozen=True)
+class NativeConfigurationLayer:
+    source: str
+    config: dict[str, Any]
+
+
+@dataclass(frozen=True)
+class NativeConfigurationLayers:
+    """Sealed files in native load order, not observed native resolution."""
+
+    layers: tuple[NativeConfigurationLayer, ...]
+    effective_config: dict[str, Any]
+    config_directory: str | None
+    resources: tuple[SealedResource, ...]
+    executable_resources: tuple[str, ...]
+
+    @property
+    def main_config(self) -> dict[str, Any]:
+        return self.layers[0].config
+
+
+def _merge_native_layer(left: dict[str, Any], right: dict[str, Any]) -> dict[str, Any]:
+    from copy import deepcopy
+
+    result = deepcopy(left)
+    for key, value in right.items():
+        if isinstance(value, dict) and isinstance(result.get(key), dict):
+            result[key] = _merge_native_layer(result[key], value)
+        else:
+            result[key] = deepcopy(value)
+    if isinstance(left.get("instructions"), list) and isinstance(
+        right.get("instructions"), list
+    ):
+        if any(
+            not isinstance(item, str)
+            for item in left["instructions"] + right["instructions"]
+        ):
+            raise ValueError("native instructions must be path strings")
+        result["instructions"] = list(
+            dict.fromkeys(left["instructions"] + right["instructions"])
+        )
+    return result
+
+
+def native_configuration_layers(
+    harness: HarnessConfig | ResolvedHarness,
+    *,
+    base_config: dict[str, Any] | None = None,
+) -> NativeConfigurationLayers:
+    """Shared description for execution/inspection, in native load order.
+
+    base_config supplies Harbor's generated main config when available. Resources
+    retain their bytes; native consumers still perform the actual merge.
+    """
+    from tetrabench.harness_config import SealedResource
+    from tetrabench.resources import AGENT_RESOURCE_ROOT
+
+    main = parse_native(harness.native_config) if base_config is None else base_config
+    if harness.name == "opencode" and base_config is None:
+        provider, model = harness.model.split("/", 1)
+        main = _merge_native_layer(
+            {"provider": {provider: {"models": {model: {}}}}}, main
+        )
+        if harness.ancillary_models == "primary":
+            main["small_model"] = harness.model
+    layers = [NativeConfigurationLayer("native_config", main)]
+    directory = None
+    resources = {
+        item.destination: item
+        for item in harness.resources
+        if isinstance(item, SealedResource)
+    }
+    if harness.name == "opencode" and any(
+        name.startswith("opencode/") for name in resources
+    ):
+        directory = AGENT_RESOURCE_ROOT + "/opencode"
+        for name in ("opencode/opencode.json", "opencode/opencode.jsonc"):
+            if name in resources:
+                item = resources[name]
+                layer = parse_native(
+                    NativeConfig(
+                        format="jsonc" if name.endswith(".jsonc") else "json",
+                        text=item.text,
+                    )
+                )
+                layers.append(NativeConfigurationLayer(name, layer))
+        seen: set[tuple[str, str]] = set()
+        for group in (("agent", "agents"), ("mode", "modes")):
+            for name, item in sorted(resources.items()):
+                parts = name.split("/")
+                if (
+                    len(parts) < 3
+                    or parts[0] != "opencode"
+                    or parts[1] not in group
+                    or not name.endswith(".md")
+                ):
+                    continue
+                if group[0] == "mode" and len(parts) != 3:
+                    continue
+                import yaml
+
+                if not item.text.startswith("---\n"):
+                    raise ValueError("native agent resources require YAML frontmatter")
+                frontmatter, separator, body = item.text[4:].partition("\n---")
+                value = yaml.safe_load(frontmatter)
+                if not separator or not isinstance(value, dict):
+                    raise ValueError("invalid native agent resource frontmatter")
+                role = value.get("name", "/".join(parts[2:])[:-3])
+                if not isinstance(role, str) or (group[0], role) in seen:
+                    raise ValueError("ambiguous native resource agent definition")
+                seen.add((group[0], role))
+                value = dict(value, name=role, prompt=body.strip())
+                if group[0] == "mode":
+                    value["mode"] = "primary"
+                layers.append(NativeConfigurationLayer(name, {"agent": {role: value}}))
+    effective: dict[str, Any] = {}
+    for layer in layers:
+        effective = _merge_native_layer(effective, layer.config)
+    if harness.name == "opencode" and isinstance(effective.get("mode"), dict):
+        for role, value in effective["mode"].items():
+            if not isinstance(value, dict):
+                raise ValueError("native mode entries must be objects")
+            effective = _merge_native_layer(
+                effective, {"agent": {role: dict(value, mode="primary")}}
+            )
+    executable = []
+    for name, resource in resources.items():
+        if name.endswith((".js", ".mjs", ".ts", ".py", ".sh")):
+            executable.append(name)
+        elif Path(name).name == "package.json":
+            package = parse_native(NativeConfig(text=resource.text))
+            if package.get("scripts"):
+                executable.append(name)
+    return NativeConfigurationLayers(
+        tuple(layers),
+        effective,
+        directory,
+        tuple(resources.values()),
+        tuple(executable),
+    )
+
+
+def validate_explicit_auth_configuration(
+    harness: HarnessConfig | ResolvedHarness,
+) -> None:
+    """Validate every sealed native layer offline, before credential handoff."""
+    from tetrabench.auth_config import validate_native_auth_config
+    from tetrabench.harness_config import ResourceSource
+
+    description = native_configuration_layers(harness)
+    options = dict(harness.options)
+
+    def auth_layer(config: dict[str, Any]) -> None:
+        validate_native_auth_config(config)
+        if harness.name == "opencode":
+            _validate_opencode_auth_transport(config)
+        stack = [config]
+        while stack:
+            value = stack.pop()
+            if isinstance(value, dict):
+                for key, child in value.items():
+                    if (
+                        key == "model_provider"
+                        and child != harness.model.split("/", 1)[0]
+                    ):
+                        raise ValueError(
+                            "native provider layer conflicts with explicit auth"
+                        )
+                    stack.append(child)
+            elif isinstance(value, list):
+                stack.extend(value)
+
+    if harness.auth is not None:
+        for resource in harness.resources:
+            if isinstance(resource, ResourceSource):
+                continue  # Authoring only; execution requires ResolvedHarness.
+            if resource.destination.endswith((".json", ".jsonc", ".toml")):
+                if harness.session and resource.destination == (
+                    harness.session.load_trajectory or ""
+                ).removeprefix("resource:"):
+                    continue
+                config = parse_native(
+                    NativeConfig.model_validate(
+                        {
+                            "format": Path(resource.destination).suffix[1:],
+                            "text": resource.text,
+                        }
+                    )
+                )
+                auth_layer(config)
+    for layer in description.layers:
+        if harness.auth is not None:
+            auth_layer(layer.config)
+        if layer.source != "native_config":
+            candidate = HarnessConfig.model_construct(
+                name=harness.name,
+                version=harness.version,
+                model=harness.model,
+                options=options,
+                args=getattr(harness, "args", []),
+                env=harness.env,
+                native_config=NativeConfig(text=json.dumps(layer.config)),
+                ancillary_models=harness.ancillary_models,
+                resources=list(harness.resources),
+                discovery=harness.discovery,
+                session=harness.session,
+                auth=harness.auth,
+            )
+            validate_harness(candidate, _check_layers=False)
+    if harness.name == "opencode":
+        variant = options.get("variant")
+        provider, model = harness.model.split("/", 1)
+        providers = description.effective_config.get("provider", {})
+        definition = providers
+        for key in (provider, "models", model):
+            definition = definition.get(key, {}) if isinstance(definition, dict) else {}
+        variants = (
+            definition.get("variants", {}) if isinstance(definition, dict) else {}
+        )
+        choice = (
+            variants.get(variant)
+            if isinstance(variants, dict) and isinstance(variant, str)
+            else None
+        )
+        if isinstance(choice, dict) and choice.get("disabled") is True:
+            raise ValueError(
+                "selected native variant is disabled by a sealed config layer"
+            )
+
+
+def _validate_opencode_auth_transport(config: dict[str, Any]) -> None:
+    """ConfigProviderV1.Info/Model transport selectors at OpenCode 1.18.30.
+
+    provider.api/npm and models.*.provider.api/npm become model.api.url/npm,
+    independently of options.baseURL. Native authenticated routes must retain
+    their built-in transport, including the OAuth fetch wrapper's path handling.
+    """
+    providers = config.get("provider", {})
+    if not isinstance(providers, dict):
+        raise ValueError("native providers must be objects")
+    for provider in providers.values():
+        if not isinstance(provider, dict):
+            raise ValueError("native provider configuration must be an object")
+        if {"api", "npm"} & provider.keys():
+            raise ValueError("explicit auth refuses OpenCode endpoint/SDK overrides")
+        models = provider.get("models", {})
+        if not isinstance(models, dict):
+            raise ValueError("native provider models must be objects")
+        for model in models.values():
+            if not isinstance(model, dict):
+                raise ValueError("native model configuration must be an object")
+            transport = model.get("provider", {})
+            if not isinstance(transport, dict):
+                raise ValueError("native model provider must be an object")
+            if {"api", "npm"} & transport.keys():
+                raise ValueError(
+                    "explicit auth refuses OpenCode model endpoint/SDK overrides"
+                )
+
 
 def read_config_text(path: Path) -> str:
     """Seal one bounded regular UTF-8 file; never return an unresolved path."""
+    from tetrabench.context import seal_context
+    from tetrabench.models import ContextConfig, ContextFileSpec
+
     try:
-        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
-        try:
-            before = os.fstat(fd)
-            if (
-                not stat.S_ISREG(before.st_mode)
-                or before.st_size > MAX_NATIVE_CONFIG_BYTES
-            ):
-                raise ValueError("native configuration must be a bounded regular file")
-            with os.fdopen(fd, "rb", closefd=False) as stream:
-                data = stream.read(MAX_NATIVE_CONFIG_BYTES + 1)
-            after = os.fstat(fd)
-            fields = ("st_dev", "st_ino", "st_size", "st_mtime_ns", "st_ctime_ns")
-            if (
-                any(getattr(before, key) != getattr(after, key) for key in fields)
-                or len(data) > MAX_NATIVE_CONFIG_BYTES
-            ):
-                raise ValueError("native configuration changed while sealing")
-            return data.decode("utf-8")
-        finally:
-            os.close(fd)
+        sealed = seal_context(
+            path.parent,
+            ContextConfig(
+                files=[ContextFileSpec(source=path.name, destination=path.name)],
+                max_files=1,
+                max_file_bytes=MAX_NATIVE_CONFIG_BYTES,
+                max_total_bytes=MAX_NATIVE_CONFIG_BYTES,
+            ),
+        )
+        return sealed.files[0].content.decode("utf-8")
     except (OSError, UnicodeError):
         raise ValueError("cannot seal native configuration file") from None
 
 
 def seal_harness(spec: HarnessConfig, base: Path) -> ResolvedHarness:
+    from tetrabench.resources import prepare_resources
+
     native = spec.native_config
+    native_base = base
     sealed = None
     if native:
         text = native.text
         if native.path is not None:
             path = Path(native.path).expanduser()
-            text = read_config_text(path if path.is_absolute() else base / path)
+            path = path if path.is_absolute() else base / path
+            native_base = path.parent
+            text = read_config_text(path)
         if text is None:
             raise ValueError("native configuration must resolve to text")
         sealed = SealedNativeConfig(
             format=native.format, text=text, sha256=sha256_hex(text.encode())
         )
+    resources, native_value, options = prepare_resources(
+        spec,
+        parse_native(sealed),
+        normalized_options(spec),
+        base,
+        native_base=native_base,
+    )
+    if resources and native_value != parse_native(sealed):
+        text = json.dumps(native_value, ensure_ascii=False, allow_nan=False)
+        sealed = SealedNativeConfig(
+            format="json", text=text, sha256=sha256_hex(text.encode())
+        )
     resolved = ResolvedHarness(
         name=spec.name,
         version=spec.version,
         model=spec.model,
-        options=normalized_options(spec),
+        options=options,
         env=spec.env,
         native_config=sealed,
         ancillary_models=spec.ancillary_models,
+        resources=resources,
+        discovery=spec.discovery,
+        session=spec.session,
+        auth=spec.auth,
+        capability_snapshot=spec.capability_snapshot,
     )
     # Prove the real native constructor accepts the sealed translation before
     # reserving output or contacting a provider. Do not resolve credential refs.
+    import tempfile
+
     from harbor.agents.factory import AgentFactory
 
-    config = compile_agent_config(resolved)
-    AgentFactory.create_agent_from_import_path(
-        config.import_path,
-        logs_dir=Path("/tetrabench-preflight-unused"),
-        model_name=resolved.model,
-        extra_env={},
-        **config.kwargs,
-    )
+    with tempfile.TemporaryDirectory(prefix="tetrabench-harness-") as temporary:
+        config = compile_agent_config(
+            resolved, resource_directory=Path(temporary) / "resources"
+        )
+        AgentFactory.create_agent_from_import_path(
+            config.import_path,
+            logs_dir=Path("/tetrabench-preflight-unused"),
+            model_name=resolved.model,
+            extra_env={},
+            load_trajectory=config.load_trajectory,
+            **config.kwargs,
+        )
     return resolved
 
 
-def compile_agent_config(spec: ResolvedHarness) -> Any:
+def compile_agent_config(
+    spec: ResolvedHarness, *, resource_directory: Path | None = None
+) -> Any:
     from harbor.models.trial.config import AgentConfig
 
     adapter = get_harness(spec.name)
+    session_options: dict[str, Any] = {}
+    if spec.resources and resource_directory is not None:
+        from tetrabench.resources import materialize_resources
+
+        materialize_resources(spec.resources, resource_directory)
+        skill_directories = sorted(
+            {
+                item.destination.split("/")[1]
+                for item in spec.resources
+                if item.destination.startswith("skills/")
+                and item.destination.count("/") >= 2
+            }
+        )
+        if skill_directories:
+            session_options["skills"] = [
+                str(resource_directory / "skills" / name) for name in skill_directories
+            ]
+    if spec.session:
+        session_options["resume_trajectory"] = spec.session.resume_trajectory
+        if spec.session.load_trajectory and resource_directory is not None:
+            session_options["load_trajectory"] = str(
+                resource_directory
+                / spec.session.load_trajectory.removeprefix("resource:")
+            )
     return AgentConfig(
         import_path=adapter.import_path,
         model_name=spec.model,
         env=dict(spec.env),
         kwargs={"version": spec.version, "harness": spec.model_dump(mode="json")},
+        **session_options,
     )
 
 
@@ -757,6 +1434,15 @@ def validate_credentials(spec: ResolvedHarness | None) -> None:
     if spec is None:
         return
     validate_credential_configuration(spec)
+    if spec.auth:
+        from tetrabench.auth_config import EnvAuthReference
+
+        if isinstance(spec.auth.reference, EnvAuthReference) and not os.environ.get(
+            spec.auth.reference.name
+        ):
+            from tetrabench.diagnostics import missing_credentials
+
+            raise missing_credentials([spec.auth.reference.name])
     missing = [
         key for key, value in spec.env.items() if not os.environ.get(value[2:-1])
     ]
@@ -769,6 +1455,8 @@ def validate_credentials(spec: ResolvedHarness | None) -> None:
 def validate_credential_configuration(spec: ResolvedHarness | None) -> None:
     """Require deliberate auth selection without consulting a remote Secret."""
     if spec is None:
+        return
+    if spec.auth is not None:
         return
 
     def has_endpoint(value: Any) -> bool:

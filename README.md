@@ -42,6 +42,10 @@ The installed CLI works outside its source checkout. For a development build,
 install a local wheel instead (see [Development](#development)).
 These docs describe this checkout; features absent from your installed release
 require that local build, not an unpublished version from PyPI.
+The 0.3.0 native-auth and discovery interfaces below are under integration.
+Parser and native-consumer checks do not prove authenticated evals, remote
+refresh/write-back, or multiple-compaction continuation. Those live paths remain
+**unproven**; the earlier Oracle and OpenCode release proofs are separate.
 
 `init` creates a standalone project with the neutral `example` category:
 
@@ -106,6 +110,9 @@ stricter rules used by tetrabench's own benchmark catalog.
 | `sections` | List configured categories and task counts | None |
 | `category-create` | Add an empty category using an existing README | Atomic catalog update |
 | `agents [NAME]` | Show controlled harnesses, options, and credential variables | None |
+| `auth login/status/logout/reseed` | Manage an explicitly selected eval login | Native login or private auth-state reads/writes |
+| `models inspect` | Collect installed native model/reasoning metadata | Offline by default; optional public metadata reads |
+| `models adopt` | Preview a reasoning choice and its snapshot | Harness file update only with `--write` |
 | `task new` | Create an unlisted Harbor task | New task directory |
 | `task validate` | Seal and validate one fixture | None |
 | `task add` | Add a validated task to the project catalog | Atomic catalog update |
@@ -156,23 +163,24 @@ The negative forms `--no-wait` and `--no-detach` are not supported.
 
 User-specific overrides live at `~/.config/tetrabench/config.toml` on Linux.
 They can select models and storage locations without committing personal
-settings. Keep credentials in environment variables or provider credential
-stores, not TOML. See [model API configuration](docs/cli-reference.md#model-api-configuration)
+settings. Keep secret values in your secret manager or private native credential
+store; TOML contains references only. See [model API configuration](docs/cli-reference.md#model-api-configuration)
 for legacy profiles. For a controlled run, save this portable file as
 `opencode-run.toml`:
 
 ```toml
 [harness]
 name = "opencode"
-version = "1.18.29"
+version = "1.18.30"
 model = "openai/gpt-5"
 ancillary_models = "primary"
 
 [harness.options]
 variant = "high"
 
-[harness.env]
-OPENAI_API_KEY = "${MODEL_API_KEY}"
+[harness.auth]
+mode = "api_key"
+reference = { kind = "env", name = "MODEL_API_KEY" }
 
 [harness.native_config]
 format = "json"
@@ -192,15 +200,44 @@ verifier offline. The example validates configuration, not model availability.
 
 `--harness` replaces the run's harness without editing task bytes. Project
 `[harness]` and user `[profiles.NAME.harness]` tables accept the same schema.
-Supported harnesses are OpenCode, Codex, Claude Code, and native Earendil Pi
-(`@earendil-works/pi-coding-agent`, version 0.74.0 or later). Controlled OpenCode
-accepts only the verified 1.18.29 pin and uses its native `--auto` flag. Check
-`agents NAME --json` for each adapter's capabilities and version restrictions.
+The current stable baseline, checked on 2026-09-10, is pinned per run:
+
+| Harness | Package | Baseline pin |
+| --- | --- | --- |
+| OpenCode | `opencode-ai` | `1.18.30` |
+| Codex | `@openai/codex` | `0.154.0` |
+| Claude Code | `@anthropic-ai/claude-code` | `2.1.267` |
+| Earendil Pi | `@earendil-works/pi-coding-agent` | `0.85.1` |
+
+Check `agents NAME --json` for options and version restrictions. New native
+controls and explicit auth require these pins; older configurations retain their
+documented compatibility limits. OpenCode uses native `--auto`; Codex retains
+Harbor's sandbox/approval override, `--dangerously-bypass-approvals-and-sandbox`.
 The exact version pin is checked against the installed agent CLI before it solves
 the task; it does not freeze all dependencies or hosted models. Tetrabench does
-not copy interactive logins or home configuration. See the
+not copy your global interactive login or home configuration. Native context
+management stays native: opaque OpenAI compaction, text summarization, and
+pruning are different mechanisms. A config snapshot is not evidence that any
+compaction occurred. See the
 [controlled harness reference](docs/cli-reference.md#controlled-harness-configuration)
-for native config files, credential references, and ancillary-model limits.
+for native config, resource bundles, session controls, and ancillary-model limits.
+
+Use separate configurations for API billing and subscription billing. Explicit
+`auth.mode` accepts `api_key`, `chatgpt_oauth` (Codex, OpenCode, Pi), or
+`claude_setup_token` (Claude Code only). The
+[auth setup steps](docs/cli-reference.md#explicit-authentication) use the existing
+`auth login` CLI with a private `auth.toml`; no custom Python setup is needed.
+Each OAuth harness needs its own eval login and isolated home. Browser approval
+belongs to the native client. Claude's long-lived setup token is user-managed,
+not a refreshable session owned by an intermediary. No Claude subscription OAuth
+is supported in another harness.
+
+For reasoning choices, install the matching native CLI on the inspection host,
+then run `tetrabench models inspect --harness ./opencode-run.toml`. Inspection is
+offline by default and automatically collects native metadata, without a manual
+capture file. Use `models adopt` to preview a supported choice before writing its
+bound snapshot. Unknown model/route support remains unknown; see
+[model inspection](docs/cli-reference.md#model-inspection-and-adoption).
 
 ## Detached Modal runs
 
@@ -350,10 +387,18 @@ uv run ruff check .
 uv run ruff format --check .
 uv run ty check
 uv run pytest --strict-markers -m "not docker"
-TETRABENCH_EXPECT_DOCKER_TESTS=11 uv run pytest --strict-markers -m docker
+TETRABENCH_EXPECT_DOCKER_TESTS=12 uv run pytest --strict-markers -m docker
 uv build
 ```
 
 CI adds Bandit, pip-audit, actionlint, Gitleaks, distribution metadata checks,
 and an installed-wheel smoke. Forced interruption/recovery has live evidence.
 Live AWS behavior and provider-initiated Modal preemption remain unproven.
+
+The developer-only `tools/install_native_consumers.py --prefix DIRECTORY`
+installs locked official consumers outside the checkout for native tests. It is
+not the end-user installation workflow. With Node 24.21.0 on `PATH`, run it via
+`uv run python`, then set `TETRABENCH_NATIVE_NODE_MODULES` to the reported
+`DIRECTORY/node_modules` when running `uv run pytest -m native`. These tests
+exercise pinned consumers without proving live authentication or remote runtime
+integration.

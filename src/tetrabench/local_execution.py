@@ -91,6 +91,12 @@ def run_prepared_local(
         )
     request = prepared.request
     validate_credentials(request.plan.harness)
+    from tetrabench.runtime_auth import (
+        make_credential_context,
+        validate_runtime_auth_request,
+    )
+
+    validate_runtime_auth_request(request)
     if (
         request.plan.controller.kind != "local"
         or request.plan.execution.kind != "docker"
@@ -124,7 +130,17 @@ def run_prepared_local(
         raise LocalOutputExistsError(
             f"output directory already exists: {output_directory}"
         )
-    runner = HarborRunner()
+    runner = (
+        HarborRunner(
+            credential_context=make_credential_context(
+                engine="docker",
+                consumer_id=f"local-{os.getpid()}-{request.run_id}",
+                run_id=request.run_id,
+            )
+        )
+        if request.plan.harness is not None and request.plan.harness.auth is not None
+        else HarborRunner()
+    )
     # Validate the immutable bytes before reserving output, then materialize the
     # same bytes in the retained run directory. Never hand Harbor source paths.
     with tempfile.TemporaryDirectory(prefix="tetrabench-run-") as temporary:

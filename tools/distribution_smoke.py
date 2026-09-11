@@ -8,6 +8,7 @@ remote smoke using its installed CLI. Its local wheel is resolved through PEP 61
 from __future__ import annotations
 
 import argparse
+import asyncio
 import hashlib
 import io
 import json
@@ -21,6 +22,8 @@ import tomllib
 import zipfile
 from email.parser import BytesParser
 from pathlib import Path
+from types import SimpleNamespace
+from typing import Any
 
 
 def run(argv: list[str], *, cwd: Path, env: dict[str, str]) -> None:
@@ -37,9 +40,133 @@ def wheel_contents(path: Path) -> dict[str, bytes]:
         return {name: archive.read(name) for name in archive.namelist()}
 
 
-def installed_smoke(work: Path, *, docker: bool, category: str | None) -> None:
+def installed_harness_smoke(work: Path, entries: list[dict]) -> list[dict]:
+    """Capture installed adapters only; no native process, account, or model run."""
+    from unittest.mock import patch
+
+    from harbor.agents.factory import AgentFactory
+    from harbor.models.agent.context import AgentContext
+
+    from tetrabench.auth_config import AuthSpec, EnvAuthReference
+    from tetrabench.harness_config import HarnessConfig, ResolvedHarness, ResourceSource
+    from tetrabench.harnesses import compile_agent_config, seal_harness
+    from tetrabench.plan import canonical_model_bytes, parse_canonical_model
+
+    class Capture:
+        default_user = None
+
+        def __init__(self, name: str, version: str):
+            self.name = name
+            self.version = version
+            self.uploads: dict[str, bytes] = {}
+
+        async def exec(self, **kwargs):
+            stdout = ""
+            if "--version" in kwargs["command"]:
+                stdout = {
+                    "codex": f"codex-cli {self.version}",
+                    "claude-code": f"{self.version} (Claude Code)",
+                }.get(self.name, self.version)
+            return SimpleNamespace(return_code=0, stdout=stdout, stderr="")
+
+        async def upload_file(self, source, destination):
+            self.uploads[str(destination)] = Path(source).read_bytes()
+
+        async def download_dir(self, *args, **kwargs):
+            pass
+
+        async def download_file(self, *args, **kwargs):
+            pass
+
+    evidence = []
+    for entry in entries:
+        name = entry["name"]
+        root = work / "harnesses" / name
+        root.mkdir(parents=True)
+        source = root / "instructions.md"
+        resource_bytes = b"Distribution smoke instruction resource.\n"
+        source.write_bytes(resource_bytes)
+        key = "ANTHROPIC_API_KEY" if name == "claude-code" else "OPENAI_API_KEY"
+        spec = HarnessConfig(
+            name=name,
+            version=entry["stable_version"],
+            model="anthropic/claude-sonnet-4-6"
+            if name == "claude-code"
+            else "openai/gpt-5",
+            resources=[
+                ResourceSource(source="instructions.md", destination="instructions.md")
+            ],
+            discovery="isolated" if name != "codex" else "native",
+            env={key: "${DISTRIBUTION_SMOKE_TOKEN}"},
+        )
+        sealed = seal_harness(spec, root)
+        payload = canonical_model_bytes(sealed)
+        require(
+            parse_canonical_model(payload, ResolvedHarness) == sealed,
+            "harness roundtrip failed",
+        )
+        if name in {"codex", "claude-code"}:
+            explicit = HarnessConfig(
+                **(
+                    spec.model_dump(exclude={"env", "auth"})
+                    | {
+                        "auth": AuthSpec(
+                            mode="api_key",
+                            reference=EnvAuthReference(name="DISTRIBUTION_SMOKE_TOKEN"),
+                        ),
+                    }
+                )
+            )
+            bound = seal_harness(explicit, root)
+            require(
+                parse_canonical_model(canonical_model_bytes(bound), ResolvedHarness)
+                == bound,
+                "explicit auth reference roundtrip failed",
+            )
+        source.unlink()
+        with patch.dict(
+            os.environ,
+            {"DISTRIBUTION_SMOKE_TOKEN": "synthetic-smoke-token"},  # nosec B105
+        ):
+            config = compile_agent_config(sealed)
+            require(
+                "synthetic-smoke-token" not in config.model_dump_json(),
+                "credential serialized",
+            )
+            agent: Any = AgentFactory.create_agent_from_config(
+                config, logs_dir=root / "logs"
+            )
+            capture = Capture(name, entry["stable_version"])
+            asyncio.run(agent.setup(capture))
+            asyncio.run(
+                agent.run("Capture only; no execution.", capture, AgentContext())
+            )
+        require(
+            resource_bytes in capture.uploads.values(),
+            "sealed resource was not uploaded",
+        )
+        provenance = (root / "logs/tetrabench-harness.json").read_text()
+        require("synthetic-smoke-token" not in provenance, "credential in provenance")
+        evidence.append(
+            {
+                "name": name,
+                "version": entry["stable_version"],
+                "resource_snapshot": "passed",
+                "adapter_capture": "passed",
+                "auth": "reference-only"
+                if name in {"codex", "claude-code"}
+                else "not-run",
+            }
+        )
+    return evidence
+
+
+def installed_smoke(
+    work: Path, *, docker: bool, category: str | None, expected_version: str
+) -> None:
     """Runs only under the wheel-installed interpreter with Python isolation."""
     from importlib.metadata import distribution
+    from importlib.resources import files
     from unittest.mock import patch
 
     import tetrabench
@@ -53,11 +180,15 @@ def installed_smoke(work: Path, *, docker: bool, category: str | None) -> None:
     from tetrabench.preflight import check_runtime
 
     package = distribution("tetrabench")
-    require(package.version == "0.2.0", "wrong release version")
+    require(package.version == expected_version, "wrong release version")
     require(Path(tetrabench.__file__).is_relative_to(work / "venv"), "checkout import")
     require(package.metadata["License-Expression"] == "MIT", "missing MIT metadata")
     require(package.metadata["Requires-Python"] == "<3.13,>=3.12", "wrong Python range")
     require(check_runtime("doctor")["status"] == "ok", "runtime preflight failed")
+    require(
+        bool(files("tetrabench").joinpath("native_reasoning.mjs").read_bytes()),
+        "missing packaged native metadata helper",
+    )
     require(
         "LICENSE" in package.metadata.get_all("License-File", []), "missing license"
     )
@@ -127,6 +258,13 @@ def installed_smoke(work: Path, *, docker: bool, category: str | None) -> None:
     plan = command("plan", category)
     require(plan["runnable"] is True, "plan is not runnable")
     require(len(plan["trials"]) == len(selected["tasks"]), "plan lost tasks")
+    entries = command("agents")["harnesses"]
+    require(
+        {entry["name"] for entry in entries}
+        == {"opencode", "codex", "claude-code", "pi"},
+        "missing controlled harnesses",
+    )
+    harness_evidence = installed_harness_smoke(work, entries)
 
     # Native Modal 1.5.4 graph construction only: no hydration, auth, or deployment.
     name = "tetrabench-release-smoke"
@@ -167,7 +305,7 @@ def installed_smoke(work: Path, *, docker: bool, category: str | None) -> None:
                 "noncanonical diagnostic",
             )
             require(
-                "--python 3.12 tetrabench==0.2.0" in str(error),
+                f"--python 3.12 tetrabench=={expected_version}" in str(error),
                 "missing install advice",
             )
         else:
@@ -188,6 +326,7 @@ def installed_smoke(work: Path, *, docker: bool, category: str | None) -> None:
         "modal_graph": "passed",
         "modal_deployment": "not-run",
         "runtime_preflight": "passed",
+        "harnesses": harness_evidence,
         "project": str(project),
         "cli": str(cli),
     }
@@ -204,11 +343,19 @@ def main() -> None:
     parser.add_argument("--docker", action="store_true")
     parser.add_argument("--category", help="also prove arbitrary-category authoring")
     parser.add_argument("--installed", action="store_true", help=argparse.SUPPRESS)
+    parser.add_argument("--expected-version", help=argparse.SUPPRESS)
     parser.add_argument("--tag", help="require release tag v<distribution version>")
     args = parser.parse_args()
     work = args.work_dir.expanduser().resolve()
     if args.installed:
-        installed_smoke(work, docker=args.docker, category=args.category)
+        if not args.expected_version:
+            parser.error("--installed requires --expected-version")
+        installed_smoke(
+            work,
+            docker=args.docker,
+            category=args.category,
+            expected_version=args.expected_version,
+        )
         return
     if args.wheel is None:
         parser.error("--wheel is required")
@@ -230,18 +377,25 @@ def main() -> None:
         lock.mkdir(mode=0o700)
         for name in ("pyproject.toml", "uv.lock"):
             (lock / name).write_bytes(archive.read(f"tetrabench/_distribution/{name}"))
+        project = tomllib.loads((lock / "pyproject.toml").read_text())
+        require(
+            project["project"]["version"] == metadata["Version"],
+            "embedded version mismatch",
+        )
     retained_wheel = work / wheel.name
     retained_wheel.write_bytes(wheel_bytes)
-    environment = dict(os.environ)
-    for name in (
-        "PYTHONPATH",
-        "PYTHONHOME",
-        "VIRTUAL_ENV",
-        "UV_PROJECT_ENVIRONMENT",
-        "TETRABENCH_CONTROLLER_WHEEL",
-    ):
-        environment.pop(name, None)
-    environment["XDG_CONFIG_HOME"] = str(work / "config")
+    # Native clients and provider SDKs must never inherit the operator's logins.
+    environment = {"PATH": os.environ["PATH"]}
+    environment.update(
+        HOME=str(work / "home"),
+        XDG_CONFIG_HOME=str(work / "config"),
+        XDG_STATE_HOME=str(work / "state"),
+        XDG_DATA_HOME=str(work / "data"),
+        XDG_CACHE_HOME=str(work / "cache"),
+        AWS_EC2_METADATA_DISABLED="true",
+        UV_NO_CONFIG="true",
+    )
+    (work / "home").mkdir(mode=0o700)
     if args.sdist:
         rebuilt = work / "rebuilt"
         run(
@@ -301,7 +455,16 @@ def main() -> None:
     run(["uv", "pip", "check", "--python", str(python)], cwd=work, env=environment)
     worker = work / "distribution_smoke.py"
     shutil.copyfile(__file__, worker)
-    command = [str(python), "-I", str(worker), "--installed", "--work-dir", str(work)]
+    command = [
+        str(python),
+        "-I",
+        str(worker),
+        "--installed",
+        "--work-dir",
+        str(work),
+        "--expected-version",
+        metadata["Version"],
+    ]
     if args.docker:
         command.append("--docker")
     if args.category:

@@ -1,12 +1,13 @@
-"""Harmless argv consumers and version-matched native configuration semantics."""
+"""Historical configuration fixtures and harmless shell argv consumers.
+
+Current installed packages are exercised in test_stable_native_consumers.py.
+"""
 
 import asyncio
 import json
-import os
 import shlex
 import subprocess
 import sys
-from pathlib import Path
 from typing import Any
 
 import pytest
@@ -178,18 +179,6 @@ def test_pi_rejects_values_its_resolver_would_treat_as_literal_or_command(
         )
 
 
-def _native_modules() -> Path | None:
-    value = os.environ.get("TETRABENCH_NATIVE_NODE_MODULES")
-    if not value:
-        return None
-    root = Path(value)
-    metadata = json.loads(
-        (root / "@earendil-works/pi-coding-agent/package.json").read_text()
-    )
-    assert metadata["version"] == "0.74.0"
-    return root
-
-
 @pytest.mark.parametrize("generated", [False, True])
 def test_pi_uploaded_credentials_resolve_with_074_consumer(
     tmp_path, monkeypatch, generated
@@ -233,24 +222,6 @@ def test_pi_uploaded_credentials_resolve_with_074_consumer(
     ]
     # Pi 0.74 resolve-config-value.js: process.env[config] || config.
     assert (instance.extra_env.get(selector) or selector) == "fixture-token"
-    modules = _native_modules()
-    if modules:
-        module = (
-            modules
-            / "@earendil-works/pi-coding-agent/dist/core/resolve-config-value.js"
-        )
-        program = (
-            f"import {{resolveConfigValue}} from {json.dumps(module.as_uri())}; "
-            'console.log(resolveConfigValue(process.argv[1]) === "fixture-token")'
-        )
-        assert (
-            subprocess.check_output(
-                ["node", "--input-type=module", "-e", program, selector],
-                env=dict(os.environ, **instance.extra_env),
-                text=True,
-            ).strip()
-            == "true"
-        )
 
 
 def test_opencode_11829_full_native_command_has_supported_permission_flag(tmp_path):
@@ -272,22 +243,6 @@ def test_opencode_11829_full_native_command_has_supported_permission_flag(tmp_pa
     assert "--dangerously-skip-permissions" not in tokens
     assert "--model=openai/other" not in tokens
     assert "--title=$(printf injected)" in tokens
-    modules = _native_modules()
-    if modules:
-        executable = modules / "opencode-linux-x64/bin/opencode"
-        assert (
-            subprocess.check_output([str(executable), "--version"], text=True).strip()
-            == "1.18.29"
-        )
-        # Help exits in the real strict parser before any model/provider execution.
-        actual = [str(executable), *tokens[1:]]
-        actual.insert(actual.index("--"), "--help")
-        result = subprocess.run(
-            actual, cwd=tmp_path, capture_output=True, text=True, timeout=20
-        )
-        assert result.returncode == 0, result.stderr
-        assert "--auto" in result.stdout + result.stderr
-        assert "Unknown argument" not in result.stderr
 
 
 @pytest.mark.parametrize("version", ["1.2.15", "1.18.28", "999.0.0"])
@@ -327,8 +282,27 @@ def test_codex_role_file_requires_native_policy_without_removing_role(tmp_path):
     native = {"agents": {"worker": {"config_file": "/workspace/worker.toml"}}}
     with pytest.raises(ValueError, match="config_file"):
         agent(tmp_path, "codex", native=native)
-    instance = agent(tmp_path, "codex", native=native, policy="native")
-    assert instance._build_effective_config()["agents"] == native["agents"]
+    with pytest.raises(ValueError):
+        agent(tmp_path, "codex", native=native, policy="native")
+    from tetrabench.resources import AGENT_RESOURCE_ROOT
+
+    (tmp_path / "worker.toml").write_text('model="model"\n')
+    spec = HarnessConfig(
+        name="codex",
+        version="0.154.0",
+        model="openai/model",
+        ancillary_models="native",
+        native_config=NativeConfig(
+            text=json.dumps({"agents": {"worker": {"config_file": "worker.toml"}}})
+        ),
+    )
+    resolved = seal_harness(spec, tmp_path)
+    instance: Any = AgentFactory.create_agent_from_config(
+        compile_agent_config(resolved), logs_dir=tmp_path
+    )
+    assert instance._build_effective_config()["agents"]["worker"][
+        "config_file"
+    ].startswith(AGENT_RESOURCE_ROOT)
 
 
 @pytest.mark.parametrize("advertised", [False, True])
@@ -346,22 +320,6 @@ def test_pi_default_zero_prices_are_not_a_known_zero_charge(advertised):
             }
         }
     }
-    modules = _native_modules()
-    if modules:
-        module = modules / "@earendil-works/pi-coding-agent/dist/core/model-registry.js"
-        program = (
-            f"import {{ModelRegistry}} from {json.dumps(module.as_uri())}; "
-            "console.log(JSON.stringify(ModelRegistry.prototype.parseModels.call("
-            "{storeModelHeaders(){}}, JSON.parse(process.argv[1]))[0].cost))"
-        )
-        assert (
-            json.loads(
-                subprocess.check_output(
-                    ["node", "--input-type=module", "-e", program, json.dumps(config)]
-                )
-            )
-            == cost
-        )
     event = {
         "type": "message_end",
         "message": {

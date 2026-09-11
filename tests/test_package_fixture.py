@@ -97,6 +97,9 @@ def test_release_metadata_license_and_dependency_lock(distributions) -> None:
         assert metadata["Version"] == project["project"]["version"]
         assert metadata["License-Expression"] == "MIT"
         assert metadata["Requires-Python"] == "<3.13,>=3.12"
+        assert "Operating System :: POSIX :: Linux" in metadata.get_all(
+            "Classifier", []
+        )
         assert metadata.get_all("License-File") == ["LICENSE"]
         license_file = next(
             name for name in names if name.endswith("/licenses/LICENSE")
@@ -125,3 +128,23 @@ def test_release_metadata_license_and_dependency_lock(distributions) -> None:
         stream = archive.extractfile(license_member)
         assert stream is not None
         assert stream.read() == (root / "LICENSE").read_bytes()
+
+
+def test_native_test_lock_is_source_only(distributions) -> None:
+    wheel, source = distributions
+    with zipfile.ZipFile(wheel) as archive:
+        assert not any("node_modules/" in name for name in archive.namelist())
+        assert not any("native_consumers/" in name for name in archive.namelist())
+        assert archive.read("tetrabench/native_reasoning.mjs")
+    with tarfile.open(source) as archive:
+        names = archive.getnames()
+        assert any(
+            name.endswith("tools/native_consumers/package-lock.json") for name in names
+        )
+        assert any(
+            name.endswith("tools/native_consumers/package.json") for name in names
+        )
+        assert any(name.endswith("tools/native_consumers/.npmrc") for name in names)
+        assert any(name.endswith("tools/install_native_consumers.py") for name in names)
+        assert any(name.endswith("tests/native_consumer_support.py") for name in names)
+        assert not any("node_modules/" in name for name in names)

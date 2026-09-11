@@ -19,13 +19,65 @@ from tetrabench.models import (
 PROJECT_CONFIG_NAME = "tetrabench.toml"
 
 
+def replace_harness_document(path: Path, before: bytes, after: str) -> None:
+    """Cooperative, checked atomic replacement after a displayed adoption diff."""
+    import fcntl
+    import os
+    import stat
+    import tempfile
+
+    with os.fdopen(
+        os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK), "rb"
+    ) as source:
+        fcntl.flock(source, fcntl.LOCK_EX)
+        expected = os.fstat(source.fileno())
+        if (
+            not stat.S_ISREG(expected.st_mode)
+            or expected.st_nlink != 1
+            or source.read(len(before) + 1) != before
+        ):
+            raise ValueError("harness changed before adoption; inspect again")
+        name = None
+        try:
+            fd, name = tempfile.mkstemp(prefix=".harness-", dir=path.parent)
+            with os.fdopen(fd, "wb") as target:
+                os.fchmod(target.fileno(), stat.S_IMODE(expected.st_mode))
+                target.write(after.encode())
+                target.flush()
+                os.fsync(target.fileno())
+            actual = path.stat(follow_symlinks=False)
+            source.seek(0)
+            fields = ("st_dev", "st_ino", "st_size", "st_mtime_ns", "st_ctime_ns")
+            if (
+                any(
+                    getattr(expected, field) != getattr(actual, field)
+                    for field in fields
+                )
+                or source.read(len(before) + 1) != before
+            ):
+                raise ValueError("harness changed during adoption; inspect again")
+            os.replace(name, path)
+            name = None
+            directory = os.open(
+                path.parent, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+            )
+            try:
+                os.fsync(directory)
+            finally:
+                os.close(directory)
+        finally:
+            if name is not None:
+                os.unlink(name)
+
+
 def load_harness_override(path: Path):
     """Load one bounded, portable model-run configuration independent of tasks."""
     from tetrabench.harness_config import HarnessConfig, NativeConfig
     from tetrabench.harnesses import read_config_text, seal_harness
 
+    path = path.expanduser().absolute()
     try:
-        value = tomllib.loads(read_config_text(path.expanduser()))
+        value = tomllib.loads(read_config_text(path))
     except tomllib.TOMLDecodeError:
         raise ValueError("invalid TOML model-run configuration") from None
     if set(value) != {"harness"}:
@@ -37,7 +89,10 @@ def load_harness_override(path: Path):
         update={
             "native_config": NativeConfig(format=native.format, text=native.text)
             if native
-            else None
+            else None,
+            "resources": resolved.resources,
+            "options": resolved.options,
+            "args": [],
         }
     )
 
@@ -46,17 +101,20 @@ def _seal_native_layer[LayerT: ProfilePatch](layer: LayerT, base: Path) -> Layer
     from tetrabench.harness_config import NativeConfig
     from tetrabench.harnesses import seal_harness
 
-    if layer.harness is None or layer.harness.native_config is None:
+    if layer.harness is None:
         return layer
     sealed = seal_harness(layer.harness, base)
-    if sealed.native_config is None:
-        raise ValueError("native configuration sealing produced no snapshot")
     harness = layer.harness.model_copy(
         update={
             "native_config": NativeConfig(
                 format=sealed.native_config.format,
                 text=sealed.native_config.text,
             )
+            if sealed.native_config
+            else None,
+            "resources": sealed.resources,
+            "options": sealed.options,
+            "args": [],
         }
     )
     return layer.model_copy(update={"harness": harness})

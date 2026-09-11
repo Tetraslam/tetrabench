@@ -119,7 +119,7 @@ def test_profile_specific_names_are_exact_and_secret_is_name_only() -> None:
     assert spec.app_name == "tetrabench"
     assert spec.function_name == "controller"
     assert spec.environment_name.startswith("tetrabench-gpu-lab-")
-    assert spec.environment_name.endswith("-v0-2-0")
+    assert spec.environment_name.endswith("-v0-3-0")
     assert spec.volume_name.startswith("tetrabench-gpu-lab-")
     assert spec.volume_name.endswith("-controller")
     assert spec.secret_name == "tetrabench-controller"
@@ -326,7 +326,7 @@ def test_real_modal_154_constructs_dynamic_serialized_function(
 def test_installed_distribution_metadata_has_exact_runtime_dependencies() -> None:
     package = metadata("tetrabench")
     requirements = package.get_all("Requires-Dist") or []
-    assert version("tetrabench") == "0.2.0"
+    assert version("tetrabench") == "0.3.0"
     assert package["Requires-Python"] == "<3.13,>=3.12"
     assert "harbor[modal]==0.22.0" in requirements
     assert "modal==1.5.4" in requirements
@@ -464,7 +464,7 @@ def test_pypi_install_resolves_exact_version_without_override(
     (next(installed.glob("*.dist-info")) / "direct_url.json").unlink()
     calls = _mock_pypi(monkeypatch, wheel)
     assert _controller_wheel() == (wheel.name, wheel.read_bytes())
-    assert calls[0][0] == "https://pypi.org/pypi/tetrabench/0.2.0/json"
+    assert calls[0][0] == "https://pypi.org/pypi/tetrabench/0.3.0/json"
     assert calls[1][0].endswith(wheel.name)
 
 
@@ -793,7 +793,7 @@ def test_controller_info_is_no_cloud_and_json_lists_exact_names(
     assert result.exit_code == 0
     report = loads_canonical_json(result.stdout.removesuffix("\n").encode())
     assert isinstance(report, dict)
-    assert report["environment_name"] == "tetrabench-default-v0-2-0"
+    assert report["environment_name"] == "tetrabench-default-v0-3-0"
     assert report["volume_name"] == "tetrabench-default-controller"
     assert report["secret_name"] == "tetrabench-controller"
 
@@ -857,7 +857,8 @@ def test_unsupported_python_fails_before_artifact_or_provider(
     fake = _FakeModal()
     fake.Client.from_env = lambda: pytest.fail("provider client")
     with pytest.raises(
-        PreflightError, match=r"--python 3\.12 tetrabench==0\.2\.0"
+        PreflightError,
+        match=re.escape(f"--python 3.12 tetrabench=={version('tetrabench')}"),
     ) as caught:
         entrypoint(_spec(), modal_module=fake)
     assert caught.value.code == "unsupported_python"

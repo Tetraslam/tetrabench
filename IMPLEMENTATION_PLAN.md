@@ -4,10 +4,59 @@
 
 - Project state: P0 through P6 are complete for their local/static contracts. Live Tigris/Modal evidence includes cancellation, forced controller interruption/recovery, and the E-046 Single-region `iad` cutover. Current live provider IAM/privacy/encryption state, AWS behavior, and true provider preemption remain `unproven`.
 - Current action: Tetrabench 0.2.0 is published on PyPI. PR 33 merged with passing CI; the unchanged GitHub release artifacts passed installed local/Modal Oracle and controlled Astra proofs before protected publication. Public installation and artifact hashes were independently verified.
-- Next action: the controlled-experiment release is complete. Future eval selection belongs to the user; no historical candidate list authorizes implementation. Previously recorded live infrastructure evidence limits remain separate.
+- Next action: finish live validation of the native-auth/reasoning candidate. Code and native-consumer tests are checkpointed; available API-key smokes are retrying after diagnosed staging/installer fixes. Subscription approvals, private credential-backend proof, direct OpenAI key access, and multiple-compaction runs remain open. Do not publish 0.3.0 as fully verified until the tracked gates pass. Future eval choice belongs to the user.
 - Task-catalog gate: E-132's corrected-byte local/detached execution and audit gates and E-143's exact-four calibration all pass. `authority-fencing` is admitted in `benchmarks/catalog.toml`; later systems and GitHub-workflow tasks remain absent pending their own complete gates.
 - Authoring UX: D-127 is merged through PR 26 with focused local and real-Docker evidence. It creates user-owned starter projects and tasks independently of the repository catalog.
-- Canonical record updated: 2026-09-09.
+- Canonical record updated: 2026-09-11.
+
+### Native fidelity and authentication working record
+
+| Field | Contract |
+| --- | --- |
+| Behavior | Resolve current stable native versions, validate their real consumers, and pin exact versions in experiments. Preserve each harness's native context management; OpenAI opaque compaction, text summarization, and pruning are distinct recorded mechanisms. Keep Codex sandbox/approval overrides unchanged. |
+| Auth scope | Direct API keys and native subscription auth for Codex and Claude Code; Codex OAuth for OpenCode and Earendil Pi; no Claude subscription OAuth in alternative harnesses. Native clients own login/refresh. Authentication mode is explicit and cannot silently fall back to another billing account. |
+| Authority and lifecycle | Credentials are runtime authority, never immutable task/request/artifact content. Per-harness credential sessions are independent. Refreshable Codex state needs serialized ownership and durable native refresh write-back; concurrent copies of one refresh lineage are not supported. Private runtime auth files are allowed only where the native client requires them, outside collected artifacts. Browser approvals and unavailable keys are explicit external prerequisites. |
+| Configuration and reasoning | Seal referenced harness resources separately from task bytes. Expose supported compaction/summarization, output, tool, discovery, instruction, skill/MCP and session controls using native mechanisms. Discover reasoning choices from exact harness/version/model/route/auth/config metadata, retaining provenance and unknowns. Do not impose a universal effort enum, silently clamp choices, or implement a provider-maintenance table in tetrabench. |
+| Evidence | Native consumer tests for each advertised pin; each auth flow separately exercised, including expiry/error/refresh persistence and artifact exclusion. Model-backed smoke runs for every harness and multi-boundary continuation tests must identify the context-management mechanism and retained facts. Preserve old run identities and fast-read behavior. Release only after reviewed installed-artifact verification. |
+| Initial stable baseline | OpenCode 1.18.30; Codex 0.154.0; Claude Code 2.1.267; Earendil Pi 0.85.1, checked against official non-prerelease metadata on 2026-09-10. Recheck before final version adoption. |
+| Exclusions | No replacement generic summarizer, no implicit OpenAI-compaction implementation in OpenCode/Pi, no Claude OAuth proxy, no new eval roadmap, no changes to Codex approval/sandbox bypass. No complete billing or universal capability guarantee without named evidence. |
+
+- [ ] Current-stable adapters, version-aware option validation, native ancillary and context controls.
+- [ ] Portable harness resources, discovery policies, and supported session continuation.
+- [ ] Native model/reasoning inspection and reproducible configuration adoption.
+- [ ] Codex direct OpenAI API-key flow and live smoke.
+- [ ] Native Codex ChatGPT OAuth bootstrap, serialized refresh/write-back, and live smoke.
+- [ ] Claude Code direct Anthropic API-key flow and live smoke.
+- [ ] Native Claude subscription flow, expiry handling, and live smoke.
+- [ ] OpenCode Codex OAuth flow and live smoke.
+- [ ] Earendil Pi Codex OAuth flow and live smoke.
+- [ ] OpenCode and Pi OpenRouter API-key smoke at current stable pins.
+- [ ] Multiple native-compaction/summarization boundary runs, fact retention, and mechanism evidence.
+- [ ] Independent review, installed release validation, publication, and public install proof.
+
+External prerequisites: direct OpenAI API key is not present in the accessible
+Agents-vault inventory; user was asked for a secret reference. Native subscription
+browser approvals remain pending. Neither absence is grounds to claim a live flow
+passed or to copy an existing interactive login without explicit selection.
+
+Checkpoint status: implementation covers explicit auth references for all four
+harnesses, native OAuth custody and refresh write-back with serialized ownership,
+credential retention guards, shared native config/resource layers, native model
+inspection/adoption, and startup capability verification. Startup verification is
+not continuous dispatch enforcement. Private credential S3 policy/ACL checks are
+implemented but remain unproven against a provisioned live auth backend. Native
+control-process termination and producer statuses are checked independently of
+logging pipelines. Docker env values use process environment rather than argv.
+
+The latest local checks pass 2,255 non-native tests, 79 mandatory offline native
+consumer tests, lint, formatting, typing, and actionlint. Twelve Docker tests are
+collected. Live direct-Modal attempts exposed non-sticky world-writable `/tmp`,
+missing Claude status PATH setup, and NVM/XDG installation disagreement. These
+were diagnosed and fixed without weakening credential ancestry checks; fresh
+container installation/status proofs passed all three available harnesses.
+No live model/auth flow has passed yet. The previous attempts started no model
+calls, and their owners/children were proven stopped. This is an implementation
+checkpoint, not release acceptance.
 
 ### Controlled experiment release working record
 
