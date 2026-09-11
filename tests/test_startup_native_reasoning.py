@@ -294,3 +294,118 @@ def test_actual_claude_alias_selection_is_not_resolved_id_ambiguity(
     report = json.loads(result.stdout)
     assert "native_model" in report["verified_fields"], report
     assert "native_selection" in report["verified_fields"], report
+
+
+@pytest.mark.parametrize(
+    "change", [None, "custom-incomplete", "custom-explicit", "auth"]
+)
+def test_codex_api_key_default_route_through_discovery_and_actual_startup(
+    installed, tmp_path, monkeypatch, change
+):
+    from tetrabench import auth
+    from tetrabench.auth_config import AuthSpec, EnvAuthReference, NativeAuthReference
+    from tetrabench.capabilities import MetadataError
+    from tetrabench.discovery_auth import metadata_auth_context
+    from tetrabench.reasoning import validate_snapshot_for_harness
+
+    config = HarnessConfig(
+        name="codex",
+        version="0.154.0",
+        model="openai/gpt-6-astra",
+        auth=AuthSpec(mode="api_key", reference=EnvAuthReference(name="TEST_KEY")),
+    )
+    monkeypatch.setattr(
+        "tetrabench.discovery_auth.user_runtime_path", lambda _: tmp_path / "runtime"
+    )
+    run = auth.run_native
+
+    def offline(argv, **kwargs):
+        return run(["unshare", "--user", "--map-root-user", "--net", *argv], **kwargs)
+
+    monkeypatch.setattr(auth, "run_native", offline)
+    with metadata_auth_context(
+        config,
+        allow_authenticated_read=True,
+        modules=installed,
+        environment={"TEST_KEY": "SYNTHETIC_NOT_A_LIVE_KEY"},
+    ) as runtime:
+        assert runtime is not None
+        captured = collect_installed(
+            config,
+            base=tmp_path,
+            modules=installed,
+            runtime=runtime,
+            allow_authenticated_read=True,
+            reuse_native_cache=False,
+        )
+        assert captured.status == "supported", captured.limitations
+        assert captured.identity.protocol == "responses"
+        assert captured.identity.endpoints == ("https://api.openai.com/v1",)
+        metadata = json.loads(captured.metadata_json)
+        assert metadata["route_provenance"]["kind"] == "native-version-default"
+        assert metadata["catalog_origin"] == "bundled-native-catalog"
+        assert metadata["authentication"]["account_verified"] is False
+        bound = bind_capability_adoption(
+            config, captured, control="effort", select="high"
+        )
+        resolved = seal_harness(bound, tmp_path)
+        assert resolved.capability_snapshot is not None
+        validate_snapshot_for_harness(resolved.capability_snapshot, resolved)
+        changed_auth = bound.model_copy(
+            update={
+                "auth": AuthSpec(
+                    mode="chatgpt_oauth",
+                    reference=NativeAuthReference(
+                        profile="unused", binding="unused", generation=1
+                    ),
+                )
+            }
+        )
+        with pytest.raises(MetadataError, match="does not bind"):
+            validate_snapshot_for_harness(resolved.capability_snapshot, changed_auth)
+        path = Path(runtime.environment["CODEX_HOME"]) / "config.toml"
+        path.write_text(
+            tomlkit.dumps(native_configuration_layers(resolved).main_config)
+        )
+        probe = startup_capability_probe(
+            resolved,
+            native_files={str(path): sha256_hex(path.read_bytes())},
+            resource_root=str(tmp_path / "resources"),
+            command=command(installed, "codex"),
+            policy="strict-startup",
+        )
+        if change and change.startswith("custom"):
+            provider = {"name": "custom"}
+            if change == "custom-explicit":
+                provider.update(
+                    base_url="https://example.test/v1", wire_api="responses"
+                )
+            path.write_text(
+                tomlkit.dumps(
+                    {
+                        "model_provider": "custom",
+                        "model_providers": {"custom": provider},
+                    }
+                )
+            )
+            # Rebinding file hashes cannot bless a changed or incomplete route.
+            probe["files"][0]["sha256"] = sha256_hex(path.read_bytes())
+        elif change == "auth":
+            runtime.credential_path.unlink()
+        result = run_probe(tmp_path, probe, runtime.environment)
+        report = json.loads(result.stdout)
+        if change:
+            assert result.returncode == 78, report
+            assert "drift" in report["error"] or "auth mode differs" in report["error"]
+        else:
+            assert result.returncode == 0, report
+            assert {
+                "native_provider",
+                "protocol",
+                "endpoint",
+                "native_selection",
+            }.issubset(report["verified_fields"])
+            assert report["route_provenance"]["kind"] == "native-version-default"
+            assert report["observed_selection"] == "high"
+            assert report["inference_validated"] is False
+            assert report["future_dispatch_verified"] is False

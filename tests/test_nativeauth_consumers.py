@@ -8,12 +8,13 @@ from __future__ import annotations
 
 import base64
 import json
+import shlex
 from pathlib import Path
 
 import pytest
 from native_consumer_support import native_environment, native_modules
 
-from tetrabench.auth import auth_logout, auth_session
+from tetrabench.auth import NativeRuntime, auth_logout, auth_session
 from tetrabench.auth_config import AuthSpec, EnvAuthReference
 from tetrabench.auth_sessions import private_directory, read_private, write_private
 from tetrabench.nativeauth import (
@@ -173,6 +174,57 @@ def test_real_codex_native_oauth_status_and_logout(installed, tmp_path):
     )
     assert result.returncode == 0
     assert not path.exists()
+
+
+def test_real_codex_status_warning_and_private_tmp_sibling(installed, tmp_path):
+    env = native_env(tmp_path, installed, "codex")
+    write_private(
+        native_auth_path("codex", tmp_path), b'{"OPENAI_API_KEY":"SYNTHETIC_API_KEY"}'
+    )
+    binary = installed / "node_modules/.bin/codex"
+    wrapper = tmp_path / "codex-offline"
+    wrapper.write_text(
+        "#!/bin/sh\nexec "
+        + shlex.join(
+            [
+                "unshare",
+                "--user",
+                "--map-root-user",
+                "--net",
+                "--pid",
+                "--fork",
+                "--kill-child",
+                str(binary),
+            ]
+        )
+        + ' "$@"\n'
+    )
+    wrapper.chmod(0o700)
+    spec = AuthSpec(
+        mode="api_key", reference=EnvAuthReference(name="UNUSED_SYNTHETIC_REFERENCE")
+    )
+    # Reproduce the retained live-failure shape: CODEX_HOME under temp_dir().
+    env["TMPDIR"] = str(tmp_path)
+    runtime = NativeRuntime("codex", spec, tmp_path, str(wrapper), env)
+    result = runtime.run(
+        native_auth_command("codex", "status", executable=str(wrapper))
+    )
+    assert result.returncode == 0 and result.stdout == b""
+    assert result.stderr is not None
+    assert result.stderr.startswith(
+        b"WARNING: proceeding, even though we could not create PATH aliases:"
+    )
+    assert runtime.status().mode == "api_key"
+    assert "SYNTHETIC" not in repr(runtime.status())
+    # The owned layout fix removes the warning rather than suppressing stderr.
+    env["TMPDIR"] = str(tmp_path / "tmp")
+    fixed = runtime.run(native_auth_command("codex", "status", executable=str(wrapper)))
+    assert fixed.returncode == 0
+    assert fixed.stderr is not None and fixed.stderr.startswith(
+        b"Logged in using an API key - "
+    )
+    assert b"PATH aliases" not in fixed.stderr
+    assert parse_native_status("codex", fixed).mode == "api_key"
 
 
 @pytest.mark.parametrize("harness", ["opencode", "pi"])

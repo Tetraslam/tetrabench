@@ -170,7 +170,7 @@ class FakeHarborEnvironment:
             ).encode()
         elif "login status" in command:
             result.stderr = (
-                "Logged in using an API key"
+                "Logged in using an API key - SYNTHETI***I_KEY"
                 if self.mode == "api_key"
                 else "Logged in using ChatGPT"
             )

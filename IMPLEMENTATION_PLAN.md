@@ -4,7 +4,7 @@
 
 - Project state: P0 through P6 are complete for their local/static contracts. Live Tigris/Modal evidence includes cancellation, forced controller interruption/recovery, and the E-046 Single-region `iad` cutover. Current live provider IAM/privacy/encryption state, AWS behavior, and true provider preemption remain `unproven`.
 - Current action: Tetrabench 0.2.0 is published on PyPI. PR 33 merged with passing CI; the unchanged GitHub release artifacts passed installed local/Modal Oracle and controlled Astra proofs before protected publication. Public installation and artifact hashes were independently verified.
-- Next action: finish live validation of the native-auth/reasoning candidate. Code and native-consumer tests are checkpointed; available API-key smokes are retrying after diagnosed staging/installer fixes. Subscription approvals, private credential-backend proof, direct OpenAI key access, and multiple-compaction runs remain open. Do not publish 0.3.0 as fully verified until the tracked gates pass. Future eval choice belongs to the user.
+- Next action: finish subscription login approvals and private credential-backend proof for the native-auth/reasoning candidate. All four API-key paths passed live; Codex passed two native opaque-compaction modes, while the text-summary proofs have the qualifications recorded below. Keep 0.3.0 unreleased until the open acceptance gates are resolved. Future eval choice belongs to the user.
 - Task-catalog gate: E-132's corrected-byte local/detached execution and audit gates and E-143's exact-four calibration all pass. `authority-fencing` is admitted in `benchmarks/catalog.toml`; later systems and GitHub-workflow tasks remain absent pending their own complete gates.
 - Authoring UX: D-127 is merged through PR 26 with focused local and real-Docker evidence. It creates user-owned starter projects and tasks independently of the repository catalog.
 - Canonical record updated: 2026-09-11.
@@ -21,25 +21,26 @@
 | Initial stable baseline | OpenCode 1.18.30; Codex 0.154.0; Claude Code 2.1.267; Earendil Pi 0.85.1, checked against official non-prerelease metadata on 2026-09-10. Recheck before final version adoption. |
 | Exclusions | No replacement generic summarizer, no implicit OpenAI-compaction implementation in OpenCode/Pi, no Claude OAuth proxy, no new eval roadmap, no changes to Codex approval/sandbox bypass. No complete billing or universal capability guarantee without named evidence. |
 
-- [ ] Current-stable adapters, version-aware option validation, native ancillary and context controls.
-- [ ] Portable harness resources, discovery policies, and supported session continuation.
-- [ ] Native model/reasoning inspection and reproducible configuration adoption.
-- [ ] Codex direct OpenAI API-key flow and live smoke.
+- [x] Current-stable adapters, version-aware option validation, native ancillary and context controls.
+- [x] Portable harness resources, discovery policies, and supported session continuation.
+- [x] Native model/reasoning inspection and reproducible configuration adoption.
+- [x] Codex direct OpenAI API-key flow and live smoke.
 - [ ] Native Codex ChatGPT OAuth bootstrap, serialized refresh/write-back, and live smoke.
-- [ ] Claude Code direct Anthropic API-key flow and live smoke.
+- [x] Claude Code direct Anthropic API-key flow and live smoke.
 - [ ] Native Claude subscription flow, expiry handling, and live smoke.
 - [ ] OpenCode Codex OAuth flow and live smoke.
 - [ ] Earendil Pi Codex OAuth flow and live smoke.
-- [ ] OpenCode and Pi OpenRouter API-key smoke at current stable pins.
+- [x] OpenCode and Pi OpenRouter API-key smoke at current stable pins.
 - [ ] Multiple native-compaction/summarization boundary runs, fact retention, and mechanism evidence.
 - [ ] Independent review, installed release validation, publication, and public install proof.
 
-External prerequisites: direct OpenAI API key is not present in the accessible
-Agents-vault inventory; user was asked for a secret reference. Native subscription
-browser approvals remain pending. Neither absence is grounds to claim a live flow
-passed or to copy an existing interactive login without explicit selection.
+External prerequisites: the user supplied fresh OpenAI and Anthropic API-key
+references, and those paths passed. Native subscription browser approvals remain
+pending. Remote OAuth also needs a dedicated private credential backend and an
+explicit decision about organization-administrator trust. No interactive login
+was copied, and no subscription flow is marked passed.
 
-Checkpoint status: implementation covers explicit auth references for all four
+Initial checkpoint: implementation covered explicit auth references for all four
 harnesses, native OAuth custody and refresh write-back with serialized ownership,
 credential retention guards, shared native config/resource layers, native model
 inspection/adoption, and startup capability verification. Startup verification is
@@ -48,15 +49,39 @@ implemented but remain unproven against a provisioned live auth backend. Native
 control-process termination and producer statuses are checked independently of
 logging pipelines. Docker env values use process environment rather than argv.
 
-The latest local checks pass 2,255 non-native tests, 79 mandatory offline native
+At that checkpoint, checks passed 2,255 non-native tests, 79 mandatory offline native
 consumer tests, lint, formatting, typing, and actionlint. Twelve Docker tests are
 collected. Live direct-Modal attempts exposed non-sticky world-writable `/tmp`,
 missing Claude status PATH setup, and NVM/XDG installation disagreement. These
 were diagnosed and fixed without weakening credential ancestry checks; fresh
 container installation/status proofs passed all three available harnesses.
-No live model/auth flow has passed yet. The previous attempts started no model
+No live model/auth flow had passed at that checkpoint. The previous attempts started no model
 calls, and their owners/children were proven stopped. This is an implementation
 checkpoint, not release acceptance.
+
+The preceding checkpoint predates these successful live proofs: Pi/OpenCode
+OpenRouter Astra, Claude Code direct Anthropic, and Codex direct OpenAI all earned
+reward one with observed native versions and API-key mode. Codex's stderr status
+warning was diagnosed and corrected before its successful retry. Current native
+metadata inspection/adoption was also exercised with explicit API-key contexts;
+bundled catalog provenance and unverified account capabilities remain explicit.
+
+Long-horizon evidence: Codex 0.154.0 passed two opaque checkpoints under default
+V2 and two under the standalone compact path, with continuation and correct
+facts. Endpoint attribution is pinned native configuration/call-path inference,
+not packet capture. OpenCode crossed three text-summary boundaries and Pi two,
+with correct final values. Claude crossed two native text-summary boundaries and
+finished all stages, but read the original transcript against that verification
+task's protocol; clean within-protocol fact retention is not established. All
+used reduced verification thresholds rather than stock-window performance
+settings. No paid rerun was used to hide that qualification.
+
+Known native summary costs are now counted once in auxiliary evidence. Native
+reported/catalog-priced amounts remain partial, and standalone Codex compaction
+charges were unavailable. Tigris's precise organization-admin ACL grant has a
+separately reviewed opt-in flag, default false; no live credential backend has
+been approved or seeded. The hosted native-test namespace fix remains to be
+confirmed after pushing the follow-up.
 
 ### Controlled experiment release working record
 

@@ -20,7 +20,14 @@ from typing import Any
 import tomlkit
 
 from tetrabench.capabilities import MetadataError, metadata_text, parse_metadata
-from tetrabench.native_control import ControlProcess, select_model_info
+from tetrabench.native_control import (
+    CUSTODY_ENV,
+    ControlProcess,
+    auth_custody_report,
+    codex_route,
+    opencode_model_metadata,
+    select_model_info,
+)
 
 MAX_NATIVE_BYTES = 16 * 1024 * 1024
 
@@ -73,6 +80,29 @@ def _opencode(
         env["OPENCODE_DISABLE_DEFAULT_PLUGINS"] = "1"
     if request.get("cache"):
         env["OPENCODE_MODELS_PATH"] = request["cache"]
+    if request.get("require_auth_custody"):
+        # serve has no stdin-driven zero-exit shutdown. The published models CLI
+        # reads the same native provider registry and exits naturally.
+        provider = opencode_model_metadata(
+            request["command"],
+            root,
+            env,
+            provider=request["provider"],
+            model_id=request["model"],
+            version=request["version"],
+        )
+        model = provider["models"][request["model"]]
+        return {
+            "payload": {"all": [provider]},
+            "route": {
+                "model": model["api"]["id"],
+                "provider": request["provider"],
+                "protocol": model["api"]["npm"],
+                "endpoint": provider["options"]["baseURL"],
+            },
+            "method": "OpenCode models --verbose + debug config; natural CLI exits",
+            "catalog_origin": "native-origin-undisclosed",
+        }
     with ControlProcess(
         [*request["command"], "serve", "--hostname", "127.0.0.1", "--port", "0"],
         root,
@@ -158,19 +188,29 @@ def _codex(request: dict[str, Any], root: Path, env: dict[str, str]) -> dict[str
         else:
             raise MetadataError("native model/list page limit exceeded")
         selected = next(row for row in rows if row["model"] == request["model"])
-        provider_id = config.get("model_provider") or "unknown"
-        provider = (config.get("model_providers") or {}).get(provider_id, {})
-        # Native config/read does not always expose built-in endpoint definitions.
+        route = codex_route(
+            config,
+            version=request["version"],
+            requested_provider=request["provider"],
+            observed_auth_mode=request.get("auth_mode"),
+            environment=env,
+        )
+        # rust-v0.154.0 OpenAiModelsManager.should_refresh_models() does not
+        # fetch for ordinary API keys. This fresh auth home has no copied cache.
+        bundled = (
+            request.get("auth_mode") == "api_key"
+            and not request.get("cache")
+            and not native.get("model_catalog_json")
+        )
         return {
             "payload": {"data": [selected], "nextCursor": None},
-            "route": {
-                "model": selected["model"],
-                "provider": provider_id,
-                "protocol": provider.get("wire_api", "codex-native"),
-                "endpoint": provider.get("base_url", ""),
-            },
+            "route_provenance": route.pop("provenance"),
+            "route": {**route, "model": selected["model"]},
             "method": "Codex initialize + config/read + model/list; EOF shutdown",
             "native_server": initialized.get("userAgent", ""),
+            "catalog_origin": "bundled-native-catalog"
+            if bundled
+            else "native-origin-undisclosed",
         }
 
 
@@ -295,6 +335,7 @@ def main() -> None:
             _loopback_up()
         root = Path(request["work"])
         env = dict(os.environ)
+        env[CUSTODY_ENV] = "required" if request.get("require_auth_custody") else "none"
         collector = {
             "opencode": _opencode,
             "codex": _codex,
@@ -302,6 +343,7 @@ def main() -> None:
             "pi": _pi,
         }[request["harness"]]
         result = collector(request, root, env)
+        result["auth_custody"] = auth_custody_report()
         print(metadata_text(result), flush=True)
     except Exception as error:
         # Raw native messages can contain credentials. Emit no upstream exception.

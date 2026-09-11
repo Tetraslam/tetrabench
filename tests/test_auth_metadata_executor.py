@@ -141,7 +141,9 @@ def test_metadata_rejects_prompt_commands_and_observed_mode_mismatch(tmp_path):
         async def wrong_status(command, **kwargs):
             if "login status" in command:
                 return SimpleNamespace(
-                    return_code=0, stdout="Logged in using an API key", stderr=""
+                    return_code=0,
+                    stdout="",
+                    stderr="Logged in using an API key - SYNTHETI***I_KEY",
                 )
             return await original(command, **kwargs)
 

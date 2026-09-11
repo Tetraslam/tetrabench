@@ -291,7 +291,7 @@ def test_public_access_block_and_policy_are_rechecked_not_cached():
     assert len(client.writes) == 1
 
 
-def tigris_store(client):
+def tigris_store(client, *, trust_organization_admins=False):
     client.meta.endpoint_url = "https://t3.storage.dev"
     client.location = "iad"
     return S3SessionStore(
@@ -300,6 +300,7 @@ def tigris_store(client):
         binding="dedicated-controller",
         artifact_buckets=[],
         approved_private_backend=True,
+        trust_organization_admins=trust_organization_admins,
     )
 
 
@@ -330,6 +331,228 @@ def test_tigris_unknown_or_public_bucket_refuses_first_publication(flag):
     with pytest.raises(AuthStateError):
         seed_session(tigris_store(client), reference(), "opencode", native())
     assert not client.writes
+
+
+def org_admin_grant():
+    # Native response shape shown in Tigris's official MCP sharing example.
+    return {
+        "Grantee": {"Type": "Group", "URI": "https://groups.tigris.dev/org/admins"},
+        "Permission": "FULL_CONTROL",
+    }
+
+
+def add_acl_grant(client, monkeypatch, grant):
+    original = client.get_bucket_acl
+
+    def bucket_acl(**kwargs):
+        acl = original(**kwargs)
+        acl["Grants"].append(grant)
+        return acl
+
+    monkeypatch.setattr(client, "get_bucket_acl", bucket_acl)
+
+
+def test_tigris_org_admins_require_explicit_trust_for_reads_and_first_write(
+    monkeypatch,
+):
+    client = FakePrivateS3()
+    authority = tigris_store(client)
+    add_acl_grant(client, monkeypatch, org_admin_grant())
+    with pytest.raises(AuthStateError, match="ACL"):
+        seed_session(authority, reference(), "opencode", native())
+    assert not client.writes and not client.object_reads
+    seed_session(
+        tigris_store(client, trust_organization_admins=True),
+        reference(),
+        "opencode",
+        native(),
+    )
+    with pytest.raises(AuthStateError, match="ACL"):
+        authority.read(reference().profile)
+    assert not client.object_reads
+
+
+def test_trusted_tigris_org_admins_preserve_private_cas_and_native_writeback(
+    monkeypatch,
+):
+    client = FakePrivateS3()
+    add_acl_grant(client, monkeypatch, org_admin_grant())
+    authority = tigris_store(client, trust_organization_admins=True)
+    seed_session(authority, reference(), "opencode", native())
+    claim = claim_session(authority, reference(), "opencode")
+    claim.finish(native("SYNTHETIC_ROTATED"), consumer_stopped=True)
+    current = authority.read(reference().profile)
+    assert current is not None and b"SYNTHETIC_ROTATED" in current.state.native
+    assert client.writes[0]["IfNoneMatch"] == "*"
+    assert all("IfMatch" in write for write in client.writes[1:])
+    assert all(write["ACL"] == "private" for write in client.writes)
+    assert all(write["ServerSideEncryption"] == "AES256" for write in client.writes)
+    assert all(write["CacheControl"] == "no-store" for write in client.writes)
+
+
+@pytest.mark.parametrize("public", [True, None, 0, "false"])
+def test_org_admin_trust_still_requires_actual_private_policy(monkeypatch, public):
+    client = FakePrivateS3()
+    add_acl_grant(client, monkeypatch, org_admin_grant())
+    client.public = public
+    with pytest.raises(AuthStateError, match="policy"):
+        seed_session(
+            tigris_store(client, trust_organization_admins=True),
+            reference(),
+            "opencode",
+            native(),
+        )
+    assert not client.writes and not client.object_reads
+
+
+def test_org_admin_trust_does_not_cache_private_policy(monkeypatch):
+    client = FakePrivateS3()
+    add_acl_grant(client, monkeypatch, org_admin_grant())
+    authority = tigris_store(client, trust_organization_admins=True)
+    seed_session(authority, reference(), "opencode", native())
+    current = authority.read(reference().profile)
+    assert current is not None
+    client.public = True
+    before = client.object_reads
+    with pytest.raises(AuthStateError, match="policy"):
+        authority.read(reference().profile)
+    with pytest.raises(AuthStateError, match="policy"):
+        authority.compare_and_swap(reference().profile, current.version, current.state)
+    assert client.object_reads == before and len(client.writes) == 1
+
+
+@pytest.mark.parametrize(
+    "code", ["AccessDenied", "NotImplemented", "NoSuchBucketPolicy"]
+)
+def test_org_admin_trust_never_substitutes_for_policy_metadata(monkeypatch, code):
+    client = FakePrivateS3()
+    add_acl_grant(client, monkeypatch, org_admin_grant())
+
+    def unavailable(**kwargs):
+        raise ClientError({"Error": {"Code": code}}, "GetBucketPolicyStatus")
+
+    monkeypatch.setattr(client, "get_bucket_policy_status", unavailable)
+    with pytest.raises(AuthStateError):
+        seed_session(
+            tigris_store(client, trust_organization_admins=True),
+            reference(),
+            "opencode",
+            native(),
+        )
+    assert not client.writes and not client.object_reads
+
+
+@pytest.mark.parametrize("where", ["bucket", "object"])
+@pytest.mark.parametrize(
+    "grantee",
+    [
+        {"Type": "Group", "URI": "http://acs.amazonaws.com/groups/global/AllUsers"},
+        {
+            "Type": "Group",
+            "URI": "http://acs.amazonaws.com/groups/global/AuthenticatedUsers",
+        },
+        {"Type": "Group", "URI": "https://groups.tigris.dev/org/members"},
+        {"Type": "Group", "URI": "http://groups.tigris.dev/org/admins"},
+        {"Type": "Group", "URI": "https://groups.tigris.dev/org/admins/"},
+        {"Type": "Group", "URI": "https://groups.tigris.dev.evil.invalid/org/admins"},
+        {"Type": "Group", "URI": "https://groups.tigris.dev/org/%61dmins"},
+        {"Type": "CanonicalUser", "ID": "SYNTHETIC_OTHER_OWNER"},
+        {
+            "Type": "Group",
+            "URI": "https://groups.tigris.dev/org/admins",
+            "ID": "SYNTHETIC_OTHER_OWNER",
+        },
+    ],
+)
+def test_org_admin_trust_rejects_every_other_grantee(monkeypatch, where, grantee):
+    client = FakePrivateS3()
+    add_acl_grant(client, monkeypatch, org_admin_grant())
+    authority = tigris_store(client, trust_organization_admins=True)
+    seed_session(authority, reference(), "opencode", native())
+    method = f"get_{where}_acl"
+    original = getattr(client, method)
+
+    def unsafe(**kwargs):
+        acl = original(**kwargs)
+        acl["Grants"].append({"Grantee": grantee, "Permission": "FULL_CONTROL"})
+        return acl
+
+    monkeypatch.setattr(client, method, unsafe)
+    before = client.object_reads
+    with pytest.raises(AuthStateError, match="ACL"):
+        authority.read(reference().profile)
+    assert client.object_reads == before
+    assert len(client.writes) == 1
+
+
+@pytest.mark.parametrize("fault", ["missing_owner_grant", "admin_read_only"])
+def test_tigris_org_admin_exception_requires_exact_grants(monkeypatch, fault):
+    client = FakePrivateS3()
+    original = client.get_bucket_acl
+
+    def unsafe(**kwargs):
+        acl = original(**kwargs)
+        admin = org_admin_grant()
+        if fault == "missing_owner_grant":
+            acl["Grants"] = [admin]
+        else:
+            admin["Permission"] = "READ"
+            acl["Grants"].append(admin)
+        return acl
+
+    monkeypatch.setattr(client, "get_bucket_acl", unsafe)
+    with pytest.raises(AuthStateError, match="ACL"):
+        seed_session(
+            tigris_store(client, trust_organization_admins=True),
+            reference(),
+            "opencode",
+            native(),
+        )
+    assert not client.writes and not client.object_reads
+
+
+def test_org_admin_trust_still_requires_matching_object_owner(monkeypatch):
+    client = FakePrivateS3()
+    add_acl_grant(client, monkeypatch, org_admin_grant())
+    authority = tigris_store(client, trust_organization_admins=True)
+    seed_session(authority, reference(), "opencode", native())
+    current = authority.read(reference().profile)
+    assert current is not None
+    original = client.get_object_acl
+
+    def different_owner(**kwargs):
+        acl = original(**kwargs)
+        acl["Owner"]["ID"] = "SYNTHETIC_OTHER_OWNER"
+        acl["Grants"][0]["Grantee"]["ID"] = "SYNTHETIC_OTHER_OWNER"
+        return acl
+
+    monkeypatch.setattr(client, "get_object_acl", different_owner)
+    before = client.object_reads
+    with pytest.raises(AuthStateError, match="ownership differs"):
+        authority.read(reference().profile)
+    assert client.object_reads == before
+    with pytest.raises(AuthStateError, match="acknowledgement is unproven"):
+        authority.compare_and_swap(reference().profile, current.version, current.state)
+    assert len(client.writes) == 2
+
+
+def test_tigris_admin_group_is_never_accepted_for_aws(monkeypatch):
+    client = FakePrivateS3()
+    add_acl_grant(client, monkeypatch, org_admin_grant())
+    with pytest.raises(AuthStateError, match="ACL"):
+        store(client).read(reference().profile)
+    with pytest.raises(AuthStateError, match="Tigris-only"):
+        S3SessionStore(
+            cast(NativeAuthS3Client, client),
+            ResolvedAwsStorageConfig(
+                provider="aws", bucket="private-auth", region="us-east-1"
+            ),
+            binding="dedicated-controller",
+            artifact_buckets=[],
+            approved_private_backend=True,
+            trust_organization_admins=True,
+        )
+    assert not client.writes and not client.object_reads
 
 
 def test_failed_cli_logout_keeps_remote_claim_and_tracks_ambiguous_owner(

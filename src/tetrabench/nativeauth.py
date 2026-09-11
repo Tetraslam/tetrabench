@@ -227,6 +227,8 @@ def native_auth_path(harness: str, root: Path) -> Path:
 class NativeResult:
     returncode: int
     output: bytes = field(default=b"", repr=False)
+    stdout: bytes | None = field(default=None, repr=False)
+    stderr: bytes | None = field(default=None, repr=False)
 
 
 def run_native(
@@ -267,13 +269,15 @@ def run_native(
             cwd=cwd,
             stdin=terminal if interactive else subprocess.PIPE,
             stdout=terminal if interactive else subprocess.PIPE,
-            stderr=terminal if interactive else subprocess.STDOUT,
+            stderr=terminal if interactive else subprocess.PIPE,
             start_new_session=True,
             umask=0o077,
         )
         if operation is not None:
             operation.started(process.pid)
         output = bytearray()
+        stdout = bytearray()
+        stderr = bytearray()
         deadline = time.monotonic() + timeout
         with selectors.DefaultSelector() as selector:
             pending = memoryview(stdin or b"")
@@ -286,7 +290,9 @@ def run_native(
                 else:
                     process.stdin.close()
             if process.stdout:
-                selector.register(process.stdout, selectors.EVENT_READ)
+                selector.register(process.stdout, selectors.EVENT_READ, "stdout")
+            if process.stderr:
+                selector.register(process.stderr, selectors.EVENT_READ, "stderr")
             while process.poll() is None or selector.get_map():
                 if time.monotonic() >= deadline:
                     raise AuthError(
@@ -315,11 +321,12 @@ def run_native(
                         selector.unregister(key.fileobj)
                     else:
                         output.extend(chunk)
+                        (stdout if key.data == "stdout" else stderr).extend(chunk)
                         if len(output) > MAX_NATIVE_OUTPUT:
                             raise AuthError(
                                 "native auth output exceeded private capture limit"
                             )
-        return NativeResult(process.wait(), bytes(output))
+        return NativeResult(process.wait(), bytes(output), bytes(stdout), bytes(stderr))
     except OSError:
         raise AuthError("native auth executable/terminal unavailable") from None
     finally:
@@ -340,6 +347,8 @@ def run_native(
                 pass
             if process.stdout:
                 process.stdout.close()
+            if process.stderr:
+                process.stderr.close()
             if process.stdin:
                 process.stdin.close()
             if operation is not None:
@@ -464,37 +473,77 @@ def verify_native_version(harness: str, output: bytes) -> None:
         raise AuthError("native auth executable does not match the verified version")
 
 
+_RUST_DEBUG_PATH = rb'"(?:[^"\\\x00-\x1f\x7f]|\\[ -~])*"'
+_CODEX_TEMP_WARNING = re.compile(
+    rb"WARNING: proceeding, even though we could not create PATH aliases: "
+    rb"Refusing to create helper binaries under temporary dir "
+    + _RUST_DEBUG_PATH
+    + rb" \(codex_home: AbsolutePathBuf\("
+    + _RUST_DEBUG_PATH
+    + rb"\)\)"
+)
+_CODEX_API_STATUS = re.compile(
+    rb"Logged in using an API key - (?:\*\*\*|[!-~]{8}\*\*\*[!-~]{5})"
+)
+
+
+def _codex_status(
+    result: NativeResult,
+) -> Literal["api_key", "chatgpt_oauth", "unknown"]:
+    """Codex rust-v0.154.0 cli/login.rs + arg0/lib.rs output grammar.
+
+    login status uses stderr. Legacy single-stream inputs remain parseable, but
+    real executors supply both channels; stdout is never an alternate authority.
+    Warning paths and safe_format_key's fragments are not retained in metadata.
+    """
+    if result.stdout is not None or result.stderr is not None:
+        if result.stdout is None or result.stderr is None or result.stdout.strip():
+            return "unknown"
+        data = result.stderr
+    else:
+        data = result.output
+    lines = [line.removesuffix(b"\r") for line in data.split(b"\n") if line]
+    if len(lines) == 2 and _CODEX_TEMP_WARNING.fullmatch(lines[0]):
+        lines = lines[1:]
+    if len(lines) != 1:
+        return "unknown"
+    if lines[0] == b"Logged in using ChatGPT":
+        return "chatgpt_oauth"
+    if _CODEX_API_STATUS.fullmatch(lines[0]):
+        return "api_key"
+    return "unknown"
+
+
 def parse_native_status(
     harness: str, result: NativeResult, *, model: str | None = None
 ) -> NativeAuthMetadata:
     """Recognize native mode, never echo key suffixes, email, or account IDs."""
-    if len(result.output) > MAX_NATIVE_OUTPUT:
+    channel_bytes = len(result.stdout or b"") + len(result.stderr or b"")
+    if max(len(result.output), channel_bytes) > MAX_NATIVE_OUTPUT:
         raise AuthError("native auth status exceeded output limit")
     if result.returncode != 0:
         return NativeAuthMetadata(harness, "none", "native_status", validity="absent")
+    data = result.stdout if result.stdout is not None else result.output
     mode: Literal[
         "api_key", "chatgpt_oauth", "claude_setup_token", "none", "unknown"
     ] = "unknown"
     if harness == "codex":
-        if result.output.strip() == b"Logged in using ChatGPT":
-            mode = "chatgpt_oauth"
-        elif result.output.strip().startswith(b"Logged in using an API key"):
-            mode = "api_key"
+        mode = _codex_status(result)
     elif harness == "claude-code":
-        value = private_json(result.output)
+        value = private_json(data)
         method = value.get("authMethod")
         if value.get("loggedIn") is True and method == "api_key":
             mode = "api_key"
         elif value.get("loggedIn") is True and method == "oauth_token":
             mode = "claude_setup_token"
     elif harness == "pi":
-        native_type = private_json(result.output).get("type")
+        native_type = private_json(data).get("type")
         if native_type == "oauth":
             mode = "chatgpt_oauth"
         elif native_type == "api_key":
             mode = "api_key"
     elif harness == "opencode":
-        text = re.sub(rb"\x1b\[[0-9;]*[a-zA-Z]", b"", result.output)
+        text = re.sub(rb"\x1b\[[0-9;]*[a-zA-Z]", b"", data)
         if re.search(rb"\bOpenAI\s+oauth\b", text):
             mode = "chatgpt_oauth"
         elif model is not None:

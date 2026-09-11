@@ -6,11 +6,11 @@ import os
 import tomllib
 from collections.abc import Mapping, Sequence
 from pathlib import Path
-from typing import Annotated, Literal
+from typing import Annotated, Literal, Self
 
 import boto3
 from botocore.config import Config
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 from tetrabench.auth_config import (
     EnvAuthReference,
@@ -46,6 +46,14 @@ class S3AuthBackend(BaseModel):
     secret_key: EnvAuthReference
     session_token: EnvAuthReference | None = None
     kms_key_id: str | None = None
+    # Trust the selected bucket's organization administrators, not public access.
+    trust_organization_admins: bool = False
+
+    @model_validator(mode="after")
+    def validate_organization_trust(self) -> Self:
+        if self.trust_organization_admins and self.storage.provider != "tigris":
+            raise ValueError("organization admin trust requires Tigris")
+        return self
 
 
 class NativeAuthProfile(BaseModel):
@@ -195,8 +203,9 @@ def profile_store(
         backend.storage,
         binding=profile.binding,
         artifact_buckets=artifact_buckets,
-        approved_private_backend=True,
+        approved_private_backend=backend.approved_private_backend,
         kms_key_id=backend.kms_key_id,
+        trust_organization_admins=backend.trust_organization_admins,
     )
 
 

@@ -89,6 +89,17 @@ jobs:
       - name: Run required native consumer tests without authentication
         shell: bash
         run: |
+          # Ubuntu 24.04 restricts nested unprivileged namespaces via AppArmor.
+          # Restore the ephemeral runner policy even when a consumer fails.
+          # https://github.com/actions/runner-images/issues/10443
+          namespace_policy=kernel.apparmor_restrict_unprivileged_userns
+          if [[ -e /proc/sys/kernel/apparmor_restrict_unprivileged_userns ]]; then
+            namespace_policy_before="$(sysctl -n "$namespace_policy")"
+            trap 'sudo sysctl -w "$namespace_policy=$namespace_policy_before"' EXIT
+            sudo sysctl -w "$namespace_policy=0"
+          fi
+          unshare --user --map-root-user --net --pid --fork --kill-child true
+
           # Offline native parsing gets its own network namespace, not credentials.
           sudo unshare --net -- setpriv \
             --reuid="$(id -u)" --regid="$(id -g)" --init-groups \

@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import boto3
+import pytest
 from botocore.config import Config
 from botocore.stub import ANY, Stubber
-from test_nativeauth_s3 import native, reference
+from test_nativeauth_s3 import native, org_admin_grant, reference
 
 from tetrabench.auth_sessions import seed_session
 from tetrabench.models import ResolvedAwsStorageConfig, ResolvedTigrisStorageConfig
@@ -103,7 +104,10 @@ def test_first_publication_uses_real_sdk_privacy_api_contracts(tmp_path, monkeyp
         stub.assert_no_pending_responses()
 
 
-def test_tigris_uses_documented_bucket_and_object_acl_contracts(tmp_path, monkeypatch):
+@pytest.mark.parametrize("trust_admins", [False, True])
+def test_tigris_uses_documented_bucket_and_object_acl_contracts(
+    tmp_path, monkeypatch, trust_admins
+):
     monkeypatch.setenv("AWS_CONFIG_FILE", str(tmp_path / "no-config"))
     monkeypatch.setenv("AWS_SHARED_CREDENTIALS_FILE", str(tmp_path / "no-credentials"))
     monkeypatch.delenv("AWS_PROFILE", raising=False)
@@ -122,6 +126,7 @@ def test_tigris_uses_documented_bucket_and_object_acl_contracts(tmp_path, monkey
         binding="dedicated-controller",
         artifact_buckets=[],
         approved_private_backend=True,
+        trust_organization_admins=trust_admins,
     )
     bucket = {"Bucket": "private-auth"}
     object_key = {
@@ -139,6 +144,8 @@ def test_tigris_uses_documented_bucket_and_object_acl_contracts(tmp_path, monkey
             }
         ],
     }
+    if trust_admins:
+        acl["Grants"].append(org_admin_grant())
     with Stubber(client) as stub:
         stub.add_response("get_bucket_location", {"LocationConstraint": "iad"}, bucket)
         for phase in ("read", "create"):

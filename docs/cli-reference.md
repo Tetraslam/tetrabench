@@ -150,10 +150,10 @@ still contain workload-emitted secrets and must be treated as private.
 
 ### Controlled harness configuration
 
-This checkout's 0.3.0 interfaces are under integration. Configuration parsing,
-unit tests, and installed native-consumer checks establish their own boundaries;
-they do not establish live subscription acceptance, remote credential
-refresh/write-back, or long-horizon continuation. Those paths remain **unproven**.
+This checkout's 0.3.0 candidate has live API-key evidence for all four harnesses.
+Subscription approvals and private OAuth backend approval/live validation remain
+pending. See [testing limits](#testing-and-limitations); these interfaces do not
+establish a fully verified 0.3.0 release.
 
 `tetrabench agents [NAME] [--json]` lists the registered harnesses. JSON includes
 package identity, supported native formats, option types/choices/defaults,
@@ -219,12 +219,13 @@ Optional fields:
 - `ancillary_models`: `"primary"` (default) or `"native"`. Primary routes known
   ancillary settings to the requested model: OpenCode's small model and Claude
   Code's default tiers/subagent model. OpenCode gets a fixed title to avoid title
-   generation; conflicting explicit ancillary models are rejected. Codex role
-   `config_file` entries, including roles inside native `profiles`, require
-   `"native"` because role files can override model selection. At the current pin,
-   referenced files must be sealed as portable harness resources, not assumed
-   present on the remote host. Native allows the harness's ancillary choices. Neither policy
-   intercepts every possible model call or guarantees a universal billing cap.
+  generation; conflicting explicit ancillary models are rejected. Codex role
+  `config_file` entries, including roles inside native `profiles`, require
+  `"native"` because role files can override model selection. At the baseline pin,
+  referenced files must be sealed as portable harness resources, not assumed
+  present on the remote host. Native allows the harness's ancillary choices.
+  Neither policy intercepts every possible model call or guarantees a universal
+  billing cap.
 - `auth`: an explicit billing mode and credential reference; see
   [authentication](#explicit-authentication). Do not combine it with model-auth
   selectors in `env` or native provider credential/endpoint overrides.
@@ -360,12 +361,13 @@ Code's `autocompact`/`disable_auto_compact`, and Pi's `settings.compaction` and
 accepts `"auto"` or a native token window from 100k to 1M; it conflicts with
 `disable_auto_compact = true`.
 
-OpenAI opaque compaction, text summarization, and pruning are not equivalent.
-Tetrabench does not replace them with a generic summarizer or infer opaque
-compaction from a setting named `compaction`. Provenance records requested
-controls with `evidence = "configuration_only"`, an unobserved mechanism, and
-unknown compaction counts until execution supplies evidence. Multiple-boundary
-continuation and retained-fact claims remain live-unproven.
+Server-side OpenAI compaction returns opaque state; client-managed text
+summarization and pruning are different mechanisms. Tetrabench does not replace
+them with a generic summarizer or infer opaque compaction from a setting named
+`compaction`. Config provenance records requested controls with
+`evidence = "configuration_only"`, an unobserved mechanism, and
+unknown compaction counts; that snapshot alone does not establish execution.
+The bounded live continuation evidence is listed [below](#testing-and-limitations).
 
 Codex retains Harbor's `--dangerously-bypass-approvals-and-sandbox` override.
 Changing native context settings does not restore Codex's own sandbox or approval
@@ -394,8 +396,10 @@ Use distinct run files or user profiles for API keys and subscriptions. Explicit
 auth rejects competing ambient credentials/config selectors and never silently
 falls back to another account. Unset competing selectors before login or a run.
 API keys and setup tokens need no OAuth lineage file or private `auth.toml`.
-Native Codex may create its own temporary API-key auth file inside the isolated
-runtime; tetrabench does not persist it as refreshable OAuth state.
+Codex uses noninteractive native `login --with-api-key`, passing the referenced
+key over stdin into private ephemeral native state. This does not open a browser
+or persist a refreshable OAuth lineage. It also applies when authenticated model
+inspection needs a Codex API-key session.
 
 #### Local eval login
 
@@ -504,7 +508,9 @@ Claude subscription credentials are not supported in OpenCode, Codex, or Pi.
 Modal OAuth requires an explicitly selected private S3-compatible auth backend,
 in a **different bucket from run artifacts**. A local auth directory, Modal
 Volume, or static token snapshot in a Modal Secret is not durable refresh
-authority. The private config can select an S3 profile as follows:
+authority. Provisioning and operator approval are separate prerequisites, not
+performed by this configuration. This submitter-side login example uses a local
+private runtime directory; replace `/home/alice` with your actual home:
 
 ```toml
 schema_version = 1
@@ -518,6 +524,7 @@ generation = 1
 [profiles.codex-cloud.backend]
 kind = "s3"
 approved_private_backend = true
+trust_organization_admins = false
 access_key = { kind = "env", name = "TETRABENCH_AUTH_ACCESS_KEY_ID" }
 secret_key = { kind = "env", name = "TETRABENCH_AUTH_SECRET_ACCESS_KEY" }
 
@@ -539,9 +546,13 @@ custom Python bootstrap.
 On the controller, supply the same profile/binding/generation/backend through
 `TETRABENCH_AUTH_CONFIG_FILE` pointing to a private file available there, or
 `TETRABENCH_AUTH_CONFIG_CONTENT` containing its **JSON** representation in the
-named Secret. Set `runtime_directory` to an ephemeral controller path under
-`/tmp`, such as `/tmp/tetrabench-auth-runtime`, outside collected artifacts.
-Do not use the laptop path above. Supply the dedicated auth-backend
+named Secret. Resolve `runtime_directory` beneath the verified controller user's
+private ephemeral home, using the absolute equivalent of
+`HOME/.tetrabench-native-auth/runtime`, outside collected artifacts. Neither
+`HOME` nor `~` expands in this field; do not copy the laptop path or assume a
+`/root` UID/home. The tested Modal image's `/tmp` was writable without the sticky
+bit, so even a `0700` child failed the private-ancestry check. Use the private-home
+path rather than weakening that check. Supply the dedicated auth-backend
 variables separately in that Secret; credential values never enter run TOML.
 The submitter does not automatically upload its private config or environment.
 
@@ -555,6 +566,13 @@ The backend needs privacy-read permissions as well as scoped object access:
   unsupported privacy metadata blocks transfer. Managed encryption alone does
   not prove private access. The admission topology restrictions still apply.
 
+For a shared Tigris organization, `trust_organization_admins` defaults to `false`.
+Set it to `true` under the S3 backend only after explicitly approving that
+organization's administrators: it permits the native
+`https://groups.tigris.dev/org/admins` full-control ACL grant alongside the owner.
+That is not a public group; public and other unapproved grants remain rejected.
+This opt-in neither provisions a backend nor replaces its privacy checks.
+
 Native clients own token refresh. The session framework serializes each refresh
 lineage, requires private native write-back and proof that the previous consumer
 stopped, and leaves ambiguous claims blocked. There is no timeout takeover,
@@ -566,18 +584,20 @@ run reference to match the new generation. `auth logout --profile NAME` asks
 before removing that eval login (`--yes` for JSON); provider revocation is not
 implied.
 
-These are implemented configuration/CLI and lifecycle contracts. Exact deployed
-Modal credential delivery, refresh persistence, failure recovery, and artifact
-exclusion for these auth flows remain **live-unproven**, as do current bucket
-IAM/privacy responses. Unit/framework tests cannot establish them. Keep native
+OAuth helpers and lifecycle guards have unit/native-consumer coverage. Exact
+deployed OAuth delivery, refresh persistence, recovery, and artifact exclusion
+remain **live-unproven** pending browser approval and an approved private backend.
+API-key flow evidence does not establish those gates. Keep native
 logs private: excluding known credential files is not universal secret scrubbing.
 
 ### Model inspection and adoption
 
 ```console
 tetrabench models inspect --harness ./codex-run.toml --json
+# Explicitly permit use of the declared key for native metadata:
+tetrabench models inspect --harness ./codex-run.toml --allow-authenticated-read --json
 # Use a control/choice actually reported as supported:
-tetrabench models adopt --harness ./codex-run.toml --control effort --select high
+tetrabench models adopt --harness ./codex-run.toml --control effort --select high --allow-authenticated-read
 # Repeat with --write only after reviewing the preview.
 ```
 
@@ -603,15 +623,29 @@ support produce unavailable evidence rather than an unsafe fallback.
 
 `--refresh` permits public unauthenticated metadata reads for OpenCode/Pi; it does
 not authorize account access. For Codex/Claude, that CLI flag alone does not
-perform authenticated refresh. Config that can execute plugins/hooks/helpers
-requires `--allow-config-execution`, still subject to isolation. The API's
-`allow_authenticated_read=True` additionally requires a matching runtime owned
-by `auth_session`; there is no equivalent authenticated-read CLI flag. Executable
-config plus online authenticated collection is refused because metadata-only
-traffic cannot be guaranteed. Session-bearing configs are also refused for
-inspection; use a separate metadata-only configuration.
+perform authenticated refresh. Add `--allow-authenticated-read` to `models inspect`
+or `models adopt` to acquire the file's explicit `harness.auth` reference and
+verify its native auth mode before collection. API keys and Claude setup tokens
+use the declared environment variable without an auth profile file. OAuth uses
+the matching private profile (`--auth-config FILE` selects it), a serialized
+claim, native refresh write-back, and private CLI operation evidence for recovery.
+No browser login starts implicitly, and authenticated collection does not copy
+global model caches. A missing key, profile, or matching native status is an error.
 
-`adopt` collects afresh, previews the change, and writes only with `--write`.
+This permission makes credentials available; it does not force an HTTP request.
+Native control metadata may still be bundled, cached, or heuristic, not a remote
+entitlement check. In inspection JSON, `capability.identity.auth_mode` is the configured
+mode; `authentication.observed.mode` records native status only when observed.
+`authentication.provided` does not prove server acceptance. Account verification,
+account-capability checks, and provider metadata fetches retain their explicit
+unverified/not-observed labels. Known credential literals are refused in output.
+Config that can execute plugins/hooks/helpers requires `--allow-config-execution`
+for offline inspection and is refused for authenticated collection. Session-bearing
+configs are also refused; use a separate metadata-only configuration. The callable
+API requires both `allow_authenticated_read=True` and an acquired `NativeRuntime`.
+
+`adopt` collects afresh, previews the change, and writes only with `--write`, after
+rechecking the source configuration and referenced resource bytes.
 Choose `--select NAME` or a supported numeric `--budget N`; native normalization
 requires `--accept-normalization`. It writes the actual option/native-config
 binding and a `capability_snapshot` tied to harness version, model, route, auth
@@ -623,7 +657,8 @@ Read each control's status and provenance. `unknown`, `unsupported`, and
 `unavailable` differ; a known native choice can still have an unknown endpoint or
 provider route. Adoption requires sufficient evidence. `inference_validated` is
 false for metadata inspection, and no all-model/all-provider execution guarantee
-is implied. Exact authenticated remote reasoning behavior remains unproven.
+is implied. A successful API-key eval does not validate every metadata choice or
+subscription entitlement.
 
 ### Resource bundles and session controls
 
@@ -682,6 +717,25 @@ session persistence. Pi's `session_id` also conflicts with Harbor continuation.
 These controls do not resume another run's auth session or prove fact retention
 across multiple compactions.
 
+### Testing and limitations
+
+The source candidate passed full API-key eval flows through the public CLI for
+OpenCode, Codex, Claude Code, and Pi. This is not evidence from a published 0.3.0
+artifact. Bounded continuation tests separately established:
+
+- Two Codex V2 compaction boundaries and standalone OpenAI opaque-state
+  checkpoints succeeded.
+- OpenCode crossed three text-summary boundaries and Pi crossed two, with fact
+  retention in those tests.
+- Claude crossed two native text boundaries and continued to grade `1`, but read
+  back its transcript in violation of the verification protocol. This does not
+  establish clean, within-protocol fact retention.
+
+OAuth helpers are unit/native-consumer verified, but live user browser approval
+and separate private-backend operator approval remain required. OAuth release
+gates are open. Full evidence belongs in the [project record](../IMPLEMENTATION_PLAN.md);
+none of these tests guarantees all models, routes, or future native versions.
+
 ## Running an evaluation
 
 ```text
@@ -735,7 +789,15 @@ subtotals, retains the raw reported subtotal in `reported_amount_usd`, and adds
 an unpriced-usage limitation. A wholly unpriced scope has `amount_usd = null`
 and unknown coverage. Explicit complete model pricing can distinguish a
 configured zero from Pi's default zero; it still does not establish provider
-billing. Pi's message stream also excludes compaction and branch-summary costs.
+billing. Pi's `message_end` stream alone excludes compaction and branch-summary
+costs; the cost reader supplements it with eligible native session/summary records.
+
+Known native OpenCode text-summary and Pi compaction/branch-summary costs enter
+the auxiliary subtotal when their native records are available. Matching stream,
+session/database, and Harbor aggregate records are alternatives, not additive
+charges. Imported or pre-run Pi entries are excluded. Unpriced zero stays unknown;
+coverage remains partial and does not include all opaque OpenAI compaction or
+background calls. Native/catalog-priced costs are not provider settlement.
 
 If Claude Code's raw result stream is unavailable, its Harbor `cost_usd`
 aggregate remains `harness_reported` with a limitation that the amount may be

@@ -14,6 +14,15 @@ bucket policy status, bucket/object ACLs and explicit private object writes.
 Tigris keys therefore need GetBucketLocation/GetBucketAcl/GetBucketPolicyStatus,
 GetObjectAcl and scoped GetObject/PutObject/PutObjectAcl. Missing or unsupported
 ACL metadata stays blocked; managed encryption is not evidence of private access.
+An operator may explicitly trust the approved bucket's Tigris organization admins.
+Only their exact native Group/FULL_CONTROL grant is then accepted alongside the
+owner grant; this does not trust all authenticated users or other organizations.
+The operator owns organization selection and membership review. ACLs do not carry
+an organization ID, and these checks do not prove cross-account IAM isolation.
+Tigris documents the grant separately from public AllUsers access at
+https://www.tigrisdata.com/blog/mcp-server-sharing/#challenges-i-faced-along-the-way
+and organization authority at
+https://www.tigrisdata.com/docs/account-management/organizations/.
 Sources: https://www.tigrisdata.com/docs/api/s3/ and
 https://www.tigrisdata.com/docs/objects/acl/. Deployment permissions and actual
 metadata responses remain live prerequisites, not consequences of the config.
@@ -64,6 +73,7 @@ class S3SessionStore:
         artifact_buckets: Iterable[str],
         approved_private_backend: bool,
         kms_key_id: str | None = None,
+        trust_organization_admins: bool = False,
     ):
         NativeAuthReference(profile="validate", binding=binding, generation=1)
         if not approved_private_backend:
@@ -86,6 +96,11 @@ class S3SessionStore:
         self._client = client
         self._bucket = storage.bucket
         self._provider = storage.provider
+        if type(trust_organization_admins) is not bool or (
+            trust_organization_admins and self._provider != "tigris"
+        ):
+            raise AuthStateError("organization admin trust is a Tigris-only boolean")
+        self._trust_organization_admins = trust_organization_admins
         if self._provider == "tigris" and (
             endpoint.rstrip("/") != "https://t3.storage.dev" or kms_key_id is not None
         ):
@@ -180,16 +195,31 @@ class S3SessionStore:
             or not 1 <= len(grants) <= 100
         ):
             raise AuthStateError("credential ACL metadata is incomplete")
+        owner_granted = False
         for grant in grants:
+            if not isinstance(grant, Mapping):
+                raise AuthStateError("credential ACL metadata is incomplete")
             grantee = grant.get("Grantee", {})
-            if (
-                grantee.get("Type") != "CanonicalUser"
-                or grantee.get("ID") != owner
-                or grant.get("Permission") != "FULL_CONTROL"
-            ):
-                raise AuthStateError(
-                    "credential ACL must grant only its owner full control"
-                )
+            if not isinstance(grantee, Mapping):
+                raise AuthStateError("credential ACL metadata is incomplete")
+            owner_grant = (
+                grantee.get("Type") == "CanonicalUser"
+                and grantee.get("ID") == owner
+                and grant.get("Permission") == "FULL_CONTROL"
+            )
+            admin_grant = (
+                self._provider == "tigris"
+                and self._trust_organization_admins
+                and grantee.get("Type") == "Group"
+                and grantee.get("URI") == "https://groups.tigris.dev/org/admins"
+                and grantee.get("ID") is None
+                and grant.get("Permission") == "FULL_CONTROL"
+            )
+            if not (owner_grant or admin_grant):
+                raise AuthStateError("credential ACL contains an unapproved grant")
+            owner_granted |= owner_grant
+        if not owner_granted:
+            raise AuthStateError("credential ACL must grant its owner full control")
         return owner
 
     def _verify_object_privacy(self, profile: str) -> None:

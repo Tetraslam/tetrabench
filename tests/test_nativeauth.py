@@ -100,7 +100,7 @@ def test_expiry_is_source_bounded_metadata():
 
 def test_status_uses_native_output_not_env_presence():
     metadata = parse_native_status(
-        "codex", NativeResult(0, b"Logged in using an API key - SYNTHETIC_SUFFIX")
+        "codex", NativeResult(0, b"Logged in using an API key - SYNTHETI***I_KEY")
     )
     assert metadata.mode == "api_key"
     assert "SYNTHETIC" not in repr(metadata)
@@ -209,8 +209,10 @@ if "--with-api-key" in args:
     path.chmod(0o600)
 elif args[-2:] == ["login", "status"]:
     data = json.loads(path.read_text())
-    method = "an API key" if data.get("OPENAI_API_KEY") else "ChatGPT"
-    print("Logged in using " + method)
+    method = "an API key - SYNTHETI***I_KEY" if data.get("OPENAI_API_KEY") else (
+        "ChatGPT"
+    )
+    print("Logged in using " + method, file=sys.stderr)
 elif args[-1:] == ["logout"]:
     path.unlink()
 elif args[0] in {"rotate", "fail", "hang", "crash"}:

@@ -213,7 +213,10 @@ def _identity(
         profile_ref=profile,
         config_digest=harness_config_digest(config),
         route_status="bound"
-        if observed and route_data["protocol"] != "unknown"
+        if observed
+        and route_data["protocol"] != "unknown"
+        and route.get("status", "bound") == "bound"
+        and (config.name != "codex" or bool(endpoints))
         else "unknown",
     )
 
@@ -271,6 +274,17 @@ def collect_installed(
         raise MetadataError(
             "native discovery runtime requires explicit matching auth approval"
         )
+    if allow_authenticated_read and runtime is None:
+        raise MetadataError(
+            "authenticated metadata read requires an acquired NativeRuntime"
+        )
+    if runtime is not None and (
+        runtime.last_auth_status is None
+        or runtime.last_auth_status.mode != runtime.spec.mode
+    ):
+        raise MetadataError(
+            "native authentication mode must be observed before metadata collection"
+        )
     layers = native_configuration_layers(prepared)
     native = layers.main_config
     executes = any(_config_execution(layer.config, prepared) for layer in layers.layers)
@@ -283,7 +297,7 @@ def collect_installed(
                 "allow_config_execution before discovery; no runtime was started.",
             ),
         )
-    if executes and refresh and runtime is not None:
+    if executes and runtime is not None:
         return CapabilitySnapshot(
             identity=identity,
             status="unavailable",
@@ -342,7 +356,8 @@ def collect_installed(
                 "PI_TELEMETRY": "0",
                 "DISABLE_AUTOUPDATER": "1",
             }
-            offline = not (refresh and runtime is not None and allow_authenticated_read)
+            # Permission makes auth available; it does not force any provider GET.
+            offline = runtime is None
             prefix = [
                 unshare,
                 "--user",
@@ -367,7 +382,9 @@ def collect_installed(
                     "installed native version mismatch or namespace unavailable"
                 )
             cache_path = native_cache or (
-                _cache_path(config.name) if reuse_native_cache else None
+                _cache_path(config.name)
+                if reuse_native_cache and runtime is None
+                else None
             )
             staged_cache = None
             cache_hash = None
@@ -426,6 +443,7 @@ def collect_installed(
                 cache_hash = sha256_hex(staged_cache.read_bytes())
             request = {
                 "harness": config.name,
+                "version": config.version,
                 "command": list(installation.command),
                 "node": installation.node,
                 "pi_package": str(installation.pi_package),
@@ -436,6 +454,9 @@ def collect_installed(
                 "work": str(work),
                 "network_isolated": offline,
                 "authenticated": runtime is not None,
+                "auth_mode": runtime.spec.mode if runtime is not None else None,
+                "require_auth_custody": runtime is not None
+                and runtime.claim is not None,
                 "refresh": refresh,
                 "allow_config_execution": allow_config_execution,
                 "discovery": prepared.discovery or "native",
@@ -472,6 +493,8 @@ def collect_installed(
                 result = runtime.run(
                     argv, stdin=metadata_text(request).encode(), timeout=35
                 )
+                if result.returncode and runtime.claim is not None:
+                    runtime._ambiguous = True
             else:
                 result = run_native(
                     argv,
@@ -480,6 +503,10 @@ def collect_installed(
                     stdin=metadata_text(request).encode(),
                     timeout=35,
                 )
+            if runtime is not None:
+                from tetrabench.discovery_auth import assert_safe_metadata
+
+                assert_safe_metadata(runtime, result.output)
             if result.returncode:
                 failure = parse_metadata(result.output)
                 raise MetadataError(
@@ -487,6 +514,19 @@ def collect_installed(
                     + failure.get("unavailable", "initialization failed")
                 )
             captured = parse_metadata(result.output)
+            if runtime is not None and runtime.claim is not None:
+                custody = captured.get("auth_custody")
+                if (
+                    not isinstance(custody, dict)
+                    or custody.get("schema_version") != 1
+                    or type(custody.get("credential_processes")) is not int
+                    or not 1 <= custody["credential_processes"] <= 32
+                    or type(custody.get("graceful_credential_processes")) is not int
+                    or custody["credential_processes"]
+                    != custody["graceful_credential_processes"]
+                ):
+                    runtime._ambiguous = True
+                    raise AuthError("native metadata credential completion is unproven")
             if "unavailable" in captured:
                 raise MetadataError(
                     "native metadata interface unavailable for selected route"
@@ -499,6 +539,18 @@ def collect_installed(
                 method=captured["method"],
             )
             snapshot = discover(identity, observation=observation)
+            from tetrabench.discovery_auth import authentication_evidence
+
+            metadata = parse_metadata(snapshot.metadata_json)
+            metadata["authentication"] = authentication_evidence(runtime)
+            metadata["catalog_origin"] = captured.get(
+                "catalog_origin", "native-origin-undisclosed"
+            )
+            if "route_provenance" in captured:
+                metadata["route_provenance"] = captured["route_provenance"]
+            snapshot = snapshot.model_copy(
+                update={"metadata_json": metadata_text(metadata)}
+            )
             unknown = []
             if not identity.endpoints:
                 unknown.append("endpoint")
@@ -517,6 +569,13 @@ def collect_installed(
                     }
                 )
             limitations = [*snapshot.limitations]
+            if metadata.get("route_provenance", {}).get("kind") == (
+                "native-version-default"
+            ):
+                limitations.append(
+                    "Route uses pinned Codex built-in defaults and observed native "
+                    "auth mode, not an observed HTTP endpoint or account capability."
+                )
             if offline:
                 limitations.append(
                     "External network disabled by Linux network namespace."
@@ -524,6 +583,12 @@ def collect_installed(
             if runtime is None:
                 limitations.append(
                     "No authentication read; auth-specific catalog richness unproven."
+                )
+            else:
+                limitations.append(
+                    "Declared credentials provided and native auth mode observed; "
+                    "provider metadata HTTP fetch and account entitlement are not "
+                    "established. Native catalogs may be bundled, cached, or heuristic."
                 )
             if identity.route_status == "unknown":
                 limitations.append(
@@ -536,7 +601,10 @@ def collect_installed(
                 )
             if cache_hash:
                 limitations.append("Native cache copy SHA-256: " + cache_hash)
-            return snapshot.model_copy(update={"limitations": tuple(limitations)})
+            snapshot = snapshot.model_copy(update={"limitations": tuple(limitations)})
+            if runtime is not None:
+                assert_safe_metadata(runtime, snapshot.model_dump(mode="json"))
+            return snapshot
     except (
         OSError,
         ValueError,
@@ -546,6 +614,14 @@ def collect_installed(
         AttributeError,
         RecursionError,
     ) as error:
+        if runtime is not None:
+            # Never turn a failed authorized auth/metadata operation into a silent
+            # anonymous fallback, or retain upstream secret-bearing diagnostics.
+            if runtime.claim is not None:
+                runtime._ambiguous = True
+            raise AuthError(
+                "authenticated metadata collection failed; no native output retained"
+            ) from None
         action = (
             str(error)
             if isinstance(error, MetadataError)

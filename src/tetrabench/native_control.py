@@ -9,6 +9,7 @@ import selectors
 import signal
 import subprocess  # nosec B404
 import time
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
@@ -54,6 +55,142 @@ def select_model_info(
     if len(descriptors) != 1:
         raise ControlError("conflicting native model descriptors")
     return matches[0]
+
+
+# rust-v0.154.0: config/mod.rs selects "openai" when model_provider is absent;
+# ModelProviderInfo::create_openai_provider and ::to_api_provider own its defaults.
+# This is a harness compatibility contract, not a model or provider catalog.
+_CODEX_ROUTE_SOURCE = "https://github.com/openai/codex/blob/6b9826e3aa83b1a5947db50f4332cb9c65f1b340/codex-rs/"
+
+
+def codex_route(
+    config: Mapping[str, Any],
+    *,
+    version: str,
+    requested_provider: str,
+    observed_auth_mode: str | None,
+    environment: Mapping[str, str],
+) -> dict[str, Any]:
+    """Project config/read; fill only an unoverridden API-key built-in route.
+
+    Callers must verify the installed version and native auth mode separately.
+    Missing custom-provider fields are not Codex built-in OpenAI defaults.
+    No native configuration or credential state is changed here.
+    """
+    provider_id = config.get("model_provider") or "unknown"
+    providers = config.get("model_providers") or {}
+    definition = providers.get(provider_id, {})
+    protocol = definition.get("wire_api") or "unknown"
+    endpoint = definition.get("base_url") or ""
+    provenance: dict[str, Any] = {
+        "kind": "native-config-read",
+        "method": "config/read",
+        "native_version": version,
+        "default_fields": [],
+    }
+    builtin = provider_id == "openai" or (
+        config.get("model_provider") is None and requested_provider == "openai"
+    )
+    # OpenAI entries in model_providers are ignored by the pinned native merge,
+    # not effective overrides. Do not mistake those raw config/read fields for
+    # runtime routing or silently substitute defaults over user intent.
+    if builtin:
+        protocol, endpoint = "unknown", ""
+        if (
+            version == "0.154.0"
+            and requested_provider == "openai"
+            and observed_auth_mode == "api_key"
+            and "openai" not in providers
+            and not config.get("openai_base_url")
+            and not environment.get("OPENAI_BASE_URL")
+            and not config.get("profile")
+            and not config.get("profiles")
+        ):
+            default_fields = ["protocol", "endpoint"]
+            if provider_id == "unknown":
+                default_fields.insert(0, "provider")
+            provider_id, protocol, endpoint = (
+                "openai",
+                "responses",
+                "https://api.openai.com/v1",
+            )
+            provenance.update(
+                kind="native-version-default",
+                default_fields=default_fields,
+                source_urls=[
+                    _CODEX_ROUTE_SOURCE + "core/src/config/mod.rs",
+                    _CODEX_ROUTE_SOURCE + "model-provider-info/src/lib.rs",
+                ],
+            )
+    return {
+        "provider": provider_id,
+        "protocol": protocol,
+        "endpoint": endpoint,
+        "status": "bound"
+        if provider_id != "unknown" and protocol != "unknown" and endpoint
+        else "unknown",
+        "provenance": provenance,
+    }
+
+
+def _control_json(process: ControlProcess, limit: int) -> dict[str, Any]:
+    text = ""
+    while len(text.encode()) <= limit:
+        text += process.line() + "\n"
+        if len(text.encode()) > limit:
+            break
+        try:
+            value = json.loads(text)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(value, dict):
+            raise ControlError("native metadata object expected")
+        return value
+    raise ControlError("native metadata object exceeds limit")
+
+
+def opencode_model_metadata(
+    command: list[str],
+    cwd: Path,
+    environment: dict[str, str],
+    *,
+    provider: str,
+    model_id: str,
+    version: str,
+) -> dict[str, Any]:
+    """Read the pinned registry/config through naturally exiting native commands.
+
+    v1.18.30 cli/cmd/models.ts prints Provider.list() models, but not provider
+    options. cli/cmd/debug/config.ts exposes Config.get()'s merged layers; retain
+    its baseURL override just as the /provider collector does. Neither command
+    creates a session. Keep cwd/env unchanged so native discovery owns precedence.
+    """
+    if version != "1.18.30":
+        raise ControlError("unverified OpenCode metadata CLI version")
+    with ControlProcess(
+        [*command, "models", provider, "--verbose"], cwd, environment
+    ) as process:
+        for _ in range(10000):
+            if process.line() == provider + "/" + model_id:
+                model = _control_json(process, 128 * 1024)
+                break
+        else:
+            raise ControlError("selected native model unavailable")
+    if not process.graceful:
+        raise ControlError("native models CLI completion is unproven")
+    if model.get("providerID") != provider:
+        raise ControlError("native model provider differs")
+    with ControlProcess([*command, "debug", "config"], cwd, environment) as process:
+        config = _control_json(process, 2 * 1024 * 1024)
+    if not process.graceful:
+        raise ControlError("native config CLI completion is unproven")
+    options = config.get("provider", {}).get(provider, {}).get("options", {})
+    endpoint = options.get("baseURL") or model["api"]["url"]
+    return {
+        "id": provider,
+        "options": {"baseURL": endpoint},
+        "models": {model_id: model},
+    }
 
 
 class ControlProcess:
@@ -126,8 +263,12 @@ class ControlProcess:
         return line.decode("utf-8")
 
     def rpc(self, method: str, params: dict[str, Any], request_id: int) -> Any:
-        if method not in {"initialize", "model/list", "config/read"}:
+        if method not in {"initialize", "model/list", "config/read", "account/read"}:
             raise ControlError("non-metadata RPC rejected")
+        if method == "account/read" and (
+            set(params) != {"refreshToken"} or params["refreshToken"] is not False
+        ):
+            raise ControlError("metadata account/read must disable token refresh")
         self.send({"id": request_id, "method": method, "params": params})
         while True:
             response = json.loads(self.line())

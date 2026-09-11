@@ -24,6 +24,8 @@ try:
         ControlProcess,
         CredentialCompletionError,
         auth_custody_report,
+        codex_route,
+        opencode_model_metadata,
         select_model_info,
     )
 except ImportError:
@@ -34,6 +36,8 @@ except ImportError:
         ControlProcess,
         CredentialCompletionError,
         auth_custody_report,
+        codex_route,
+        opencode_model_metadata,
         select_model_info,
     )
 
@@ -193,13 +197,24 @@ def opencode(probe: dict[str, Any], command: list[str], cwd: Path, env: dict[str
         "OPENCODE_DISABLE_MODELS_FETCH": "1",
         "OPENCODE_DISABLE_AUTOUPDATE": "1",
     }
-    with ControlProcess(
-        [*command, "serve", "--hostname", "127.0.0.1", "--port", "0"], cwd, env
-    ) as p:
-        while not (match := re.search(r"http://127\.0\.0\.1:(\d+)", p.line())):
-            pass
-        result = _get(int(match[1]), "/provider")
     identity = probe["identity"]
+    if env.get(CUSTODY_ENV) == "required" or probe.get("refreshable_auth"):
+        provider = opencode_model_metadata(
+            command,
+            cwd,
+            env,
+            provider=identity["provider_id"],
+            model_id=identity["requested_model"].split("/", 1)[1],
+            version=identity["harness_version"],
+        )
+        result = {"all": [provider]}
+    else:
+        with ControlProcess(
+            [*command, "serve", "--hostname", "127.0.0.1", "--port", "0"], cwd, env
+        ) as p:
+            while not (match := re.search(r"http://127\.0\.0\.1:(\d+)", p.line())):
+                pass
+            result = _get(int(match[1]), "/provider")
     providers = [row for row in result["all"] if row["id"] == identity["provider_id"]]
     if len(providers) != 1:
         raise Drift("native provider disappeared")
@@ -232,6 +247,12 @@ def codex(probe: dict[str, Any], command: list[str], cwd: Path, env: dict[str, s
         )
         p.send({"method": "initialized", "params": {}})
         config = p.rpc("config/read", {"includeLayers": False}, 2)["config"]
+        mode = None
+        if probe["identity"].get("auth_mode") == "api_key":
+            account = p.rpc("account/read", {"refreshToken": False}, 1000)
+            if (account.get("account") or {}).get("type") != "apiKey":
+                raise Drift("native Codex auth mode differs")
+            mode = "api_key"
         rows = []
         cursor = None
         seen = set()
@@ -253,14 +274,19 @@ def codex(probe: dict[str, Any], command: list[str], cwd: Path, env: dict[str, s
     found = [row for row in rows if row["model"] == probe["identity"]["resolved_model"]]
     if len(found) != 1:
         raise Drift("native model disappeared")
-    provider = (config.get("model_providers") or {}).get(
-        config.get("model_provider"), {}
+    route = codex_route(
+        config,
+        version=probe["identity"]["harness_version"],
+        requested_provider=probe["identity"]["requested_model"].split("/", 1)[0],
+        observed_auth_mode=mode,
+        environment=env,
     )
     return {
         "model": found[0]["model"],
-        "provider_id": config.get("model_provider") or "unknown",
-        "protocol": provider.get("wire_api", "codex-native"),
-        "endpoint": provider.get("base_url", ""),
+        "provider_id": route["provider"],
+        "protocol": route["protocol"],
+        "endpoint": route["endpoint"],
+        "route_provenance": route["provenance"],
         "choices": [
             row["reasoningEffort"] for row in found[0]["supportedReasoningEfforts"]
         ],
@@ -494,7 +520,11 @@ def validate(probe: dict[str, Any], cwd: Path, env: dict[str, str]) -> dict[str,
         except Drift:
             raise
         except Exception:
-            if probe.get("refreshable_auth") or identity["harness"] == "pi":
+            if (
+                env.get(CUSTODY_ENV) == "required"
+                or probe.get("refreshable_auth")
+                or identity["harness"] == "pi"
+            ):
                 raise Drift(
                     "native authenticated metadata completion uncertain"
                 ) from None
@@ -542,6 +572,14 @@ def validate(probe: dict[str, Any], cwd: Path, env: dict[str, str]) -> dict[str,
         ):
             actual = observation[field]
             if (
+                identity["harness"] == "opencode"
+                and field == "endpoint"
+                and bool(actual) != bool(expected)
+            ):
+                # Adding/removing an explicit endpoint changes the native route,
+                # including a previously undisclosed built-in SDK default.
+                raise Drift("native route drift")
+            if (
                 not actual
                 or not expected
                 or actual in {"unknown", "codex-native", "claude-native"}
@@ -578,6 +616,9 @@ def validate(probe: dict[str, Any], cwd: Path, env: dict[str, str]) -> dict[str,
         else "captured native evidence only",
         "metadata_attempted": probe.get("metadata_allowed", True),
         "metadata_complete": observation is not None,
+        "route_provenance": observation.get("route_provenance")
+        if observation
+        else None,
         "inference_validated": False,
         "future_dispatch_verified": False,
     }

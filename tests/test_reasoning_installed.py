@@ -115,6 +115,45 @@ def test_installed_control_metadata_no_network(installed, tmp_path, name):
         assert "model/list" in snapshot.evidence[0].method
 
 
+@pytest.mark.parametrize("endpoint", [None, "https://example.test/v1"])
+def test_codex_custom_route_needs_native_endpoint_metadata(
+    installed, tmp_path, endpoint
+):
+    provider = {"name": "custom", "wire_api": "responses"}
+    if endpoint:
+        provider["base_url"] = endpoint
+    config = HarnessConfig(
+        name="codex",
+        version="0.154.0",
+        model="openai/gpt-6-astra",
+        native_config=NativeConfig(
+            text=json.dumps(
+                {"model_provider": "custom", "model_providers": {"custom": provider}}
+            )
+        ),
+    )
+    captured = collect_installed(
+        config, base=tmp_path, modules=installed, reuse_native_cache=False
+    )
+    assert captured.identity.provider_id == "custom"
+    assert captured.identity.protocol == "responses"
+    assert json.loads(captured.metadata_json)["route_provenance"]["kind"] == (
+        "native-config-read"
+    )
+    if endpoint:
+        assert captured.identity.endpoints == (endpoint,)
+        assert select_reasoning(
+            captured, captured.identity, control="effort", select="high"
+        )
+    else:
+        assert captured.status == "unknown"
+        assert captured.identity.endpoints == ()
+        with pytest.raises(MetadataError, match="unavailable or unknown"):
+            select_reasoning(
+                captured, captured.identity, control="effort", select="high"
+            )
+
+
 def test_installed_pi_capture_adoption_and_bound_post_config(installed, tmp_path):
     config = native_config("pi")
     path = tmp_path / "run.toml"

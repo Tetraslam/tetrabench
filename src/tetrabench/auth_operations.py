@@ -35,8 +35,8 @@ class NativeChild(BaseModel):
 class CliLifetime(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True, frozen=True)
     schema_version: Literal[2] = 2
-    owner: str = Field(pattern=r"^cli-logout-[0-9a-f]{32}$")
-    operation: Literal["native-logout"] = "native-logout"
+    owner: str = Field(pattern=r"^cli-(?:logout|metadata)-[0-9a-f]{32}$")
+    operation: Literal["native-logout", "native-metadata"] = "native-logout"
     process: ProcessIdentity
     lock_device: int
     lock_inode: int
@@ -115,8 +115,16 @@ def current_cli_operation() -> CliOperation | None:
 
 @contextmanager
 def cli_logout_lifetime(parent: Path) -> Iterator[str]:
+    with cli_operation_lifetime(parent, operation="native-logout") as owner:
+        yield owner
+
+
+@contextmanager
+def cli_operation_lifetime(
+    parent: Path, *, operation: Literal["native-logout", "native-metadata"]
+) -> Iterator[str]:
     directory = private_directory(parent / "operations", create=True)
-    owner = "cli-logout-" + uuid.uuid4().hex
+    owner = "cli-" + operation.removeprefix("native-") + "-" + uuid.uuid4().hex
     path = directory / (owner + ".json")
     lock = directory / (owner + ".lock")
     fd = os.open(lock, os.O_RDWR | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
@@ -124,24 +132,25 @@ def cli_logout_lifetime(parent: Path) -> Iterator[str]:
         _check_file(fd)
         fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
         info = os.fstat(fd)
-        operation = CliOperation(
+        current = CliOperation(
             path,
             CliLifetime(
                 owner=owner,
+                operation=operation,
                 process=process_identity(os.getpid()),
                 lock_device=info.st_dev,
                 lock_inode=info.st_ino,
             ),
         )
-        operation._save()
-        token = _operation.set(operation)
+        current._save()
+        token = _operation.set(current)
         try:
             yield owner
         except BaseException:
-            operation._save(state="ambiguous")
+            current._save(state="ambiguous")
             raise
         else:
-            operation._save(state="stopped")
+            current._save(state="stopped")
         finally:
             _operation.reset(token)
     finally:
@@ -159,7 +168,7 @@ def _absent(identity: ProcessIdentity) -> bool:
 
 
 def prove_cli_operation_stopped(owner: str, parent: Path) -> bool:
-    if re.fullmatch(r"cli-logout-[0-9a-f]{32}", owner) is None:
+    if re.fullmatch(r"cli-(?:logout|metadata)-[0-9a-f]{32}", owner) is None:
         return False
     try:
         directory = private_directory(parent / "operations")

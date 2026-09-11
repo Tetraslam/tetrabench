@@ -42,10 +42,11 @@ The installed CLI works outside its source checkout. For a development build,
 install a local wheel instead (see [Development](#development)).
 These docs describe this checkout; features absent from your installed release
 require that local build, not an unpublished version from PyPI.
-The 0.3.0 native-auth and discovery interfaces below are under integration.
-Parser and native-consumer checks do not prove authenticated evals, remote
-refresh/write-back, or multiple-compaction continuation. Those live paths remain
-**unproven**; the earlier Oracle and OpenCode release proofs are separate.
+The 0.3.0 candidate passed API-key eval flows for all four harnesses through the
+public CLI entry points. Subscription browser approvals and private OAuth backend
+approval/live validation remain pending; this is not a fully verified 0.3.0
+release. See [testing limits](docs/cli-reference.md#testing-and-limitations) for
+the source-candidate evidence, separate from published-release proofs.
 
 `init` creates a standalone project with the neutral `example` category:
 
@@ -111,8 +112,8 @@ stricter rules used by tetrabench's own benchmark catalog.
 | `category-create` | Add an empty category using an existing README | Atomic catalog update |
 | `agents [NAME]` | Show controlled harnesses, options, and credential variables | None |
 | `auth login/status/logout/reseed` | Manage an explicitly selected eval login | Native login or private auth-state reads/writes |
-| `models inspect` | Collect installed native model/reasoning metadata | Offline by default; optional public metadata reads |
-| `models adopt` | Preview a reasoning choice and its snapshot | Harness file update only with `--write` |
+| `models inspect` | Collect installed native model/reasoning metadata | Offline by default; opt-in metadata reads/auth-state updates |
+| `models adopt` | Preview a reasoning choice and its snapshot | Optional auth-state updates; harness file update with `--write` |
 | `task new` | Create an unlisted Harbor task | New task directory |
 | `task validate` | Seal and validate one fixture | None |
 | `task add` | Add a validated task to the project catalog | Atomic catalog update |
@@ -200,7 +201,7 @@ verifier offline. The example validates configuration, not model availability.
 
 `--harness` replaces the run's harness without editing task bytes. Project
 `[harness]` and user `[profiles.NAME.harness]` tables accept the same schema.
-The current stable baseline, checked on 2026-09-10, is pinned per run:
+The stable baseline as of 2026-09-10 is pinned per run:
 
 | Harness | Package | Baseline pin |
 | --- | --- | --- |
@@ -226,7 +227,7 @@ Use separate configurations for API billing and subscription billing. Explicit
 `auth.mode` accepts `api_key`, `chatgpt_oauth` (Codex, OpenCode, Pi), or
 `claude_setup_token` (Claude Code only). The
 [auth setup steps](docs/cli-reference.md#explicit-authentication) use the existing
-`auth login` CLI with a private `auth.toml`; no custom Python setup is needed.
+CLI and, for OAuth sessions, a private `auth.toml`; no custom Python setup is needed.
 Each OAuth harness needs its own eval login and isolated home. Browser approval
 belongs to the native client. Claude's long-lived setup token is user-managed,
 not a refreshable session owned by an intermediary. No Claude subscription OAuth
@@ -336,8 +337,9 @@ controller summary. JSON reports distinguish `verification_level` from
 Use `artifacts verify` for that read-only audit; human output shows verified totals
 and separate missing/corrupt counts. Publication and artifact downloads still
 verify content. Cost reports separate model, auxiliary, and infrastructure
-evidence, with source and coverage labels. Unknown cost is not zero; reported
-amounts and estimates are not a provider invoice or a universal spending cap.
+evidence, with source/coverage labels and known native OpenCode/Pi text-summary
+costs without double counting. Unknown cost is not zero; reported amounts and
+estimates are not a provider invoice or a universal spending cap.
 Pi's unpriced default zero is excluded from known subtotals, and a Claude Code
 aggregate without its raw source is not assumed to be an estimate. See
 [cost reports](docs/cli-reference.md#cost-reports) for those provenance limits.

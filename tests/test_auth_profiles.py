@@ -101,3 +101,89 @@ def test_remote_transport_contains_configuration_only(tmp_path):
 def test_profile_requires_explicit_backend_approval(tmp_path):
     with pytest.raises(AuthError):
         parse_auth_config_file(config_bytes(tmp_path).replace(b"= true", b"= false"))
+
+
+def s3_config(tmp_path):
+    config = json.loads(
+        parse_auth_config_file(config_bytes(tmp_path)).model_dump_json()
+    )
+    config["profiles"]["codex"]["backend"] = {
+        "kind": "s3",
+        "approved_private_backend": True,
+        "storage": {"provider": "tigris", "bucket": "synthetic-auth-only"},
+        "access_key": {"kind": "env", "name": "TETRABENCH_AUTH_ACCESS_KEY"},
+        "secret_key": {"kind": "env", "name": "TETRABENCH_AUTH_SECRET_KEY"},
+    }
+    return config
+
+
+@pytest.mark.parametrize("trust", [None, False, True])
+def test_profile_transports_explicit_org_admin_trust_to_dedicated_store(
+    tmp_path, monkeypatch, trust
+):
+    data = s3_config(tmp_path)
+    if trust is not None:
+        data["profiles"]["codex"]["backend"]["trust_organization_admins"] = trust
+    config = parse_auth_config_file(json.dumps(data).encode(), format="json")
+    config = load_auth_config_file(
+        environment={"TETRABENCH_AUTH_CONFIG_CONTENT": config.model_dump_json()}
+    )
+    client = object()
+    result = object()
+    observed = {}
+
+    def make_client(service, **kwargs):
+        observed["client"] = kwargs
+        return client
+
+    def make_store(selected_client, storage, **kwargs):
+        assert selected_client is client
+        observed["store"] = kwargs
+        return result
+
+    monkeypatch.setattr("tetrabench.auth_profiles.boto3.client", make_client)
+    monkeypatch.setattr("tetrabench.auth_profiles.S3SessionStore", make_store)
+    assert (
+        profile_store(
+            config.profiles["codex"],
+            engine="modal",
+            environment={
+                "TETRABENCH_AUTH_ACCESS_KEY": "SYNTHETIC_DEDICATED_ID",
+                "TETRABENCH_AUTH_SECRET_KEY": "SYNTHETIC_DEDICATED_SECRET",
+            },
+            artifact_buckets=["synthetic-artifacts"],
+        )
+        is result
+    )
+    assert observed["store"]["trust_organization_admins"] is (trust is True)
+    assert observed["store"]["approved_private_backend"] is True
+    assert observed["client"]["endpoint_url"] == "https://t3.storage.dev"
+    assert observed["client"]["config"].retries == {"total_max_attempts": 1}
+
+
+@pytest.mark.parametrize("invalid", ["true", "false", 0, 1, None, []])
+def test_org_admin_trust_requires_a_boolean(tmp_path, invalid):
+    data = s3_config(tmp_path)
+    data["profiles"]["codex"]["backend"]["trust_organization_admins"] = invalid
+    with pytest.raises(AuthError):
+        parse_auth_config_file(json.dumps(data).encode(), format="json")
+
+
+def test_org_admin_trust_is_not_aws_or_private_backend_approval(tmp_path):
+    data = s3_config(tmp_path)
+    backend = data["profiles"]["codex"]["backend"]
+    backend["trust_organization_admins"] = True
+    backend["storage"] = {
+        "provider": "aws",
+        "bucket": "synthetic-auth-only",
+        "region": "us-east-1",
+    }
+    with pytest.raises(AuthError):
+        parse_auth_config_file(json.dumps(data).encode(), format="json")
+    backend["storage"] = {"provider": "tigris", "bucket": "synthetic-auth-only"}
+    backend["approved_private_backend"] = False
+    with pytest.raises(AuthError):
+        parse_auth_config_file(json.dumps(data).encode(), format="json")
+    del backend["approved_private_backend"]
+    with pytest.raises(AuthError):
+        parse_auth_config_file(json.dumps(data).encode(), format="json")

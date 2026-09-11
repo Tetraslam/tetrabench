@@ -570,6 +570,7 @@ class RuntimeAuthHook:
                     "data",
                     "data/opencode",
                     "state",
+                    "tmp",
                 )
             ]
             await self._exec("umask 077; mkdir -p " + shlex.join(directories))
@@ -659,6 +660,10 @@ class RuntimeAuthHook:
         if name == "opencode":
             env["XDG_STATE_HOME"] = self.root + "/state"
             env["OPENCODE_DISABLE_MODELS_FETCH"] = "true"
+        elif name == "codex":
+            # Codex 0.154 refuses PATH aliases when CODEX_HOME is below temp_dir().
+            # Use an owned private sibling, not /tmp (which contains CODEX_HOME).
+            env["TMPDIR"] = self.root + "/tmp"  # nosec B108
         return env
 
     async def _status(self, env: dict[str, str]) -> None:
@@ -707,14 +712,14 @@ class RuntimeAuthHook:
         result = await self._exec(_NATIVE_PREFIX + shlex.join(command), env=env)
         metadata = parse_native_status(
             name,
-            NativeResult(result.return_code, (result.stdout or "").encode()),
+            NativeResult(
+                result.return_code,
+                ((result.stdout or "") + (result.stderr or "")).encode(),
+                stdout=(result.stdout or "").encode(),
+                stderr=(result.stderr or "").encode(),
+            ),
             model=self.scope.harness.model,
         )
-        # Codex writes login status to stderr.
-        if metadata.mode in {"unknown", "none"} and name == "codex":
-            metadata = parse_native_status(
-                name, NativeResult(result.return_code, (result.stderr or "").encode())
-            )
         self._observed_auth = metadata
         self._observation_count += 1
         if self._provenance_writer is not None:

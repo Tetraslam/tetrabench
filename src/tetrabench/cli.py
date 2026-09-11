@@ -403,24 +403,61 @@ def models_inspect_command(
         bool, typer.Option("--allow-config-execution")
     ] = False,
     no_native_cache: Annotated[bool, typer.Option("--no-native-cache")] = False,
+    allow_authenticated_read: Annotated[
+        bool,
+        typer.Option(
+            "--allow-authenticated-read",
+            help="Use declared auth for metadata; never starts browser login.",
+        ),
+    ] = False,
+    auth_config: Annotated[
+        Path | None,
+        typer.Option(
+            "--auth-config",
+            help="Private OAuth profile configuration; not used by API keys.",
+        ),
+    ] = None,
     json_output: Annotated[bool, typer.Option("--json")] = False,
 ) -> None:
     """Inspect installed native metadata without inference or ambient auth reads."""
+    from tetrabench.discovery_auth import (
+        assert_safe_metadata,
+        authentication_evidence,
+        metadata_auth_context,
+    )
     from tetrabench.native_discovery import inspect_installed_handler
 
     try:
         path = harness.expanduser().absolute()
         _, config = _inspection_config(path)
-        result = inspect_installed_handler(
+        with metadata_auth_context(
             config,
-            base=path.parent,
+            allow_authenticated_read=allow_authenticated_read,
             modules=native_modules,
             node=node,
-            refresh=refresh,
-            allow_config_execution=allow_config_execution,
-            reuse_native_cache=not no_native_cache,
-        )
-    except (ValueError, OSError) as error:
+            auth_config=auth_config,
+        ) as runtime:
+            if runtime is not None:
+                assert_safe_metadata(runtime, config.model_dump(mode="json"))
+            extra = (
+                {"runtime": runtime, "allow_authenticated_read": True}
+                if runtime is not None
+                else {}
+            )
+            result = inspect_installed_handler(
+                config,
+                base=path.parent,
+                modules=native_modules,
+                node=node,
+                refresh=refresh,
+                allow_config_execution=allow_config_execution,
+                reuse_native_cache=not no_native_cache and runtime is None,
+                **extra,
+            )
+            result["authentication"] = authentication_evidence(runtime)
+            if runtime is not None:
+                assert_safe_metadata(runtime, result)
+    except (ValueError, OSError, RuntimeError, BotoCoreError, ClientError) as error:
         _fail_command(error, json_output=json_output)
     if json_output:
         _canonical_echo(result)
@@ -450,6 +487,11 @@ def models_adopt_command(
     write: Annotated[bool, typer.Option("--write")] = False,
     native_modules: Annotated[Path | None, typer.Option("--native-modules")] = None,
     node: Annotated[str | None, typer.Option("--node")] = None,
+    refresh: Annotated[bool, typer.Option("--refresh")] = False,
+    allow_authenticated_read: Annotated[
+        bool, typer.Option("--allow-authenticated-read")
+    ] = False,
+    auth_config: Annotated[Path | None, typer.Option("--auth-config")] = None,
     json_output: Annotated[bool, typer.Option("--json")] = False,
 ) -> None:
     """Inspect afresh and preview a sealed adoption; --write applies the shown diff."""
@@ -458,15 +500,44 @@ def models_adopt_command(
     import tomlkit
 
     from tetrabench.config import replace_harness_document
+    from tetrabench.discovery_auth import (
+        assert_safe_metadata,
+        authentication_evidence,
+        metadata_auth_context,
+    )
     from tetrabench.harness_config import bind_capability_adoption
     from tetrabench.native_discovery import collect_installed
+    from tetrabench.reasoning import harness_config_digest
 
     try:
         path = harness.expanduser().absolute()
         before, source = _inspection_config(path)
-        snapshot = collect_installed(
-            source, base=path.parent, modules=native_modules, node=node
-        )
+        with metadata_auth_context(
+            source,
+            allow_authenticated_read=allow_authenticated_read,
+            modules=native_modules,
+            node=node,
+            auth_config=auth_config,
+        ) as runtime:
+            if runtime is not None:
+                assert_safe_metadata(runtime, source.model_dump(mode="json"))
+            extra = (
+                {
+                    "runtime": runtime,
+                    "allow_authenticated_read": True,
+                    "reuse_native_cache": False,
+                }
+                if runtime is not None
+                else {}
+            )
+            if refresh:
+                extra["refresh"] = True
+            snapshot = collect_installed(
+                source, base=path.parent, modules=native_modules, node=node, **extra
+            )
+            auth_evidence = authentication_evidence(runtime)
+            if runtime is not None:
+                assert_safe_metadata(runtime, snapshot.model_dump(mode="json"))
         selection = {"control": control, "accept_normalization": accept_normalization}
         if select is not None:
             selection["select"] = select
@@ -503,6 +574,14 @@ def models_adopt_command(
             )
         )
         if write:
+            current_text, current_source = _inspection_config(path)
+            if current_text != before or harness_config_digest(
+                current_source
+            ) != harness_config_digest(source):
+                raise ValueError(
+                    "harness configuration/resources changed during collection; "
+                    "inspect again"
+                )
             replace_harness_document(path, before.encode(), after)
         result = {
             "schema_version": 1,
@@ -511,8 +590,16 @@ def models_adopt_command(
             "snapshot_sha256": snapshot.digest,
             "effective_config_digest": evidence.snapshot().identity.config_digest,
             "inference_validated": False,
+            "authentication": auth_evidence,
         }
-    except (ValueError, OSError, KeyError) as error:
+    except (
+        ValueError,
+        OSError,
+        KeyError,
+        RuntimeError,
+        BotoCoreError,
+        ClientError,
+    ) as error:
         _fail_command(error, json_output=json_output)
     if json_output:
         _canonical_echo(result)

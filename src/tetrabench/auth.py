@@ -79,6 +79,7 @@ class NativeRuntime:
     environment: dict[str, str] = field(repr=False)
     claim: SessionClaim | None = field(default=None, repr=False)
     model: str | None = None
+    last_auth_status: NativeAuthMetadata | None = field(default=None, repr=False)
     _stopped: bool = True
     _ambiguous: bool = False
     _external: bool = False
@@ -168,6 +169,7 @@ class NativeRuntime:
             raise AuthError(
                 "native auth status does not match the explicit billing mode"
             )
+        self.last_auth_status = metadata
         return metadata
 
     def refresh(self) -> NativeAuthMetadata:
