@@ -4,7 +4,7 @@
 
 - Project state: P0 through P6 are complete for their local/static contracts. Live Tigris/Modal evidence includes cancellation, forced controller interruption/recovery, and the E-046 Single-region `iad` cutover. Scoped auth-backend CAS/privacy evidence is recorded below; general provider IAM/privacy/encryption guarantees, AWS behavior, and true provider preemption remain `unproven`.
 - Published baseline: Tetrabench 0.2.0 is published on PyPI. PR 33 merged with passing CI; the unchanged GitHub release artifacts passed installed local/Modal Oracle and controlled Astra proofs before protected publication. Public installation and artifact hashes were independently verified.
-- Current action: finish release review, the hosted CI rerun, and exact-release-artifact validation. Normal auth is live-proven for all four harnesses; Codex, OpenCode, and Pi actual native refresh, persistence, and fresh Modal controller consumers passed. The reviewed CI-only namespace-window fix awaits hosted validation; 0.3.0 remains unpublished and is not release-ready. Preserve the context-retention qualifications below. Future eval choice belongs to the user.
+- Current action: obtain the user's retention disposition and finish independent release review and exact-release-artifact validation. Hosted CI passed at `3a48db2`. Normal auth for all four harnesses and native OAuth refresh/fresh-controller consumption for Codex, OpenCode, and Pi remain live-proven. Version 0.3.0 is unpublished; CI success alone does not establish release readiness. Future eval choice belongs to the user.
 - Task-catalog gate: E-132's corrected-byte local/detached execution and audit gates and E-143's exact-four calibration all pass. `authority-fencing` is admitted in `benchmarks/catalog.toml`; later systems and GitHub-workflow tasks remain absent pending their own complete gates.
 - Authoring UX: D-127 is merged through PR 26 with focused local and real-Docker evidence. It creates user-owned starter projects and tasks independently of the repository catalog.
 - Canonical record updated: 2026-09-11.
@@ -34,9 +34,10 @@
 - [x] Earendil Pi Codex OAuth bootstrap and normal live smoke.
 - [x] Pi actual native refresh, durable write-back, and fresh Modal controller proof.
 - [x] OpenCode and Pi OpenRouter API-key smoke at current stable pins.
-- [ ] Multiple native-compaction/summarization boundary runs, fact retention, and mechanism evidence.
+- [ ] Retention acceptance disposition by the user: mechanisms/continuation passed, but Claude clean within-protocol retention remains unproven; no paid rerun is inferred as authorized or required.
 - [x] Candidate independent re-review and local validation at the checkpoint below.
-- [ ] Final independent release review, hosted CI, exact-release-artifact validation, publication, and public install proof.
+- [x] Hosted CI checkpoint `34631236019` at `3a48db2`.
+- [ ] Final independent release review, exact-release-artifact validation, publication, and public install proof.
 
 Initial normal-subscription checkpoint (superseded only for pending gates and
 profile revisions by the later proofs below): the user approved the single-person
@@ -116,9 +117,13 @@ audit. Latest candidate wheel SHA-256:
 The later amended test step passed 2,487 cases with one quota-related failure;
 that case passed separately. This is not a new uninterrupted full-suite pass.
 Hosted CI initially failed 45 renewal cases after the native step restored the
-namespace policy too early. The reviewed minimal CI-only window fix awaits its
-hosted rerun, with no production change. Final independent release review and
-exact release-artifact gates remain open despite completed candidate live proofs.
+namespace policy too early. That pending-CI status is superseded by
+[run 34631236019](https://github.com/Tetraslam/tetrabench/actions/runs/34631236019)
+at `3a48db2`: both jobs and every step passed, including 107 mandatory native,
+2,488 other tests, 12 Docker tests, and package/security checks. Code, tests, tools,
+and dependencies are unchanged since live-tested `2d1ca9a`. This accepts that CI
+checkpoint, not a future docs-only commit. Final independent release review,
+retention disposition, exact-release-artifact validation, and publication remain open.
 
 Provenance: retained `REPORT.json`, `FINAL_AUDIT.json`, and `WORKING_RECORD.md` in
 `/tmp/opencode/tetrabench-030-subscription-55dc637-20260911/`;
@@ -173,6 +178,9 @@ finished all stages, but read the original transcript against that verification
 task's protocol; clean within-protocol fact retention is not established. All
 used reduced verification thresholds rather than stock-window performance
 settings. No paid rerun was used to hide that qualification.
+Mechanism/continuation acceptance does not resolve Claude's clean-retention claim.
+Its release disposition awaits the user; no paid rerun is inferred as authorized
+or required.
 
 Known native summary costs are now counted once in auxiliary evidence. Native
 reported/catalog-priced amounts remain partial, and standalone Codex compaction

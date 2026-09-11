@@ -44,8 +44,9 @@ These docs describe this checkout; features absent from your installed release
 require that local build, not an unpublished version from PyPI.
 The 0.3.0 candidate passed API-key and normal subscription evals for all four
 harnesses, plus actual native OAuth refresh and fresh-controller consumption for
-Codex, OpenCode, and Pi. Release review, CI, and exact-release-artifact gates remain
-open; this is not a fully verified or published 0.3.0 release. See
+Codex, OpenCode, and Pi. Hosted CI passed at `3a48db2`; final independent release
+review, retention disposition, exact-release-artifact validation, and publication
+remain open. This is not a fully verified or published 0.3.0 release. See
 [testing limits](docs/cli-reference.md#testing-and-limitations) for
 the source-candidate evidence, separate from published-release proofs.
 

@@ -2148,3 +2148,18 @@ amended step passed 2,487 with one quota failure that passed separately, not a n
 full pass. Hosted CI failed 45 renewal cases after early namespace-policy restoration;
 the uncommitted CI-only window fix awaits hosted rerun. Final independent review,
 CI, and exact-release-artifact gates remain open. No 0.3.0 publication occurred.
+
+## 2026-09-11T18:21:25Z: Hosted CI checkpoint accepted
+
+Provenance: read-only `gh run view` metadata and logs for
+[run 34631236019](https://github.com/Tetraslam/tetrabench/actions/runs/34631236019),
+head `3a48db2d75790674ba08135fa1732fec1efdc832`. Both jobs and all steps passed:
+107 mandatory native, 2,488 other tests, 12 Docker, and package/security checks.
+This supersedes the pending-CI status above. Git comparison confirms code, tests,
+tools, and dependencies unchanged since live-tested `2d1ca9a`. This follow-up
+changes documentation only; it does not claim tests ran on its future commit.
+
+Final independent release review, exact-release-artifact validation, and publication
+remain open. Mechanisms/continuation passed; Claude clean within-protocol retention
+is unproven and its release disposition awaits the user. No paid rerun is inferred
+as authorized or required. Version 0.3.0 remains unpublished.

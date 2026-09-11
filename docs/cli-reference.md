@@ -772,8 +772,11 @@ smoke preserved the requested `anthropic/claude-opus-5[1m]` selector and reporte
 native usage `contextWindow = 1000000`. It did not exercise a million-token input
 or establish million-token retention or universal entitlement. Local error-handling
 tests do not establish natural setup-token expiry/renewal; no token-aging experiment
-is required. Final release review, hosted CI, and exact-release-artifact validation
-remain open; the candidate live proofs do not establish release readiness.
+is required. Hosted CI passed at `3a48db2`. Final independent release review,
+exact-release-artifact validation, and publication remain open. Mechanisms and
+continuation passed, but Claude's clean within-protocol retention is unproven;
+its release disposition awaits the user, without an inferred paid-rerun requirement
+or authorization.
 Current blockers and retained provenance belong in the [project record](../IMPLEMENTATION_PLAN.md#native-fidelity-and-authentication-working-record).
 None of these tests guarantees all models, routes, or future native versions.
 
