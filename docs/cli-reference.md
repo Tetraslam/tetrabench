@@ -150,10 +150,11 @@ still contain workload-emitted secrets and must be treated as private.
 
 ### Controlled harness configuration
 
-This checkout's 0.3.0 candidate has live API-key evidence for all four harnesses.
-Subscription approvals and private OAuth backend approval/live validation remain
-pending. See [testing limits](#testing-and-limitations); these interfaces do not
-establish a fully verified 0.3.0 release.
+This checkout's 0.3.0 candidate has live API-key evidence for all four harnesses
+and normal subscription smoke evidence for Codex, OpenCode, and Pi. Claude
+subscription acceptance and actual OAuth refresh remain pending. See
+[testing limits](#testing-and-limitations); this is not a fully verified or
+published 0.3.0 release.
 
 `tetrabench agents [NAME] [--json]` lists the registered harnesses. JSON includes
 package identity, supported native formats, option types/choices/defaults,
@@ -478,8 +479,8 @@ Set `concurrency = 1` under `[harbor]` in the project (or under the selected
 user profile's `harbor` table) for ChatGPT OAuth;
 the runtime rejects parallel trials sharing that lineage. Run selection uses
 `tetrabench run example --engine docker --harness ./codex-oauth-run.toml`, after
-adapting the starter's network/timeout as described above. This is the integration
-entry point, not a claim that a live OAuth eval has passed.
+adapting the starter's network/timeout as described above. The retained live OAuth
+smokes used Modal; this Docker example is not separate live OAuth evidence.
 
 #### Claude subscription token
 
@@ -584,11 +585,12 @@ run reference to match the new generation. `auth logout --profile NAME` asks
 before removing that eval login (`--yes` for JSON); provider revocation is not
 implied.
 
-OAuth helpers and lifecycle guards have unit/native-consumer coverage. Exact
-deployed OAuth delivery, refresh persistence, recovery, and artifact exclusion
-remain **live-unproven** pending browser approval and an approved private backend.
-API-key flow evidence does not establish those gates. Keep native
-logs private: excluding known credential files is not universal secret scrubbing.
+Normal deployed OAuth delivery and private state write-back passed for Codex,
+OpenCode, and Pi using fresh independent logins and the approved backend. No access
+or refresh credential changed, so actual refresh persistence, next-consumer use,
+and refresh-failure recovery remain live-unproven. See the scoped backend and
+artifact evidence [below](#testing-and-limitations). Keep native logs private:
+excluding known credential files is not universal secret scrubbing.
 
 ### Model inspection and adoption
 
@@ -719,9 +721,35 @@ across multiple compactions.
 
 ### Testing and limitations
 
-The source candidate passed full API-key eval flows through the public CLI for
-OpenCode, Codex, Claude Code, and Pi. This is not evidence from a published 0.3.0
-artifact. Bounded continuation tests separately established:
+The source candidate passed API-key eval flows through the public CLI for
+OpenCode, Codex, Claude Code, and Pi. Subscription evidence from the unchanged
+installed candidate wheel at clean `55dc637` is recorded below as of 2026-09-11.
+It is not a published 0.3.0 artifact:
+
+| Harness | Normal subscription smoke | Refresh or renewal acceptance |
+| --- | --- | --- |
+| Codex 0.154.0 | Astra, reward `1` | No credential change; actual refresh and next-consumer proof pending |
+| OpenCode 1.18.30 | Astra, reward `1` | No credential change; actual refresh and next-consumer proof pending |
+| Pi 0.85.1 | Astra, reward `1` | No credential change; actual refresh and next-consumer proof pending |
+| Claude Code 2.1.267 | Setup token recognized; `[1m]` metadata selection blocked before inference | Normal smoke and `[1m]` server acceptance pending; setup-token renewal is user-owned |
+
+All three successful owners stopped and passed two empty child sweeps; profiles
+returned ready/unowned after private write-back. The final audit scanned 91
+published objects, including binary artifacts, with zero known credential or
+private-auth-resource matches across literal, base64, and URL-encoded forms.
+Unknown transformations and workload-emitted secrets are not covered. These
+short tasks establish neither subscription long-context retention nor actual
+subscription charges/quota; a native zero cost is not proof of free usage.
+
+The dedicated Tigris backend passed scoped S3SessionStore CAS/private ACL checks
+under the approved single-person organization-admin opt-in. A later auth-store-key
+HEAD against a known retained artifact returned 403 without reading its payload.
+`GetBucketPolicyStatus` still revealed an unrelated bucket's public/private bit
+despite explicit deny, an accepted metadata limitation. These probes do not prove
+general IAM isolation, effective encryption, or live AWS behavior; the public
+trust default remains false.
+
+Bounded continuation tests separately established:
 
 - Two Codex V2 compaction boundaries and standalone OpenAI opaque-state
   checkpoints succeeded.
@@ -731,10 +759,15 @@ artifact. Bounded continuation tests separately established:
   back its transcript in violation of the verification protocol. This does not
   establish clean, within-protocol fact retention.
 
-OAuth helpers are unit/native-consumer verified, but live user browser approval
-and separate private-backend operator approval remain required. OAuth release
-gates are open. Full evidence belongs in the [project record](../IMPLEMENTATION_PLAN.md);
-none of these tests guarantees all models, routes, or future native versions.
+Those continuation tests used reduced verification thresholds, not stock-window
+performance settings. Claude's `[1m]` is a native
+[extended-context model suffix](https://code.claude.com/docs/en/model-config#extended-context).
+Applied selection and catalog metadata prove neither entitlement nor context
+capacity; catalog omission does not prove server rejection. The suffix/picker
+correction and refresh containment passed local validation and independent
+re-review, but live Claude subscription and refresh acceptance remain pending.
+Current blockers and retained provenance belong in the [project record](../IMPLEMENTATION_PLAN.md#native-fidelity-and-authentication-working-record).
+None of these tests guarantees all models, routes, or future native versions.
 
 ## Running an evaluation
 

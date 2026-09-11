@@ -42,9 +42,10 @@ The installed CLI works outside its source checkout. For a development build,
 install a local wheel instead (see [Development](#development)).
 These docs describe this checkout; features absent from your installed release
 require that local build, not an unpublished version from PyPI.
-The 0.3.0 candidate passed API-key eval flows for all four harnesses through the
-public CLI entry points. Subscription browser approvals and private OAuth backend
-approval/live validation remain pending; this is not a fully verified 0.3.0
+The 0.3.0 candidate passed API-key eval flows for all four harnesses and normal
+subscription smokes for Codex, OpenCode, and Pi through public CLI entry points.
+Those smokes did not refresh credentials. Claude subscription acceptance and live
+OAuth refresh remain pending; this is not a fully verified or published 0.3.0
 release. See [testing limits](docs/cli-reference.md#testing-and-limitations) for
 the source-candidate evidence, separate from published-release proofs.
 

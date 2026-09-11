@@ -99,7 +99,12 @@ class NativeRuntime:
     ) -> NativeResult:
         if not self._consumer_lock.acquire(blocking=False):
             raise AuthError("only one native consumer is allowed per auth session")
-        if not self._stopped or self._external:
+        if (
+            not self._stopped
+            or self._external
+            or self._ambiguous
+            or (self.claim is not None and self.claim.closed)
+        ):
             self._consumer_lock.release()
             raise AuthError("only one native consumer is allowed per auth session")
         self._stopped = False
@@ -129,7 +134,12 @@ class NativeRuntime:
         if not self._consumer_lock.acquire(blocking=False):
             raise AuthError("native credential session already has a consumer")
         try:
-            if not self._stopped or self._external:
+            if (
+                not self._stopped
+                or self._external
+                or self._ambiguous
+                or (self.claim is not None and self.claim.closed)
+            ):
                 raise AuthError("native credential session already has a consumer")
             self._external = True
             self._stopped = False
@@ -172,19 +182,13 @@ class NativeRuntime:
         self.last_auth_status = metadata
         return metadata
 
-    def refresh(self) -> NativeAuthMetadata:
-        """Pi exposes native getAuth; Codex/OpenCode refresh on their next request."""
-        result = self.run(
-            native_auth_command(
-                self.harness, "refresh", executable=self.executable, mode=self.spec.mode
-            )
-        )
-        if result.returncode:
-            self._ambiguous = True
-            raise AuthError(
-                "native credential refresh failed; explicit login may be required"
-            )
-        return inspect_native_store(self.harness, read_private(self.credential_path))
+    def refresh(
+        self, *, timeout: float = 60, prompt: str | None = None
+    ) -> NativeAuthMetadata:
+        """Explicit, tracked native renewal; unchanged tokens are inconclusive."""
+        from tetrabench.native_refresh import refresh_native
+
+        return refresh_native(self, timeout=timeout, prompt=prompt)
 
 
 def _prepare_runtime(
@@ -315,7 +319,13 @@ def auth_session(
                     native = read_private(runtime.credential_path)
                     # Only native state crosses into private authority. Never copy
                     # native session transcripts, runtime directories, or logs.
-                    runtime.claim.finish(native, consumer_stopped=True)
+                    try:
+                        runtime.claim.finish(native, consumer_stopped=True)
+                    except BaseException:
+                        raise AuthStateError(
+                            "native auth release outcome is ambiguous; may already be "
+                            "ready; stop and reconcile authority without replay"
+                        ) from None
                 else:
                     if runtime._stopped:
                         runtime.claim.preserve_blocked(

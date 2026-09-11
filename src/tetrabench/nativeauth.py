@@ -40,6 +40,10 @@ from tetrabench.auth_sessions import (
 MAX_NATIVE_OUTPUT = 64 * 1024
 
 
+class NativeStopError(AuthError):
+    """Native process cleanup did not establish physical quiescence."""
+
+
 @dataclass(frozen=True)
 class NativeAuthMetadata:
     harness: str
@@ -239,6 +243,8 @@ def run_native(
     stdin: bytes | None = None,
     interactive: bool = False,
     timeout: float = 60,
+    require_natural_completion: bool = False,
+    codex_refresh: bool = False,
 ) -> NativeResult:
     """Run without a shell, bound private output, reap the process group.
 
@@ -251,13 +257,28 @@ def run_native(
         or timeout <= 0
         or (interactive and stdin is not None)
         or (stdin is not None and len(stdin) > MAX_AUTH_BYTES)
+        or (codex_refresh and (interactive or stdin is not None))
     ):
         raise AuthError("invalid native auth command")
     terminal = None
     process = None
-    from tetrabench.auth_operations import current_cli_operation
+    from tetrabench.auth_operations import current_cli_operation, group_quiescent
 
     operation = current_cli_operation()
+    protocol = None
+    if codex_refresh:
+        from tetrabench.native_refresh import CodexRefreshProtocol
+
+        require_natural_completion = True
+        protocol = CodexRefreshProtocol()
+        stdin = protocol.start()
+    if require_natural_completion and operation is None:
+        raise AuthError("native renewal requires registered CLI lifecycle evidence")
+    containment_complete = False
+    if require_natural_completion:
+        from tetrabench.native_refresh import contained_command
+
+        argv = contained_command(argv, environment, timeout)
     try:
         if interactive:
             terminal = open("/dev/tty", "r+b", buffering=0)
@@ -278,7 +299,9 @@ def run_native(
         output = bytearray()
         stdout = bytearray()
         stderr = bytearray()
-        deadline = time.monotonic() + timeout
+        # Let namespace init enforce its deadline and unshare reap it. Killing
+        # only the wrapper on the same deadline would lose containment evidence.
+        deadline = time.monotonic() + timeout + (2 if require_natural_completion else 0)
         with selectors.DefaultSelector() as selector:
             pending = memoryview(stdin or b"")
             if not interactive:
@@ -314,7 +337,8 @@ def run_native(
                                 raise AuthError(
                                     "native credential input pipe disappeared"
                                 )
-                            process.stdin.close()
+                            if protocol is None or protocol.complete:
+                                process.stdin.close()
                         continue
                     chunk = os.read(key.fd, 8192)
                     if not chunk:
@@ -326,33 +350,78 @@ def run_native(
                             raise AuthError(
                                 "native auth output exceeded private capture limit"
                             )
-        return NativeResult(process.wait(), bytes(output), bytes(stdout), bytes(stderr))
+                        if protocol is not None and key.data == "stdout":
+                            outgoing = protocol.receive(chunk)
+                            if outgoing:
+                                if pending or process.stdin is None:
+                                    raise AuthError(
+                                        "native renewal protocol out of order"
+                                    )
+                                pending = memoryview(outgoing)
+                                selector.register(process.stdin, selectors.EVENT_WRITE)
+                            elif protocol.complete and process.stdin is not None:
+                                process.stdin.close()
+        code = process.wait()
+        if require_natural_completion:
+            from tetrabench.native_refresh_supervisor import FORCED, INCONCLUSIVE
+
+            # These statuses come from trusted PID 1, after ECHILD or kernel
+            # namespace teardown, reaped by unshare. Native output is not proof.
+            containment_complete = code in {0, INCONCLUSIVE, FORCED}
+        if protocol is not None and not protocol.complete:
+            raise AuthError("native renewal exited before protocol completion")
+        if require_natural_completion and (
+            code != 0 or not group_quiescent(process.pid)
+        ):
+            raise AuthError("native renewal did not complete naturally")
+        return NativeResult(code, bytes(output), bytes(stdout), bytes(stderr))
     except OSError:
         raise AuthError("native auth executable/terminal unavailable") from None
     finally:
         if process is not None:
-            # Reap any same-session descendants even when the leader exited.
             try:
-                os.killpg(process.pid, signal.SIGTERM)
-            except ProcessLookupError:
-                pass
-            try:
-                process.wait(timeout=2)
-            except subprocess.TimeoutExpired:
-                os.killpg(process.pid, signal.SIGKILL)
-                process.wait()
-            try:
-                os.killpg(process.pid, signal.SIGKILL)
-            except ProcessLookupError:
-                pass
-            if process.stdout:
-                process.stdout.close()
-            if process.stderr:
-                process.stderr.close()
-            if process.stdin:
-                process.stdin.close()
-            if operation is not None:
-                operation.reaped(process.pid, process.returncode)
+                if require_natural_completion:
+                    if not containment_complete and process.poll() is None:
+                        # unshare --kill-child kills PID 1 on wrapper death, so
+                        # the kernel kills even descendants in other sessions.
+                        # Wrapper death alone does NOT prove containment stopped.
+                        process.kill()
+                    process.wait(timeout=2)
+                else:
+                    # Existing non-renewal process-group lifecycle.
+                    try:
+                        os.killpg(process.pid, signal.SIGTERM)
+                    except ProcessLookupError:
+                        pass
+                    try:
+                        process.wait(timeout=2)
+                    except subprocess.TimeoutExpired:
+                        os.killpg(process.pid, signal.SIGKILL)
+                        process.wait(timeout=2)
+                    try:
+                        os.killpg(process.pid, signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
+                if process.stdout:
+                    process.stdout.close()
+                if process.stderr:
+                    process.stderr.close()
+                if process.stdin:
+                    process.stdin.close()
+                if require_natural_completion and not group_quiescent(process.pid):
+                    raise NativeStopError(
+                        "native renewal process group stop is unproven"
+                    )
+                if operation is not None:
+                    operation.reaped(process.pid, process.returncode)
+                if require_natural_completion and not containment_complete:
+                    raise NativeStopError("native renewal containment stop is unproven")
+            except BaseException:
+                if require_natural_completion:
+                    raise NativeStopError(
+                        "native renewal stop evidence is unproven"
+                    ) from None
+                raise
         if terminal is not None:
             terminal.close()
 

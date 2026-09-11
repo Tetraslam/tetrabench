@@ -2054,3 +2054,63 @@ Provenance: hosted run `34591098904` on `4cc901d`, installed Harbor 0.22 strateg
 Hosted Python/native-consumer and full-history secret checks passed. The follow-up native Modal DinD strategy sends environment values through SDK Secrets/protobuf env while Docker receives names only. Independent review caught and corrected late inherited-scope infrastructure overrides before SDK execution. The actual `enable_docker=true` probe captured 32 SDK exec/protobuf command payloads with zero literal synthetic-value hits; main and sidecar returned expected digests, explicit sidecar precedence held, and invalid CONTEXT_DIR overrides were refused before exec. File transfer, service networking, and volume operations passed. All owned containers, networks, and the disposable volume were removed; the sandbox and app stopped. No real model or OAuth credential was used in this probe. The proof wheel SHA-256 is `b4299c1382b1990b28f9b2987160284f1934433c77a781ec3382e92b2c4687cc`. Subscription approvals and the dedicated credential-backend proof remain open; no 0.3.0 publication occurred.
 
 Recorded at `2026-09-11T07:22:53-04:00`.
+
+## 2026-09-11T15:36:08Z: Subscription smoke evidence reconciled; refresh pending
+
+Provenance: retained `REPORT.json`, `FINAL_AUDIT.json`, and `WORKING_RECORD.md`
+under `/tmp/opencode/tetrabench-030-subscription-55dc637-20260911/`;
+`OPERATOR_FINAL_REPORT.json` and the later `ARTIFACT_HEAD_DENIAL_PROOF.json` under
+`/tmp/opencode/tetrabench-auth-backend-20260911/`; subsequent user handoff for
+approvals, Claude diagnosis/offline checks, and refresh-review status. This entry
+supersedes the approval/backend blockers in the 00:17, 06:46, and 07:22 checkpoints
+without altering those entries or their retained reports.
+
+The user approved the single-person organization-admin opt-in. Scoped backend
+CAS/private ACL checks passed; a later auth-store-key HEAD against a known retained
+artifact returned 403 with no payload read. Tigris still exposes an unrelated
+bucket's public/private status bit despite explicit deny. That accepted metadata
+limitation is not general AWS/IAM or encryption proof; the public trust default
+remains false.
+
+The unchanged installed wheel from clean `55dc637` completed normal subscription
+smokes for Codex 0.154.0, OpenCode 1.18.30, and Pi 0.85.1, each reward `1` on Astra.
+Each owner stopped and passed two empty child sweeps; profiles returned
+ready/unowned after private write-back. Access and refresh credentials were
+unchanged, so no actual refresh occurred. The final 91-object audit included binary
+artifacts and found zero known credential/private-auth-resource matches in literal,
+base64, and URL-encoded forms. This is bounded scan evidence, not universal
+scrubbing. Subscription charges/quota and long-context retention remain unproven.
+
+Claude setup-token status passed, but `[1m]` metadata selection blocked before
+inference. The user handoff identifies suffix handling and picker omission as the
+cause and reports 107 passing offline native tests for ongoing fixes, not live
+acceptance. The user approved `[1m]` investigation, then normal Claude smoke and
+native OAuth refresh. Refresh implementation is under independent review; a
+`setsid` descendant escape was found and is being fixed. Each OAuth harness still
+needs actual refresh, durable write-back, next-consumer, and failure-cleanup proof.
+Claude's setup token instead needs user-managed renewal evidence. Earlier Claude
+transcript-reread and reduced-threshold continuation qualifications remain in force.
+No fully verified or public 0.3.0 release is claimed. Later live results will be
+appended after execution; this documentation pass performs no provider operation.
+
+## 2026-09-11T16:34:14Z: Independent re-review and local validation passed
+
+Provenance: agent source inspection and pinned-binary observations; independent
+re-review `ses_f6ef6522dffeDOEh823MEUef11`; parent validation checkpoint. Correction
+to the 15:36 entry: the Claude suffix/picker diagnosis came from agent observations,
+not the user. The user provided approval only. Native `[1m]` selection/catalog
+metadata does not prove entitlement or context capacity.
+
+The `setsid` escape is fixed by a trusted Linux PID-namespace supervisor containing
+all descendants. Synthetic `setsid`, double-fork, `CLONE_PARENT`, and wrapper-kill
+adversaries passed independent re-review with no findings. Local checks passed:
+2,488 non-native, 107 mandatory native, 12 Docker; whole Bandit, lock, actionlint,
+Ruff/format/ty, strict Twine/package checks, installed wheel/sdist Docker smokes,
+and locked dependency audit. Candidate wheel SHA-256:
+`7f8b79a5055c85ebede91afeb09fc5b583e8d6ff5a4627f7e4653fa8121acd5a`.
+
+Current action is the installed Claude smoke preserving `[1m]`, then single-use
+native refresh and real fresh-controller consumers. These live acceptance gates,
+including deployed refresh failure cleanup, remain `unproven`; no 0.3.0 release
+claim follows from local validation. This supersedes the earlier fixing/review-
+pending status without changing that immutable entry.

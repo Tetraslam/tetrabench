@@ -24,9 +24,10 @@ from tetrabench.native_control import (
     CUSTODY_ENV,
     ControlProcess,
     auth_custody_report,
+    claude_control_metadata,
+    claude_model_metadata,
     codex_route,
     opencode_model_metadata,
-    select_model_info,
 )
 
 MAX_NATIVE_BYTES = 16 * 1024 * 1024
@@ -240,56 +241,24 @@ def _claude(request: dict[str, Any], root: Path, env: dict[str, str]) -> dict[st
         request["model"],
     ]
     with ControlProcess(command, root, env) as process:
-        # SDK 0.3.267 supportedModels() reads this initialization response.
-        # No user message, empty-string prompt, or agent initialPrompt is sent.
-        process.send(
-            {
-                "type": "control_request",
-                "request_id": "metadata-init",
-                "request": {
-                    "subtype": "initialize",
-                    "hooks": {},
-                    "sdkMcpServers": [],
-                    "agents": {},
-                    "plugins": [],
-                },
-            }
+        data, applied_settings = claude_control_metadata(process)
+        projection = claude_model_metadata(
+            data,
+            applied_settings,
+            requested=request["model"],
+            version=request["version"],
+            environment=env,
         )
-        while True:
-            message = parse_metadata(process.line())
-            if message.get("type") != "control_response":
-                if message.get("type") in {"assistant", "result"}:
-                    raise MetadataError(
-                        "unexpected model/run output during metadata discovery"
-                    )
-                continue
-            response = message["response"]
-            if response.get("request_id") == "metadata-init":
-                if response.get("subtype") != "success":
-                    raise MetadataError("Claude native initialization unavailable")
-                data = response["response"]
-                break
-        selected = select_model_info(data["models"], request["model"], request["model"])
-        projection = {
-            key: selected[key]
-            for key in (
-                "value",
-                "resolvedModel",
-                "supportsEffort",
-                "supportedEffortLevels",
-                "supportsAdaptiveThinking",
-            )
-            if key in selected
-        }
         return {
-            "payload": [projection],
+            "payload": projection,
             "route": {
-                "model": selected.get("resolvedModel", request["model"]),
+                "model": projection["applied"]["model"],
                 "provider": data.get("account", {}).get("apiProvider", "unknown"),
                 "protocol": "claude-native",
                 "endpoint": env.get("ANTHROPIC_BASE_URL", ""),
             },
-            "method": "Claude SDK control initialize.models; no input; EOF shutdown",
+            "method": "Claude control initialize.models + get_settings.applied; "
+            "no input; EOF shutdown",
         }
 
 

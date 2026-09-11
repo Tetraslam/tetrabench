@@ -2,9 +2,9 @@
 
 ## Status
 
-- Project state: P0 through P6 are complete for their local/static contracts. Live Tigris/Modal evidence includes cancellation, forced controller interruption/recovery, and the E-046 Single-region `iad` cutover. Current live provider IAM/privacy/encryption state, AWS behavior, and true provider preemption remain `unproven`.
-- Current action: Tetrabench 0.2.0 is published on PyPI. PR 33 merged with passing CI; the unchanged GitHub release artifacts passed installed local/Modal Oracle and controlled Astra proofs before protected publication. Public installation and artifact hashes were independently verified.
-- Next action: finish subscription login approvals and private credential-backend proof for the native-auth/reasoning candidate. All four API-key paths passed live; Codex passed two native opaque-compaction modes, while the text-summary proofs have the qualifications recorded below. Keep 0.3.0 unreleased until the open acceptance gates are resolved. Future eval choice belongs to the user.
+- Project state: P0 through P6 are complete for their local/static contracts. Live Tigris/Modal evidence includes cancellation, forced controller interruption/recovery, and the E-046 Single-region `iad` cutover. Scoped auth-backend CAS/privacy evidence is recorded below; general provider IAM/privacy/encryption guarantees, AWS behavior, and true provider preemption remain `unproven`.
+- Published baseline: Tetrabench 0.2.0 is published on PyPI. PR 33 merged with passing CI; the unchanged GitHub release artifacts passed installed local/Modal Oracle and controlled Astra proofs before protected publication. Public installation and artifact hashes were independently verified.
+- Current action: attempt the installed Claude subscription smoke with the requested `[1m]` suffix preserved, then single-use native OAuth refresh and real fresh-controller consumers. Independent re-review and local validation passed. Codex, OpenCode, and Pi normal subscription smokes passed without refresh; Claude subscription and actual refresh acceptance remain live `unproven`. Keep 0.3.0 unreleased until the open acceptance gates, including the context-retention qualifications below, are resolved. Future eval choice belongs to the user.
 - Task-catalog gate: E-132's corrected-byte local/detached execution and audit gates and E-143's exact-four calibration all pass. `authority-fencing` is admitted in `benchmarks/catalog.toml`; later systems and GitHub-workflow tasks remain absent pending their own complete gates.
 - Authoring UX: D-127 is merged through PR 26 with focused local and real-Docker evidence. It creates user-owned starter projects and tasks independently of the repository catalog.
 - Canonical record updated: 2026-09-11.
@@ -25,24 +25,80 @@
 - [x] Portable harness resources, discovery policies, and supported session continuation.
 - [x] Native model/reasoning inspection and reproducible configuration adoption.
 - [x] Codex direct OpenAI API-key flow and live smoke.
-- [ ] Native Codex ChatGPT OAuth bootstrap, serialized refresh/write-back, and live smoke.
+- [x] Native Codex ChatGPT OAuth bootstrap and normal live smoke.
+- [ ] Codex actual native refresh, durable write-back, and next-consumer proof.
 - [x] Claude Code direct Anthropic API-key flow and live smoke.
-- [ ] Native Claude subscription flow, expiry handling, and live smoke.
-- [ ] OpenCode Codex OAuth flow and live smoke.
-- [ ] Earendil Pi Codex OAuth flow and live smoke.
+- [ ] Claude setup-token live smoke and expiry/renewal evidence; token presence alone passed. Setup-token renewal is user-owned, not OAuth refresh.
+- [x] OpenCode Codex OAuth bootstrap and normal live smoke.
+- [ ] OpenCode actual native refresh, durable write-back, and next-consumer proof.
+- [x] Earendil Pi Codex OAuth bootstrap and normal live smoke.
+- [ ] Pi actual native refresh, durable write-back, and next-consumer proof.
 - [x] OpenCode and Pi OpenRouter API-key smoke at current stable pins.
 - [ ] Multiple native-compaction/summarization boundary runs, fact retention, and mechanism evidence.
-- [ ] Independent review, installed release validation, publication, and public install proof.
+- [x] Candidate independent re-review and local validation at the checkpoint below.
+- [ ] Installed live release validation, publication, and public install proof.
 
-External prerequisites: the user supplied fresh OpenAI and Anthropic API-key
-references, and those paths passed. Native subscription browser approvals remain
-pending. Remote OAuth also needs a dedicated private credential backend and an
-explicit decision about organization-administrator trust. No interactive login
-was copied, and no subscription flow is marked passed.
+Current subscription evidence (2026-09-11): the user approved the single-person
+organization-admin opt-in. Fresh, independent native eval logins and the dedicated
+backend were used by the three successful smokes; no interactive login was copied.
+The retained unchanged wheel from clean `55dc637` produced reward `1` for Codex
+0.154.0, OpenCode 1.18.30, and Pi 0.85.1 on Astra. Each controller claimed its
+profile, wrote state back privately, stopped, and passed two empty child sweeps.
+All profiles returned ready/unowned at generation 1, revision 3. Access and refresh
+credentials were unchanged: this proves normal consumption, not actual refresh.
+The final audit scanned 91 published objects, including binary artifacts, with
+zero known credential or private-auth-resource matches. Literal, base64, and
+URL-encoded scans do not establish universal secret scrubbing. Subscription
+billing/quota and unreported auxiliary usage remain unknown.
 
-Initial checkpoint: implementation covered explicit auth references for all four
-harnesses, native OAuth custody and refresh write-back with serialized ownership,
-credential retention guards, shared native config/resource layers, native model
+The actual S3SessionStore passed scoped private ACL/owner checks, create/read/update
+CAS, duplicate/stale rejection, and competing claims with one winner. Unsafe
+takeover/reseed was rejected. Anonymous synthetic-object GET, artifact-location
+ACL/listing, and bucket listing were denied. A later single signed HEAD against a
+known retained artifact also returned 403 with no payload read. Tigris nevertheless
+exposes an unrelated bucket's public/private status bit through
+`GetBucketPolicyStatus` despite explicit deny. This accepted metadata limitation
+does not establish general IAM isolation, encryption, or any live AWS guarantee.
+The public trust default remains false.
+
+Claude 2.1.267 recognized its setup token, but `[1m]` metadata selection blocked
+before inference; no Claude scoring attempt ran in that retained proof. Agent
+source inspection and pinned-binary observations identified suffix handling and
+picker omission as the cause, superseding the catalog-only diagnosis. `[1m]` is a
+native model suffix; applied selection or catalog metadata proves neither server
+entitlement nor context capacity. The user supplied approval for investigation,
+Claude smoke, and native OAuth refresh, not the technical diagnosis.
+
+The `setsid` escape finding is fixed by a trusted supervisor using a native Linux
+PID namespace to contain all descendants. Independent re-review
+`ses_f6ef6522dffeDOEh823MEUef11` exercised synthetic `setsid`, double-fork,
+`CLONE_PARENT`, and wrapper-kill adversaries and reported no findings. This
+supersedes the prior fixing/review-pending checkpoint; deployed refresh containment
+and failure cleanup remain live `unproven`.
+
+Local validation passed 2,488 non-native tests, 107 mandatory native tests, and
+12 Docker tests, plus whole Bandit, lock, actionlint, Ruff, formatting, ty, strict
+Twine/package checks, installed wheel/sdist Docker smokes, and the locked dependency
+audit. Latest candidate wheel SHA-256:
+`7f8b79a5055c85ebede91afeb09fc5b583e8d6ff5a4627f7e4653fa8121acd5a`.
+These checks do not replace live Claude subscription acceptance, actual native
+refresh/write-back, or real fresh-controller consumption of refreshed state.
+
+Provenance: retained `REPORT.json`, `FINAL_AUDIT.json`, and `WORKING_RECORD.md` in
+`/tmp/opencode/tetrabench-030-subscription-55dc637-20260911/`;
+`OPERATOR_FINAL_REPORT.json` and `ARTIFACT_HEAD_DENIAL_PROOF.json` in
+`/tmp/opencode/tetrabench-auth-backend-20260911/`; agent source/pinned-binary
+observations for the Claude diagnosis, independent session above for re-review,
+and the parent validation checkpoint for local checks/wheel identity. User messages
+provide approval only. See also the official
+[extended-context documentation](https://code.claude.com/docs/en/model-config#extended-context).
+The backend report's pre-login state and subscription report's request for further approval
+are superseded by the later evidence and user approval, not erased.
+
+Initial checkpoint (superseded by the live evidence above): implementation covered
+explicit auth references for all four harnesses, native OAuth custody and refresh
+write-back with serialized ownership, credential retention guards, shared native
+config/resource layers, native model
 inspection/adoption, and startup capability verification. Startup verification is
 not continuous dispatch enforcement. Private credential S3 policy/ACL checks are
 implemented but remain unproven against a provisioned live auth backend. Native
@@ -79,8 +135,9 @@ settings. No paid rerun was used to hide that qualification.
 Known native summary costs are now counted once in auxiliary evidence. Native
 reported/catalog-priced amounts remain partial, and standalone Codex compaction
 charges were unavailable. Tigris's precise organization-admin ACL grant has a
-separately reviewed opt-in flag, default false; no live credential backend has
-been approved or seeded. Hosted run `34591098904` passed the native-test namespace
+separately reviewed opt-in flag, default false. The earlier checkpoint's
+unapproved/unseeded backend status is superseded by the scoped evidence above.
+Hosted run `34591098904` passed the native-test namespace
 fix and all CI gates. A follow-up closes the Modal Compose/DinD credential-argv
 gap: values use SDK Secrets and name-only Docker env flags, with final scoped
 infrastructure validation. Its actual native DinD main/sidecar probe passed
@@ -531,7 +588,7 @@ runs/<run-id>/terminals/<terminal-sha>.json
 - [x] [U-008] Resolved by E-039: a fresh process observed running then terminal after submitter exit, and Tigris remained queryable after the controller call succeeded.
 - [ ] [U-009] `unproven`: live AWS `PutObject` conditional create/update behavior. AWS documents the required 200/404/409/412 semantics, but no AWS mutation was run.
 - [x] [U-010] Resolved by E-046: a new private Tigris Single-region `iad` bucket passed the live consistency probe and became the authoritative coordination baseline without modifying or copying the retained Global bucket.
-- [ ] [U-011] `unproven`: current live Tigris/AWS IAM denials, bucket privacy, and effective encryption. Retained E-046 evidence records the Tigris bucket and policies at cutover, but renewed credentials are required for the E-021/E-023 probes.
+- [ ] [U-011] `partially proven`: the 2026-09-11 auth-backend probes above establish scoped Tigris CAS/privacy checks and a known-artifact HEAD denial, with an accepted policy-status metadata leak. They supersede the blanket no-current-credential-evidence status only for that backend. General role/action coverage under E-021/E-023, effective encryption, and live AWS remain `unproven`; E-046 retains the earlier cutover evidence.
 - [x] [U-012] Resolved by E-124 for the candidate path: automatic selected-fixture sealing, materialized-path resolution, Harbor 0.22 separate verification, forge collection, and clean-verifier handoff passed detached Modal. E-143 completes exact-four calibration and production catalog admission.
 - [x] [U-013] Resolved by E-124: two detached binary gold samples produced exact reward `1`, and the detached reward-forgery audit produced exact reward `0`, with validated native summaries and terminal inventories.
 

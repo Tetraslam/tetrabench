@@ -24,9 +24,10 @@ try:
         ControlProcess,
         CredentialCompletionError,
         auth_custody_report,
+        claude_control_metadata,
+        claude_model_metadata,
         codex_route,
         opencode_model_metadata,
-        select_model_info,
     )
 except ImportError:
     # The execution hook uploads both standard-library modules side by side.
@@ -36,9 +37,10 @@ except ImportError:
         ControlProcess,
         CredentialCompletionError,
         auth_custody_report,
+        claude_control_metadata,
+        claude_model_metadata,
         codex_route,
         opencode_model_metadata,
-        select_model_info,
     )
 
 
@@ -314,63 +316,31 @@ def claude(probe: dict[str, Any], command: list[str], cwd: Path, env: dict[str, 
         args.extend(["--setting-sources", probe["setting_sources"]])
     if probe["selected"] is not None:
         args.extend(["--effort", probe["selected"]])
-    with ControlProcess(args, cwd, env) as p:
-        p.send(
-            {
-                "type": "control_request",
-                "request_id": "metadata-init",
-                "request": {
-                    "subtype": "initialize",
-                    "hooks": {},
-                    "agents": {},
-                    "sdkMcpServers": [],
-                },
-            }
-        )
-        while True:
-            message = json.loads(p.line())
-            if message.get("type") in {"assistant", "result"}:
-                raise Drift("unexpected model turn during metadata initialization")
-            response = message.get("response", {})
-            if response.get("request_id") == "metadata-init":
-                if response.get("subtype") != "success":
-                    raise ValueError("native model metadata unavailable")
-                data = response["response"]
-                break
-        p.send(
-            {
-                "type": "control_request",
-                "request_id": "metadata-settings",
-                "request": {"subtype": "get_settings"},
-            }
-        )
-        effective = {}
-        while True:
-            message = json.loads(p.line())
-            response = message.get("response", {})
-            if response.get("request_id") == "metadata-settings":
-                if response.get("subtype") == "success":
-                    effective = response.get("response", {}).get("effective", {})
-                break
     try:
-        selected = select_model_info(
-            data["models"],
-            probe["identity"]["requested_model"].split("/", 1)[1],
-            probe["identity"]["resolved_model"],
+        with ControlProcess(args, cwd, env) as p:
+            data, settings = claude_control_metadata(p)
+        metadata = claude_model_metadata(
+            data,
+            settings,
+            requested=probe["identity"]["requested_model"].split("/", 1)[1],
+            version=probe["identity"]["harness_version"],
+            environment=env,
         )
     except ControlError:
-        raise Drift("native model disappeared or descriptor is conflicting") from None
+        raise Drift(
+            "native Claude applied settings unavailable, conflicting or restricted"
+        ) from None
+    selected = metadata["models"][0]
     return {
-        "model": selected["resolvedModel"],
+        "model": metadata["applied"]["model"],
         "protocol": "claude-native",
         "provider_id": data.get("account", {}).get("apiProvider", "unknown"),
         "endpoint": env.get("ANTHROPIC_BASE_URL", ""),
         "choices": selected.get("supportedEffortLevels"),
-        "selected": effective.get("effortLevel")
-        if effective.get("effortLevel") == probe["selected"]
-        else None,
-        "settings_effort": effective.get("effortLevel"),
-        "selection_source": "native get_settings.effective + initialization ModelInfo",
+        "selected": metadata["applied"]["effort"],
+        "settings_effort": metadata["settings_effort"],
+        "selection_source": "native get_settings.applied",
+        "claude_metadata": metadata,
     }
 
 
@@ -608,6 +578,11 @@ def validate(probe: dict[str, Any], cwd: Path, env: dict[str, str]) -> dict[str,
         "native_settings_effort": observation.get("settings_effort")
         if observation
         else None,
+        **(
+            {"claude_metadata": observation["claude_metadata"]}
+            if observation and "claude_metadata" in observation
+            else {}
+        ),
         "native_normalizations": ["opencode_schema_annotation"]
         if after != originals
         else [],

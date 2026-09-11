@@ -5,6 +5,7 @@ from __future__ import annotations
 import contextlib
 import json
 import os
+import re
 import selectors
 import signal
 import subprocess  # nosec B404
@@ -44,6 +45,12 @@ def select_model_info(
     if not matches:
         raise ControlError("native model missing")
     ignored = set() if exact else {"value", "displayName", "description"}
+    return _model_descriptor(matches, ignored)
+
+
+def _model_descriptor(
+    matches: list[dict[str, Any]], ignored: set[str]
+) -> dict[str, Any]:
     descriptors = {
         json.dumps(
             {key: value for key, value in row.items() if key not in ignored},
@@ -55,6 +62,156 @@ def select_model_info(
     if len(descriptors) != 1:
         raise ControlError("conflicting native model descriptors")
     return matches[0]
+
+
+def _claude_base(model: str) -> str:
+    # Claude 2.1.267's trailing context modifier, not a provider-ID rewrite.
+    return re.sub(r"\[1m\]$", "", model, flags=re.IGNORECASE)
+
+
+def claude_model_metadata(
+    data: dict[str, Any],
+    settings: dict[str, Any],
+    *,
+    requested: str,
+    version: str,
+    environment: Mapping[str, str],
+) -> dict[str, Any]:
+    """Separate applied startup settings from picker-derived capabilities.
+
+    CLI 2.1.267 get_settings.applied is runtime state; effective is merged config.
+    A default picker row survives availableModels filtering, even for a blocked
+    explicit selection. Never use that row to bypass an explicit allowlist.
+    Neither applied settings nor picker presence establishes account entitlement.
+    """
+    if version != "2.1.267":
+        raise ControlError("unsupported Claude applied-settings contract")
+    applied, effective = settings.get("applied"), settings.get("effective")
+    if not isinstance(applied, dict) or not isinstance(effective, dict):
+        raise ControlError("native applied Claude settings unavailable")
+    model, effort = applied.get("model"), applied.get("effort")
+    if (
+        not isinstance(model, str)
+        or not model
+        or "effort" not in applied
+        or (effort is not None and not isinstance(effort, str))
+        or settings.get("errors")
+    ):
+        raise ControlError("invalid native applied Claude settings")
+    rows = data.get("models")
+    unavailable = data.get("unavailable_models", [])
+    if not isinstance(rows, list) or not isinstance(unavailable, list):
+        raise ControlError("invalid native Claude model catalog")
+    if any(
+        len(items) > 10000
+        or any(
+            not isinstance(row, dict)
+            or not isinstance(row.get("value"), str)
+            or not isinstance(row.get("resolvedModel"), str)
+            for row in items
+        )
+        for items in (rows, unavailable)
+    ):
+        raise ControlError("invalid native Claude model catalog")
+    base = _claude_base(model)
+    if any(
+        row["value"] == requested or _claude_base(row["resolvedModel"]) == base
+        for row in [*unavailable, *(row for row in rows if row.get("disabled"))]
+    ):
+        raise ControlError("native Claude model is unavailable")
+    allowlist = effective.get("availableModels")
+    if allowlist is not None:
+        if not isinstance(allowlist, list) or any(
+            not isinstance(value, str) for value in allowlist
+        ):
+            raise ControlError("invalid native Claude model restrictions")
+        if requested != "default":
+            rows = [row for row in rows if row["value"] != "default"]
+    # Full IDs must agree with applied state; aliases need a native row linking
+    # the requested spelling to that state. Do not invent alias-to-model tables.
+    if _claude_base(requested) != base and not any(
+        _claude_base(row["value"]) == _claude_base(requested)
+        and _claude_base(row["resolvedModel"]) == base
+        for row in rows
+    ):
+        raise ControlError("native applied Claude model differs from request")
+    matches = [row for row in rows if row["value"] == requested]
+    source = "exact-selector"
+    ignored: set[str] = set()
+    if not matches:
+        source = "resolved-model"
+        ignored = {"value", "displayName", "description"}
+        matches = [row for row in rows if row["resolvedModel"] == model]
+    if not matches:
+        source = "context-modifier-capability-fallback"
+        matches = [row for row in rows if _claude_base(row["resolvedModel"]) == base]
+        ignored.add("resolvedModel")
+    if not matches:
+        raise ControlError("native Claude model missing or restricted")
+    row = _model_descriptor(matches, ignored)
+    if _claude_base(row["resolvedModel"]) != base:
+        raise ControlError("native Claude catalog differs from applied model")
+    projection = {
+        key: row[key]
+        for key in (
+            "value",
+            "resolvedModel",
+            "supportsEffort",
+            "supportedEffortLevels",
+            "supportsAdaptiveThinking",
+            "disabled",
+        )
+        if key in row
+    }
+    settings_env = effective.get("env", {})
+    if not isinstance(settings_env, dict):
+        raise ControlError("invalid native Claude environment settings")
+    disabled = settings_env.get(
+        "CLAUDE_CODE_DISABLE_1M_CONTEXT",
+        environment.get("CLAUDE_CODE_DISABLE_1M_CONTEXT", ""),
+    )
+    return {
+        "models": [projection],
+        "applied": {"model": model, "effort": effort},
+        "settings_effort": effective.get("effortLevel"),
+        "selection_source": source,
+        "restrictions": {
+            "availableModels": allowlist,
+            "context_1m_disabled": str(disabled).lower() in {"1", "true", "yes", "on"},
+        },
+        "entitlement": "unknown",
+    }
+
+
+def claude_control_metadata(
+    process: ControlProcess,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Read startup state without a prompt, model switch or settings write."""
+    results = []
+    for subtype in ("initialize", "get_settings"):
+        request: dict[str, Any] = {"subtype": subtype}
+        if subtype == "initialize":
+            request.update(hooks={}, agents={}, sdkMcpServers=[], plugins=[])
+        process.send(
+            {
+                "type": "control_request",
+                "request_id": "metadata-" + subtype,
+                "request": request,
+            }
+        )
+        while True:
+            message = json.loads(process.line())
+            if message.get("type") in {"assistant", "result"}:
+                raise ControlError("unexpected model turn during Claude metadata read")
+            response = message.get("response", {})
+            if response.get("request_id") == "metadata-" + subtype:
+                if response.get("subtype") != "success" or not isinstance(
+                    response.get("response"), dict
+                ):
+                    raise ControlError("native Claude metadata unavailable")
+                results.append(response["response"])
+                break
+    return results[0], results[1]
 
 
 # rust-v0.154.0: config/mod.rs selects "openai" when model_provider is absent;

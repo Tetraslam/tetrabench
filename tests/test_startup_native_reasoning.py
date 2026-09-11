@@ -122,9 +122,10 @@ def test_actual_startup_sees_adopted_model_and_native_option(installed, tmp_path
     assert "native_selection" in report["verified_fields"], report
     assert report["selected"] == probe["selected"]
     if name == "claude-code":
-        assert report["observed_selection"] is None
+        assert report["observed_selection"] == probe["selected"]
         assert report["native_settings_effort"] == "low"
-        assert "effective_selection" in report["unverified_fields"]
+        assert "effective_selection" not in report["unverified_fields"]
+        assert report["selection_source"] == "native get_settings.applied"
     else:
         assert report["observed_selection"] == probe["selected"], report
     assert report["inference_validated"] is False

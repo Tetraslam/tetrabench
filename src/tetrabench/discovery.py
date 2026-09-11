@@ -28,7 +28,11 @@ from tetrabench.capabilities import (
     metadata_text,
     parse_metadata,
 )
-from tetrabench.native_control import ControlError, select_model_info
+from tetrabench.native_control import (
+    ControlError,
+    claude_model_metadata,
+    select_model_info,
+)
 
 NATIVE_VERSIONS = {
     "opencode": ("1.18.30", "1.18.30"),
@@ -437,15 +441,41 @@ def _claude(obs: NativeObservation, payload: Any) -> CapabilitySnapshot:
     identity, evidence = obs.identity, obs.evidence
     # supportedModels() array, or the models member of initializationResult().
     rows = _array(payload.get("models") if isinstance(payload, dict) else payload)
+    applied_metadata = None
     try:
-        row = select_model_info(
-            [_object(row) for row in rows],
-            identity.requested_model.split("/", 1)[-1],
-            identity.resolved_model,
-        )
+        if isinstance(payload, dict) and "applied" in payload:
+            restrictions = _object(payload.get("restrictions"))
+            applied_metadata = claude_model_metadata(
+                payload,
+                {
+                    "applied": payload["applied"],
+                    "effective": {
+                        "availableModels": restrictions.get("availableModels"),
+                        "effortLevel": payload.get("settings_effort"),
+                    },
+                },
+                requested=identity.requested_model.split("/", 1)[-1],
+                version=identity.harness_version,
+                environment={
+                    "CLAUDE_CODE_DISABLE_1M_CONTEXT": "1"
+                    if restrictions.get("context_1m_disabled")
+                    else "0"
+                },
+            )
+            row = applied_metadata["models"][0]
+            observed_model = applied_metadata["applied"]["model"]
+        else:
+            # Keep historical supplied catalog observations readable; they do
+            # not gain applied-state evidence or the new modifier fallback.
+            row = select_model_info(
+                [_object(row) for row in rows],
+                identity.requested_model.split("/", 1)[-1],
+                identity.resolved_model,
+            )
+            observed_model = row.get("resolvedModel")
     except ControlError:
         raise MetadataError("native model missing or conflicting descriptor") from None
-    if row.get("resolvedModel") != identity.resolved_model:
+    if observed_model != identity.resolved_model:
         raise MetadataError(
             "Claude SDK did not resolve the requested model; inspect again"
         )
@@ -492,7 +522,9 @@ def _claude(obs: NativeObservation, payload: Any) -> CapabilitySnapshot:
         identity,
         controls,
         evidence,
-        {
+        applied_metadata
+        if applied_metadata is not None
+        else {
             key: row[key]
             for key in (
                 "value",
@@ -503,7 +535,11 @@ def _claude(obs: NativeObservation, payload: Any) -> CapabilitySnapshot:
             )
             if key in row
         },
-        ("Adaptive support alone does not supply a portable budget or off binding.",),
+        (
+            "Adaptive support alone does not supply a portable budget or off binding.",
+            "Picker capabilities and applied settings do not prove context-window "
+            "entitlement or provider acceptance.",
+        ),
     )
 
 
