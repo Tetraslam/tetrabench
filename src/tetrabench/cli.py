@@ -1313,7 +1313,7 @@ def doctor(
         if controller_spec is not None:
             controller_report = check_controller_metadata(
                 controller_spec,
-                online=online and config.harness is not None,
+                online=online,
             )
             auth_report["remote_runtime_checked"] = controller_report[
                 "remote_runtime_checked"

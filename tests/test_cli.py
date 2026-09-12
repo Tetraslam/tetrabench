@@ -796,6 +796,27 @@ def test_doctor_offline_json_is_canonical_without_provider_client(monkeypatch) -
     ]
 
 
+@pytest.fixture
+def available_doctor_controller(monkeypatch):
+    """Storage-only tests do not contact a live Modal control plane."""
+
+    def inspect(spec, *, online):
+        assert online is True
+        return {
+            "status": "ok",
+            "action": "Controller metadata available.",
+            "remote_runtime_checked": {
+                "status": "unproven",
+                "action": "No invocation.",
+            },
+        }
+
+    monkeypatch.setattr(
+        "tetrabench.auth_diagnostics.check_controller_metadata", inspect
+    )
+
+
+@pytest.mark.usefixtures("available_doctor_controller")
 @pytest.mark.parametrize(
     ("provider", "display"),
     [("aws", "AWS"), ("tigris", "Tigris")],
@@ -842,6 +863,7 @@ def test_doctor_online_checks_selected_provider_without_mutation(
     ]
 
 
+@pytest.mark.usefixtures("available_doctor_controller")
 def test_doctor_json_is_canonical_machine_output(tmp_path: Path, monkeypatch) -> None:
     user_path = _profile_file(tmp_path, "tigris")
     client = _DoctorClient()
@@ -883,6 +905,7 @@ def test_doctor_json_is_canonical_machine_output(tmp_path: Path, monkeypatch) ->
     assert result.stderr == ""
 
 
+@pytest.mark.usefixtures("available_doctor_controller")
 def test_doctor_online_reports_global_bucket_as_readable_but_admission_unsafe(
     tmp_path: Path,
     monkeypatch,
