@@ -4,10 +4,10 @@
 
 - Project state: P0 through P6 are complete for their local/static contracts. Live Tigris/Modal evidence includes cancellation, forced controller interruption/recovery, and the E-046 Single-region `iad` cutover. Scoped auth-backend CAS/privacy evidence is recorded below; general provider IAM/privacy/encryption guarantees, AWS behavior, and true provider preemption remain `unproven`.
 - Published baseline: Tetrabench 0.2.0 is published on PyPI. PR 33 merged with passing CI; the unchanged GitHub release artifacts passed installed local/Modal Oracle and controlled Astra proofs before protected publication. Public installation and artifact hashes were independently verified.
-- Current action: finish live public onboarding/Claude 2.1.269 proofs before final review and release validation/publication. Full local candidate validation passed at the checkpoint below, including 37 installed offline CLI invocations with doubles. Five integration review fixes and the resource-order fix are implemented. The preferred versions are frozen below. Earlier CI/live proofs do not validate these changes. The user's acceptance of observed Claude 2.1.267 continuation/recovery stands; summary-only retention remains unproven. Version 0.3.0 is unpublished. Future eval choice belongs to the user.
+- Current state: the five onboarding improvements and scoped public journeys are implemented and accepted at `de6ad37`, with green CI and recovered live proofs below. The changes are not merged and 0.3.0 is unpublished; implementation acceptance does not initiate publication. Final release review and exact-release-artifact/public-install gates remain separate. The user's acceptance of observed Claude 2.1.267 continuation/recovery stands; summary-only retention remains unproven. Future eval choice belongs to the user.
 - Task-catalog gate: E-132's corrected-byte local/detached execution and audit gates and E-143's exact-four calibration all pass. `authority-fencing` is admitted in `benchmarks/catalog.toml`; later systems and GitHub-workflow tasks remain absent pending their own complete gates.
 - Authoring UX: D-127 is merged through PR 26 with focused local and real-Docker evidence. It creates user-owned starter projects and tasks independently of the repository catalog.
-- Canonical record updated: 2026-09-11.
+- Canonical record updated: 2026-09-12.
 
 ### Onboarding candidate working record
 
@@ -17,12 +17,40 @@
 | Authority and atomic unit | Existing SessionStore owns login generations. One local config replacement and one auth CAS are separate commits; resolve ready authority once before sealing a run. Old sealed runs/snapshots remain unchanged. |
 | Lifecycle | Login creates private config/state and manages omitted runtime paths. Ready replacement is explicit; claimed state cannot be taken over. Actual controller HOME owns remote runtime paths. Secret updates merge selected keys and do not refresh running containers or remove old credentials. |
 | Native primitives | Pinned native login, existing private stores/CAS, and Modal 1.5.4 Secret create/update with optional separate environment creation. Offline preview transfers nothing; only named env values and selected auth profiles cross on confirmed write. |
-| Evidence still required | Final review, current hosted CI, and live installed API-key local/cloud, local OAuth lifecycle, remote backend/login/configure/deploy/run, and diagnostics. Full local tests passed below. Installed offline journeys passed with transport/terminal doubles, not live bootstrap/configure acceptance. |
+| Acceptance scope | Five improvements accepted with full local tests, current CI, 37 installed offline invocations, and three recovered live runs. Offline login/configure uses doubles; original live configure receipts and direct controller HOME/euid observations were lost. No fresh-browser-bootstrap or recovered exact-configure audit claim. |
 
 Preferred freeze at 2026-09-11T20:15:24Z: Claude CLI 2.1.269 / SDK 0.3.269;
 OpenCode 1.18.30, Codex 0.154.0, Pi 0.85.1 unchanged. Exact historical Claude
 2.1.267 / SDK 0.3.267 remains supported; its live summaries and setup-token smoke
-are not 2.1.269 evidence. New Claude API-key/setup-token live checks remain pending.
+are not 2.1.269 evidence. Separate 2.1.269 API-key/setup-token live checks passed
+at `de6ad37` as recorded below.
+
+Recovered acceptance (2026-09-12): Codex 0.154.0 OAuth, Claude 2.1.269 API key, and
+Claude 2.1.269 setup token each earned reward `1`. Both Claude runs preserved
+requested/configured `anthropic/claude-opus-5[1m]`, responded as `claude-opus-5`,
+and reported native context window 1,000,000. These were short tasks, not
+million-token capacity, retention, or universal entitlement proofs. Public result,
+deep verification, and artifact pull passed; every owner stopped and two sweeps
+were empty. Recovery retried no model/configure/deploy operation and created no
+new credentials. The first Btrfs pull failed; private `/tmp` pulls succeeded and
+verified bytes were copied to durable evidence.
+
+The exact surviving wheel is
+`c14b06098dc473353b94a4eb5dd4a31b05e9eb486bb9f35a20257a057d614f07`.
+Its 37-command installed offline journey rerun passed with transport/terminal
+doubles and graph-only deployment. The recovered 107-object scan found zero
+current-credential matches only: reboot erased the original parent's credential
+bank, setup command receipts, and direct controller HOME/euid observations.
+Successful remote use plus offline generated-home proof cannot reconstruct those
+observations. Historical `/tmp` references below remain history, not newly read
+evidence. Durable reports read for this checkpoint: `FINAL_REPORT.json` and
+`installed-journey-report.json` under
+`~/.local/share/tetrabench-public-de6ad37-recovery/`.
+Cumulative API-equivalent cost is approximately `$0.59887725`; compute is
+`$0.04249612`, provisional, not subscription billing or quota reconciliation.
+The parent reports both jobs passed in
+[CI 34658759608](https://github.com/Tetraslam/tetrabench/actions/runs/34658759608)
+at `de6ad37`; this does not attest a future documentation commit.
 
 Prior integration passed 114 mandatory native cases, 2,602 non-native cases with
 three resource failures, and 31 artifact cases separately. The unresolved-resource
@@ -50,7 +78,8 @@ all 12 passed with daemon-visible `/var/tmp` scratch. Both failures are retained
 not omitted. Four test-owned empty networks were removed; original Docker
 inventories were restored. This checkpoint makes no live onboarding or release claim.
 
-Installed offline evidence: 37 public CLI invocations passed on a dirty captured
+Earlier installed offline evidence (superseded by the surviving-wheel rerun above):
+37 public CLI invocations passed on a dirty captured
 wheel, using transport/terminal doubles and real Modal 1.5.4 RPC construction.
 Docker stopped at a synthetic boundary and deployment was graph-only: no live
 login, native score, or remote acceptance follows. Report:
@@ -87,7 +116,8 @@ parent's resource/broad-validation checkpoint.
 - [x] User accepted observed native mechanism/continuation/recovery for 0.3.0; Claude summary-only/clean within-protocol retention remains unproven.
 - [x] Candidate independent re-review and local validation at the checkpoint below.
 - [x] Hosted CI checkpoints `34631236019` at `3a48db2` and `34632963343` at `5382b78`.
-- [ ] Onboarding/Claude 2.1.269 acceptance, final independent release review, current CI, exact-release-artifact validation, publication, and public install proof.
+- [x] Onboarding/Claude 2.1.269 scoped acceptance and CI `34658759608` at `de6ad37`.
+- [ ] Final independent release review, merge, exact-release-artifact validation, publication, and public install proof; not implied by implementation acceptance.
 
 Initial normal-subscription checkpoint (superseded only for pending gates and
 profile revisions by the later proofs below): the user approved the single-person

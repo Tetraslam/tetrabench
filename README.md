@@ -44,10 +44,10 @@ These docs describe this checkout; features absent from your installed release
 require that local build, not an unpublished version from PyPI.
 The 0.3.0 candidate passed API-key and normal subscription evals for all four
 harnesses, plus actual native OAuth refresh and fresh-controller consumption for
-Codex, OpenCode, and Pi. That evidence used Claude 2.1.267. The newer onboarding
-helpers passed installed offline journeys with transport/terminal doubles;
-live onboarding and Claude 2.1.269 checks, full validation, and release gates remain open.
-This is not a fully verified or published 0.3.0 release. See
+Codex, OpenCode, and Pi. The onboarding implementation passed local validation,
+installed offline journeys, and scoped live Codex OAuth and Claude 2.1.269 API-key/
+setup-token runs. CI passed at `de6ad37`. Recovery evidence has the limits below;
+these changes are not yet merged or published as a 0.3.0 release. See
 [testing limits](docs/cli-reference.md#testing-and-limitations) for
 the source-candidate evidence, separate from published-release proofs.
 

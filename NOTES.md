@@ -2247,3 +2247,28 @@ Four empty networks from intentional failed-cleanup tests were identified by the
 trial directories and removed; Docker inventories returned to baseline and no
 validation test process remained. Live onboarding, current hosted CI, and release
 acceptance remain separate gates. Full hashes and qualifications are in `RESULTS.md`.
+
+## 2026-09-12T00:56:10Z: Recovered onboarding acceptance
+
+Provenance: direct reads of durable `FINAL_REPORT.json` and
+`installed-journey-report.json` under
+`~/.local/share/tetrabench-public-de6ad37-recovery/`; parent-reported successful
+[CI 34658759608](https://github.com/Tetraslam/tetrabench/actions/runs/34658759608)
+at `de6ad37`. Earlier `/tmp` evidence was erased by reboot and was not reread.
+
+The five improvements and scoped public journeys are accepted. Codex 0.154.0 OAuth,
+Claude 2.1.269 API key, and Claude 2.1.269 setup token each earned reward `1` with
+public result/verify/pull, stopped owners, and two empty sweeps. Claude preserved
+`[1m]` and reported context 1,000,000 on short tasks, not capacity/retention proof.
+The surviving wheel `c14b06098dc473353b94a4eb5dd4a31b05e9eb486bb9f35a20257a057d614f07`
+passed the 37-command offline rerun with doubles. Recovery scanned 107 objects with
+zero current-credential matches only; the original bank, configure receipts, and
+direct HOME/euid observations were lost. No exact recovered live-configure audit
+or new browser bootstrap is claimed. Recovery repeated no model/configure/deploy
+operation and created no credentials. Btrfs pull failed before successful private
+`/tmp` pulls and durable copying. Totals are approximately `$0.59887725`
+API-equivalent and `$0.04249612` provisional compute, not bills.
+
+This supersedes pending onboarding/2.1.269/CI status, not historical qualifications.
+Changes remain unmerged and 0.3.0 unpublished; implementation acceptance does not
+authorize immediate publication. No source behavior changed in this docs follow-up.

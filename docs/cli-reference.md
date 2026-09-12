@@ -169,8 +169,9 @@ still contain workload-emitted secrets and must be treated as private.
 
 Earlier 0.3.0 candidates have live API-key and normal subscription evidence for
 all four harnesses, plus native OAuth refresh/fresh-controller consumption for
-Codex, OpenCode, and Pi. Claude live evidence is at 2.1.267, not the preferred
-2.1.269. New onboarding journeys and 2.1.269 live acceptance remain pending. See
+Codex, OpenCode, and Pi. Separate recovered `de6ad37` runs passed Codex OAuth and
+preferred Claude 2.1.269 API-key/setup-token execution; historical 2.1.267 evidence
+is unchanged. Onboarding journeys are accepted within the recovery limits in
 [testing limits](#testing-and-limitations); this is not a fully verified or
 published 0.3.0 release.
 
@@ -812,12 +813,19 @@ across multiple compactions.
 
 ### Testing and limitations
 
-The onboarding candidate passed 114 offline native cases, including preferred
-Claude 2.1.269, and 37 installed CLI invocations with transport/terminal doubles.
-The latter used a dirty wheel, synthetic Docker execution, and graph-only deploy;
-live onboarding and 2.1.269 checks remain pending. Integration/resource fixes are
-implemented and full validation is underway, as tracked in the plan.
-The older evidence below does not close those gates.
+The onboarding implementation and scoped journeys are accepted at `de6ad37`, with
+full local validation and passing CI. After reboot, 37 installed offline invocations
+passed on the exact surviving wheel with transport/terminal doubles, synthetic
+Docker execution, and graph-only deployment. Recovered live Codex 0.154.0 OAuth and
+Claude 2.1.269 API-key/setup-token runs each earned reward `1`; public result,
+verification, pull, stopped owners, and two empty sweeps passed.
+
+Both Claude runs preserved `anthropic/claude-opus-5[1m]` and reported context window
+1,000,000, but exercised only short inputs. The 107-object recovery scan found zero
+current-credential matches; the historical credential bank was lost. Original
+configure receipts and direct controller HOME/euid observations were not recovered,
+so remote success and offline setup tests do not prove that exact live setup audit
+or a new browser bootstrap. Changes remain unmerged and 0.3.0 unpublished.
 
 The source candidate passed API-key eval flows through the public CLI for
 OpenCode, Codex, Claude Code, and Pi. Subscription evidence combines the normal
@@ -869,9 +877,9 @@ smoke preserved the requested `anthropic/claude-opus-5[1m]` selector and reporte
 native usage `contextWindow = 1000000`. It did not exercise a million-token input
 or establish million-token retention or universal entitlement. Local error-handling
 tests do not establish natural setup-token expiry/renewal; no token-aging experiment
-is required. Earlier hosted CI passed at `5382b78`, before the onboarding changes.
-Fresh journey/live validation, independent review, current CI, exact-release-artifact
-validation, and publication remain open. The user accepted the observed native
+is required. Hosted CI passed at `de6ad37`; scoped onboarding/live acceptance is
+recorded above. Final release review, merge, exact-release-artifact validation, and
+publication remain separate open work. The user accepted the observed native
 mechanism/continuation/transcript
 recovery for 0.3.0. Claude summary-only/clean within-protocol retention remains
 unproven; acceptance does not establish that the summaries retained the facts.
