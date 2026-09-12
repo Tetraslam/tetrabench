@@ -232,8 +232,9 @@ def test_public_provider_check_failure_is_not_unknown_success(
 
 
 @pytest.mark.parametrize("status", ["ok", "blocked"])
+@pytest.mark.parametrize("with_harness", [False, True])
 def test_public_doctor_controller_report_agrees_in_human_and_json(
-    tmp_path, monkeypatch, status
+    tmp_path, monkeypatch, status, with_harness
 ):
     from test_cli import _DoctorClient
     from test_controller_configure import project
@@ -242,7 +243,9 @@ def test_public_doctor_controller_report_agrees_in_human_and_json(
     from tetrabench.s3 import S3Store
 
     root = initialize_project(tmp_path / "project")
-    config = project(harness=load_harness_override(api_harness(root)))
+    config = project(
+        harness=load_harness_override(api_harness(root)) if with_harness else None
+    )
     monkeypatch.chdir(root)
     monkeypatch.setattr("tetrabench.cli.load_project_config", lambda *a, **kw: config)
     monkeypatch.setattr(
@@ -250,16 +253,21 @@ def test_public_doctor_controller_report_agrees_in_human_and_json(
         lambda storage: S3Store(storage, _DoctorClient()),
     )
     action = "Check the selected Secret and deployed Function."
-    monkeypatch.setattr(
-        "tetrabench.auth_diagnostics.check_controller_metadata",
-        lambda *a, **kw: {
+
+    def controller_metadata(spec, *, online):
+        assert online is True
+        return {
             "status": status,
             "action": action,
             "remote_runtime_checked": {
                 "status": "unproven",
                 "action": "No invocation.",
             },
-        },
+        }
+
+    monkeypatch.setattr(
+        "tetrabench.auth_diagnostics.check_controller_metadata",
+        controller_metadata,
     )
     runner = CliRunner()
     human = runner.invoke(app, ["doctor", "--online"])
