@@ -1,14 +1,15 @@
 """Native parser boundaries, independently of shell quoting and model execution."""
 
 import json
-import os
 import re
 import shlex
 import subprocess
 import sys
 
 import pytest
-from test_harness_native_consumers import _native_modules, agent
+from native_consumer_support import VERSIONS, native_environment, native_modules
+from test_harness_native_consumers import agent
+from test_stable_native_consumers import executable, make_agent
 
 
 def _argv(instance):
@@ -23,62 +24,36 @@ def _argv(instance):
 
 
 def _modules():
-    root = _native_modules()
-    if root is None:
-        pytest.skip("set TETRABENCH_NATIVE_NODE_MODULES for pinned vendor parsers")
+    root = native_modules(required=True)
+    assert root is not None
     return root
 
 
 def _environment(tmp_path):
-    return {
-        "PATH": os.environ["PATH"],
-        "HOME": str(tmp_path),
-        "XDG_CONFIG_HOME": str(tmp_path / "config"),
-        "XDG_DATA_HOME": str(tmp_path / "data"),
-        "XDG_CACHE_HOME": str(tmp_path / "cache"),
-        "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
-    }
+    return native_environment(tmp_path)
 
 
+@pytest.mark.native
 @pytest.mark.parametrize(
     "value", ["--version", "--model=openai/other", "two words $(printf injected)"]
 )
 def test_opencode_values_cannot_become_native_options(tmp_path, value):
     modules = _modules()
-    instance = agent(tmp_path, "opencode", {"title": value, "variant": value})
+    instance = make_agent(
+        tmp_path, "opencode", options={"title": value, "variant": value}
+    )
     arguments = ["--model=openai/model", "run", *_argv(instance), "--auto"]
-    # OpenCode v1.18.29 pins yargs 18.0.0. Use that parser and the native
-    # option definitions with a harmless handler that exposes the parsed state.
-    assert (
-        json.loads((modules / "yargs/package.json").read_text())["version"] == "18.0.0"
-    )
-    program = (
-        f"import yargs from {json.dumps((modules / 'yargs/index.mjs').as_uri())};"
-        "yargs(JSON.parse(process.argv[1])).exitProcess(false).strict()"
-        ".version('1.18.29').option('model',{alias:'m',type:'string'})"
-        ".command('run [message..]','run', y => y.option('title',{type:'string'})"
-        ".option('variant',{type:'string'}).option('auto',{type:'boolean'}), "
-        "argv => console.log(JSON.stringify(argv)))"
-        ".parse();"
-    )
-    parsed = json.loads(
-        subprocess.check_output(
-            ["node", "--input-type=module", "-e", program, json.dumps(arguments)],
-            env=_environment(tmp_path),
-        )
-    )
-    assert parsed["title"] == value
-    assert parsed["variant"] == value
-    assert parsed["model"] == "openai/model"
-    assert parsed["auto"] is True
-    assert not parsed.get("version")
-
     # A deliberately unknown final option forces the actual native parser to
     # stop before its handler. A separate --version value incorrectly exits 0.
     executable = modules / "opencode-linux-x64/bin/opencode"
     assert (
-        subprocess.check_output([str(executable), "--version"], text=True).strip()
-        == "1.18.29"
+        subprocess.check_output(
+            [str(executable), "--version"],
+            text=True,
+            env=_environment(tmp_path),
+            timeout=20,
+        ).strip()
+        == VERSIONS["opencode"]
     )
     result = subprocess.run(
         [str(executable), *arguments, "--tetrabench-invalid-option"],
@@ -89,8 +64,8 @@ def test_opencode_values_cannot_become_native_options(tmp_path, value):
         timeout=20,
     )
     assert result.returncode == 1
-    assert result.stderr.startswith("opencode run [message..]")
-    assert result.stdout.strip() != "1.18.29"
+    assert result.stderr.lstrip().startswith("opencode run [message..]")
+    assert result.stdout.strip() != VERSIONS["opencode"]
     if value == "--version":
         broken = subprocess.run(
             [
@@ -107,9 +82,10 @@ def test_opencode_values_cannot_become_native_options(tmp_path, value):
             timeout=20,
         )
         assert broken.returncode == 0
-        assert broken.stdout.strip() == "1.18.29"
+        assert broken.stdout.strip() == VERSIONS["opencode"]
 
 
+@pytest.mark.native
 @pytest.mark.parametrize(
     "value",
     ["--version", "--model=openai/other", "words with spaces $(printf injected)"],
@@ -129,12 +105,14 @@ def test_claude_native_parser_accepts_bound_text_and_tool_values(
         "permission_mode": "acceptEdits",
     }
     options[field] = value
-    instance = agent(tmp_path, "claude-code", options)
+    instance = make_agent(tmp_path, "claude-code", options=options)
     arguments = _argv(instance)
-    command = ["node", str(modules / "@anthropic-ai/claude-code/cli.js")]
+    command = executable(modules, "claude-code")
     assert (
-        subprocess.check_output([*command, "--version"], text=True).strip()
-        == "2.1.63 (Claude Code)"
+        subprocess.check_output(
+            [*command, "--version"], text=True, env=_environment(tmp_path), timeout=20
+        ).strip()
+        == f"{VERSIONS['claude-code']} (Claude Code)"
     )
     result = subprocess.run(
         [*command, *arguments, "--tetrabench-invalid-option"],
@@ -147,30 +125,31 @@ def test_claude_native_parser_accepts_bound_text_and_tool_values(
     assert result.returncode != 0
     assert "unknown option '--tetrabench-invalid-option'" in result.stderr
     assert "argument missing" not in result.stderr
-    assert result.stdout.strip() != "2.1.63 (Claude Code)"
+    assert result.stdout.strip() != f"{VERSIONS['claude-code']} (Claude Code)"
 
 
+@pytest.mark.native
 def test_codex_native_parser_accepts_equals_config_assignments(tmp_path):
     modules = _modules()
-    instance = agent(
+    instance = make_agent(
         tmp_path,
         "codex",
-        {
+        options={
             "reasoning_effort": "medium",
             "reasoning_summary": "detailed",
             "web_search": "disabled",
         },
     )
     arguments = _argv(instance)
-    executable = (
-        modules / "@openai/codex-linux-x64/vendor/x86_64-unknown-linux-musl/codex/codex"
-    )
+    command = executable(modules, "codex")
     assert (
-        subprocess.check_output([str(executable), "--version"], text=True).strip()
-        == "codex-cli 0.114.0"
+        subprocess.check_output(
+            [*command, "--version"], text=True, env=_environment(tmp_path), timeout=20
+        ).strip()
+        == f"codex-cli {VERSIONS['codex']}"
     )
     result = subprocess.run(
-        [str(executable), "exec", *arguments, "--tetrabench-invalid-option"],
+        [*command, "exec", *arguments, "--tetrabench-invalid-option"],
         env=_environment(tmp_path),
         cwd=tmp_path,
         text=True,
@@ -181,13 +160,24 @@ def test_codex_native_parser_accepts_equals_config_assignments(tmp_path):
     assert "unexpected argument '--tetrabench-invalid-option'" in result.stderr
     assert "invalid value" not in result.stderr
     for value in ("--version", "--model=openai/other"):
-        with pytest.raises(ValueError):
-            agent(tmp_path, "codex", {"reasoning_effort": value})
+        selected = make_agent(tmp_path, "codex", options={"reasoning_effort": value})
+        result = subprocess.run(
+            [*command, "exec", *_argv(selected), "--tetrabench-invalid-option"],
+            env=_environment(tmp_path),
+            cwd=tmp_path,
+            text=True,
+            capture_output=True,
+            timeout=20,
+        )
+        assert result.returncode != 0
+        assert "unexpected argument '--tetrabench-invalid-option'" in result.stderr
+        assert result.stdout.strip() != f"codex-cli {VERSIONS['codex']}"
 
 
+@pytest.mark.native
 def test_pi_native_parser_requires_separate_enum_value(tmp_path):
     modules = _modules()
-    instance = agent(tmp_path, "pi", {"thinking": "high"})
+    instance = make_agent(tmp_path, "pi", options={"thinking": "high"})
     module = modules / "@earendil-works/pi-coding-agent/dist/cli/args.js"
     program = (
         f"import {{parseArgs}} from {json.dumps(module.as_uri())};"
@@ -215,7 +205,7 @@ def test_pi_native_parser_requires_separate_enum_value(tmp_path):
     assert "thinking" not in unsupported
     assert unsupported["unknownFlags"] == [["thinking", "high"]]
     with pytest.raises(ValueError):
-        agent(tmp_path, "pi", {"thinking": "--version"})
+        make_agent(tmp_path, "pi", options={"thinking": "--version"})
 
 
 @pytest.mark.parametrize("section", ["model_providers", "mcp_servers"])
@@ -335,17 +325,21 @@ def test_other_harness_headers_use_their_own_reference_semantics(tmp_path, monke
         )
 
 
+@pytest.mark.native
 def test_pi_native_header_resolver_preserves_static_values(tmp_path, monkeypatch):
     modules = _modules()
     monkeypatch.setenv("HOST_TOKEN", "Bearer fixture-token")
-    instance = agent(
+    instance = make_agent(
         tmp_path,
         "pi",
         native={
             "models": {
                 "providers": {
                     "openai": {
-                        "headers": {"Authorization": "AUTH_HEADER", "X-Static": "plain"}
+                        "headers": {
+                            "Authorization": "${AUTH_HEADER}",
+                            "X-Static": "plain",
+                        }
                     }
                 }
             }

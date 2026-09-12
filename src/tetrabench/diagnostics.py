@@ -5,11 +5,12 @@ from __future__ import annotations
 import builtins
 import re
 from collections.abc import Iterable
+from importlib.metadata import PackageNotFoundError, version
 
 from botocore import exceptions as boto_errors
 from modal import exception as modal_errors
 
-INSTALL_COMMAND = "uv tool install --python 3.12 tetrabench==0.2.0"
+INSTALL_COMMAND = "uv tool install --python 3.12 tetrabench"
 
 _MISSING_RESOURCE_ADVICE = (
     "The controller Secret is unavailable in the selected Modal environment. "
@@ -18,16 +19,16 @@ _MISSING_RESOURCE_ADVICE = (
 )
 _MESSAGES = {
     "unsupported_python": (
-        "Tetrabench 0.2.0 requires CPython 3.12; its serialized Modal controller "
-        f"also uses Python 3.12. Reinstall with: {INSTALL_COMMAND}"
+        "Tetrabench{release} requires CPython 3.12; its serialized Modal controller "
+        "also uses Python 3.12. Reinstall with: {install_command}"
     ),
     "unsupported_platform": (
         "Tetrabench execution requires Linux. Run from a Linux host with Python 3.12; "
-        f"install with: {INSTALL_COMMAND}"
+        "install with: {install_command}"
     ),
     "runtime_dependency_mismatch": (
         "This release requires Harbor 0.22.0 and Modal 1.5.4. Restore the locked "
-        f"installation with: {INSTALL_COMMAND} --reinstall"
+        "installation with: {install_command} --reinstall"
     ),
     "missing_credentials": (
         "Required credentials are unavailable. Configure the named environment "
@@ -124,6 +125,16 @@ class DiagnosticError(ValueError):
         )
         self.credential_names = names
         message = _MESSAGES[code]
+        if "{install_command}" in message:
+            try:
+                installed = version("tetrabench")
+            except PackageNotFoundError:
+                installed = None
+            message = message.format(
+                release=f" {installed}" if installed else "",
+                install_command=INSTALL_COMMAND
+                + (f"=={installed}" if installed else ""),
+            )
         if names:
             message += " Environment variables: " + ", ".join(names) + "."
         super().__init__(message)

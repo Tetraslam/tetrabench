@@ -2018,3 +2018,257 @@ Provenance: PR 33 merge `b6766d34027842e4d78d004e9781600af45dccd6`; passing post
 The release wheel/sdist were built once in GitHub and verified unchanged before and after testing. SHA-256 values are `3feb57cf7ee15048de6885ad671320e87eb8a321e2a2d6bdf3a0e9691b2afa46` and `5666dc081821f5b05ca17d1f28167252fde1b2bcc78db2a9d21f887b9cb84223`. The installed release wheel passed local Docker Oracle, Modal Oracle, and controlled OpenCode 1.18.29/Astra reward-one runs. The same task files were used; installed and deployed wheel hashes matched the original. Native logs/SQLite showed two Astra build calls and no observed auxiliary/Gemini call. Model subtotal was $0.084845 with partial harness-reported coverage; separately observed Modal metering was $0.00404694, provisional and not an invoice. Results fetched one 1,985/2,177-byte summary with zero other payload GETs, taking 3.727/8.796 seconds. Explicit audits verified 19/47 unique objects; downloads rehashed 15/43 files. Owners stopped and two empty child sweeps passed. Private exact-artifact evidence remains under `/tmp/opencode/tetrabench-020-release-driver-unique/`.
 
 After gate approval, GitHub OIDC published both artifacts to PyPI. Official metadata and downloaded bytes match the tested hashes. A fresh official-PyPI uv tool installation under isolated HOME/XDG/UV directories and Python 3.12.13 verified all 44 installed files, custom-category creation, all four harness capture/sealing cases, six safe preflight failures without provider access, Docker reward one, fresh-process result/status, and automatic exact-version controller-wheel resolution. Evidence is under `/tmp/opencode/tetrabench-public-020-ljj74qkT/`. No new container/network remained; the user's existing tool, eval fixtures, and prior runs were untouched. This release work is complete.
+
+## 2026-09-10T12:37:38-04:00: User-approved native fidelity and authentication work
+
+Provenance: direct user approval after the option, OAuth, and compaction research. Native compaction means opaque OpenAI state, not ordinary text summarization.
+
+The user approved current-stable native harness baselines, preserving native behavior and ancillary controls, API keys plus native subscription auth for Codex/Claude Code, Codex OAuth for OpenCode/Pi only, all identified useful configuration/resource/session gaps except changes to Codex sandbox/approval overrides, native model/route-aware reasoning discovery, and long-horizon multiple-compaction tests. Every auth flow is tracked separately in the plan. Fresh official release metadata returned OpenCode1.18.30, Codex0.154.0, Claude Code2.1.267, and Earendil Pi0.85.1. The accessible Agents-vault inventory contains Anthropic and experiments OpenRouter keys but no direct OpenAI key; the user was asked for its item reference. No credentials were read or new auth session created during this inventory.
+
+## 2026-09-11T00:17:49-04:00: Native-auth implementation checkpoint; live acceptance incomplete
+
+Provenance: superagent implementation and independent custody/resource/native-consumer reviews; interrupted-agent continuation; private direct-Modal smoke evidence and the one authorized stat-only diagnostic.
+
+The candidate implements current-stable native controls, portable resources, session seeding, native reasoning collection/adoption, explicit API-key/subscription references, independent native credential stores, private S3 CAS custody, native refresh/write-back, private producer-status witnesses, retention guards, and safe recovery. Review corrected config-layer route/SDK bypasses, stale status witnesses, masked native termination, logout recovery, missing privacy checks, and inspection/runtime model drift. Pi verification now uses its actual published bundled CLI and reports startup verification only; no continuous dispatch claim remains. Subscription credentials were not read or bootstrapped, and no refreshable account state was copied from interactive sessions.
+
+Synthetic transport tests exposed Harbor Docker exec credential values in argv; a thin native Docker adapter now uses name-only environment forwarding with task-local subprocess environment. Direct Modal SDK transport was independently cleared for bounded API-key tests, excluding the still-unverified DinD/Compose path. The first installed live candidate failed before child creation because the exact Modal controller image has root-owned `/tmp` mode 0777 without sticky. A stat-only diagnostic established that fact; staging now uses a verified private home and unsafe ancestors remain rejected. The next attempt reached installed Claude2.1.267 but exposed missing status-command PATH setup; Pi installation exposed an XDG/NVM directory mismatch. A shared native path normalizer and Pi Node24 selection fixed both, proven in fresh containers without real credentials or model calls. No earlier attempt began model inference; owners stopped and physical child sweeps were empty.
+
+The most recent full local checks pass 2,255 non-native tests and 79 mandatory native cases, with no skips. Ruff, formatting, typing, actionlint, and whitespace checks pass; Docker collection is 12. Private evidence includes `/tmp/opencode/tetrabench-auth-stat-diagnostic.json`, `/tmp/opencode/tetrabench-030-modal-api-corrected/REPORT.json`, and `/tmp/opencode/tetrabench-native-install-path-proof/REPORT.json`. This checkpoint preserves ongoing work across connectivity interruptions. Live API-key success, OAuth approvals/backend policy proof, direct OpenAI key access, and multiple native-compaction/summarization runs remain open; 0.3.0 is not release-ready.
+
+## 2026-09-11T06:46:11-04:00: API-key and context-boundary proofs; subscription gates open
+
+Provenance: clean-checkpoint and corrected candidate wheel runs through the public CLI; direct user-provided new API-key items; native artifacts and explicit metadata-only inspection; independent follow-up reviews. The user is asleep, so no browser approvals, interactive login copying, or 1Password GUI operations were attempted.
+
+Pi 0.85.1 and OpenCode 1.18.30 passed direct-Modal Astra tasks, with native API-key status and a reported subtotal of $0.088723. The original Anthropic key returned 401; the user supplied fresh OpenAI and Anthropic items. Claude Code 2.1.267 then passed on claude-opus-5, reporting $0.1105265. Codex 0.154.0 initially exposed a native stderr warning before its valid API-key status; the owned temporary layout and exact stderr-mode parser were corrected and native-regression-tested. Codex's subsequent direct OpenAI/Astra smoke passed, with a $0.1746575 usage estimate. Owners stopped and two child sweeps were empty for every completed attempt; no low-score retry or provider fallback concealed a failure.
+
+OpenCode's one-session continuation proof crossed three native text-summary boundaries and Pi's crossed two, both retaining all six required values. Main and summary costs were $0.506897/$0.1908275 and $0.564713/$0.0979475 respectively. The collector now accounts for supported native summary usage once, including imported-entry exclusion; these are native-reported/catalog-priced subtotals, not invoices. Codex passed two distinct encrypted compaction checkpoints under both default V2 and standalone compact configuration, windows 1 to 2, with correct final facts. V2's usage estimate was $1.041004; the standalone run exposed $0.6908735 of normal-response usage but not compaction charges. Its endpoint attribution is native configuration/call-path inference, not HTTP capture. Claude's separate native text-summary run crossed two boundaries (52,086 to 7,046 and 51,468 to 7,716 tokens) and returned grade one, but filtered later inputs and reread the original transcript contrary to that task protocol. Its clean retention subclaim remains unproven; no rerun was made. Native cost was $1.85730275. Reduced verification windows/thresholds were explicit, not stock-default performance claims.
+
+Metadata-only inspection/adoption now actually supplies the declared API-key auth context on explicit request. All four paths were exercised; Codex's bundled model catalog needed a pinned native-default route binding, recorded as such rather than remote account proof. Earlier intermittent metadata failures were traced to the test runner's PID/procfs mismatch, not repaired by weakening custody. OpenCode OAuth startup was corrected to use naturally exiting metadata commands instead of a forced-stop server. Tigris's documented organization-admin ACL group is accepted only under an explicit default-false trust flag with all other privacy checks retained. Live OAuth storage remains unapproved, and subscription browser approvals remain pending.
+
+Evidence roots include `/tmp/opencode/tetrabench-030-cc0bd0c-smokes/`, `/tmp/opencode/tetrabench-030-fresh-direct-keys/`, `/tmp/opencode/tetrabench-030-summary-proof/`, `/tmp/opencode/tetrabench-030-codex-opaque-proof/`, `/tmp/opencode/tetrabench-030-claude-summary-proof/`, and `/tmp/opencode/tetrabench-metadata-rootcause-Gz5gGH/`. Local full validation passed; draft hosted CI exposed Ubuntu's nested unprivileged-user-namespace restriction. The reviewed CI-only correction temporarily adjusts and restores that ephemeral runner policy without relaxing test isolation. Follow-up hosted confirmation and the remaining live subscription gates are required before release.
+
+## 2026-09-11: Hosted checkpoint and native Modal Compose transport verified
+
+Provenance: hosted run `34591098904` on `4cc901d`, installed Harbor 0.22 strategy tests, independent scoped-environment review, and the bounded live native DinD probe under `/tmp/tetrabench-dind-proof-AgZs4qJw/`.
+
+Hosted Python/native-consumer and full-history secret checks passed. The follow-up native Modal DinD strategy sends environment values through SDK Secrets/protobuf env while Docker receives names only. Independent review caught and corrected late inherited-scope infrastructure overrides before SDK execution. The actual `enable_docker=true` probe captured 32 SDK exec/protobuf command payloads with zero literal synthetic-value hits; main and sidecar returned expected digests, explicit sidecar precedence held, and invalid CONTEXT_DIR overrides were refused before exec. File transfer, service networking, and volume operations passed. All owned containers, networks, and the disposable volume were removed; the sandbox and app stopped. No real model or OAuth credential was used in this probe. The proof wheel SHA-256 is `b4299c1382b1990b28f9b2987160284f1934433c77a781ec3382e92b2c4687cc`. Subscription approvals and the dedicated credential-backend proof remain open; no 0.3.0 publication occurred.
+
+Recorded at `2026-09-11T07:22:53-04:00`.
+
+## 2026-09-11T15:36:08Z: Subscription smoke evidence reconciled; refresh pending
+
+Provenance: retained `REPORT.json`, `FINAL_AUDIT.json`, and `WORKING_RECORD.md`
+under `/tmp/opencode/tetrabench-030-subscription-55dc637-20260911/`;
+`OPERATOR_FINAL_REPORT.json` and the later `ARTIFACT_HEAD_DENIAL_PROOF.json` under
+`/tmp/opencode/tetrabench-auth-backend-20260911/`; subsequent user handoff for
+approvals, Claude diagnosis/offline checks, and refresh-review status. This entry
+supersedes the approval/backend blockers in the 00:17, 06:46, and 07:22 checkpoints
+without altering those entries or their retained reports.
+
+The user approved the single-person organization-admin opt-in. Scoped backend
+CAS/private ACL checks passed; a later auth-store-key HEAD against a known retained
+artifact returned 403 with no payload read. Tigris still exposes an unrelated
+bucket's public/private status bit despite explicit deny. That accepted metadata
+limitation is not general AWS/IAM or encryption proof; the public trust default
+remains false.
+
+The unchanged installed wheel from clean `55dc637` completed normal subscription
+smokes for Codex 0.154.0, OpenCode 1.18.30, and Pi 0.85.1, each reward `1` on Astra.
+Each owner stopped and passed two empty child sweeps; profiles returned
+ready/unowned after private write-back. Access and refresh credentials were
+unchanged, so no actual refresh occurred. The final 91-object audit included binary
+artifacts and found zero known credential/private-auth-resource matches in literal,
+base64, and URL-encoded forms. This is bounded scan evidence, not universal
+scrubbing. Subscription charges/quota and long-context retention remain unproven.
+
+Claude setup-token status passed, but `[1m]` metadata selection blocked before
+inference. The user handoff identifies suffix handling and picker omission as the
+cause and reports 107 passing offline native tests for ongoing fixes, not live
+acceptance. The user approved `[1m]` investigation, then normal Claude smoke and
+native OAuth refresh. Refresh implementation is under independent review; a
+`setsid` descendant escape was found and is being fixed. Each OAuth harness still
+needs actual refresh, durable write-back, next-consumer, and failure-cleanup proof.
+Claude's setup token instead needs user-managed renewal evidence. Earlier Claude
+transcript-reread and reduced-threshold continuation qualifications remain in force.
+No fully verified or public 0.3.0 release is claimed. Later live results will be
+appended after execution; this documentation pass performs no provider operation.
+
+## 2026-09-11T16:34:14Z: Independent re-review and local validation passed
+
+Provenance: agent source inspection and pinned-binary observations; independent
+re-review `ses_f6ef6522dffeDOEh823MEUef11`; parent validation checkpoint. Correction
+to the 15:36 entry: the Claude suffix/picker diagnosis came from agent observations,
+not the user. The user provided approval only. Native `[1m]` selection/catalog
+metadata does not prove entitlement or context capacity.
+
+The `setsid` escape is fixed by a trusted Linux PID-namespace supervisor containing
+all descendants. Synthetic `setsid`, double-fork, `CLONE_PARENT`, and wrapper-kill
+adversaries passed independent re-review with no findings. Local checks passed:
+2,488 non-native, 107 mandatory native, 12 Docker; whole Bandit, lock, actionlint,
+Ruff/format/ty, strict Twine/package checks, installed wheel/sdist Docker smokes,
+and locked dependency audit. Candidate wheel SHA-256:
+`7f8b79a5055c85ebede91afeb09fc5b583e8d6ff5a4627f7e4653fa8121acd5a`.
+
+Current action is the installed Claude smoke preserving `[1m]`, then single-use
+native refresh and real fresh-controller consumers. These live acceptance gates,
+including deployed refresh failure cleanup, remain `unproven`; no 0.3.0 release
+claim follows from local validation. This supersedes the earlier fixing/review-
+pending status without changing that immutable entry.
+
+## 2026-09-11T18:01:01Z: Live subscription and renewal gates complete; release gates open
+
+Provenance: direct reads of `FINAL_REPORT.json`, `RENEWAL_FINAL_REPORT.json`, and
+`SUCCESSOR_PI_FINAL_REPORT.json` in `/tmp/opencode/tetrabench-030-2d1ca9a-build/`,
+plus `/tmp/opencode/tetrabench-controller-binding-diagnosis/REPORT.json`. Parent
+checkpoint supplies CI/test status. This supersedes the prior pending live gates
+and the retained reports' intermediate partial/not-deployed statuses.
+
+Claude setup-token smoke applied the exact requested `[1m]` suffix, responded as
+`claude-opus-5`, reported `contextWindow = 1000000`, and earned reward `1`.
+Cleanup passed; its 35-object/17-entry scan had zero known matches. This is not
+million-token input/retention or universal entitlement proof. Natural setup-token
+expiry/renewal remains user-owned and unobserved, distinct from tested error handling;
+no waiting-for-expiry experiment is required. Earlier retention-protocol violations
+remain qualified.
+
+All three OAuth clients changed access and refresh credentials once, persisted
+them, and passed fresh actual Modal controller claimed/staged-byte verification,
+reward `1`, stopped owners, and two empty sweeps. Final generation is 1; ready/unowned
+revisions are Codex 7, OpenCode 8, Pi 8. The first phase ended on billing-read
+throttling before renewal. OpenCode's first successor correctly rejected an old
+rolling-deployment container before auth; the private recreate fix passed without
+repeating renewal or retrying a model score. Scans remain phase-local: the final
+65 objects/3 binary objects had zero known matches, using current Codex/OpenCode
+and initial/renewed Pi values, not a cross-parent historical bank. Totals are
+`$0.404485` API-equivalent and `$0.02897999` provisional compute, not bills. Private
+resources remain retained with no run-owned compute.
+
+The prior full 2,488 non-native/107 native/12 Docker checkpoint stands. The latest
+amended step passed 2,487 with one quota failure that passed separately, not a new
+full pass. Hosted CI failed 45 renewal cases after early namespace-policy restoration;
+the uncommitted CI-only window fix awaits hosted rerun. Final independent review,
+CI, and exact-release-artifact gates remain open. No 0.3.0 publication occurred.
+
+## 2026-09-11T18:21:25Z: Hosted CI checkpoint accepted
+
+Provenance: read-only `gh run view` metadata and logs for
+[run 34631236019](https://github.com/Tetraslam/tetrabench/actions/runs/34631236019),
+head `3a48db2d75790674ba08135fa1732fec1efdc832`. Both jobs and all steps passed:
+107 mandatory native, 2,488 other tests, 12 Docker, and package/security checks.
+This supersedes the pending-CI status above. Git comparison confirms code, tests,
+tools, and dependencies unchanged since live-tested `2d1ca9a`. This follow-up
+changes documentation only; it does not claim tests ran on its future commit.
+
+Final independent release review, exact-release-artifact validation, and publication
+remain open. Mechanisms/continuation passed; Claude clean within-protocol retention
+is unproven and its release disposition awaits the user. No paid rerun is inferred
+as authorized or required. Version 0.3.0 remains unpublished.
+
+## 2026-09-11T19:46:03Z: Observed Claude native recovery accepted for 0.3.0
+
+Provenance: the user's reply after the parent explained Claude's transcript lookup
+after two summaries: "oh that seems fine. if the other harnesses worked and this
+is just the way cc is intended to be used and that was its natural first thought,
+that seems perfectly fine to me :)" The retained Claude summary report still
+records correct results and a failed clean-retention subclaim.
+
+This accepts the observed native mechanism/continuation/recovery for 0.3.0 and
+supersedes the pending user-disposition blocker. Summary-only/clean within-protocol
+retention remains unproven; no claim that the summaries retained facts or that
+transcript lookup is universally the first strategy follows. No paid rerun is implied.
+The parent reports CI `34632963343` successful at clean pushed `5382b78`; the live
+runtime/wheel evidence remains at `2d1ca9a`. Final independent release review,
+stable-version recheck, exact-release-artifact validation, and publication remain
+open. This entry changes acceptance status, not source behavior or historical evidence.
+
+## 2026-09-11T21:58:56Z: Onboarding docs aligned with implemented CLI; acceptance pending
+
+Provenance: five `/tmp/tetrabench-*-handoff.md` records for onboarding integration,
+auth, remote configuration, diagnostics, and Claude upgrade; current CLI/source;
+offline public `--help` and `agents claude-code --json` inspection. This is a
+documentation-only checkpoint, not a login, deployment, or installed-journey proof.
+
+Docs use explicit API-key env references, optional native login bootstrap and
+managed authoring profile references, and existing-backend remote login followed by
+controller configure preview/confirmed write/deploy. Runtime paths are managed;
+old sealed generations stay fixed. Diagnostics distinguish metadata from account
+or remote-runtime proof. Secret merge updates neither delete stale keys nor refresh
+running controllers; no automatic provisioning is advertised.
+
+Preferred Claude is frozen at 2.1.269 / SDK 0.3.269; historical 2.1.267 evidence
+and accepted transcript recovery remain unchanged. Integration reports 114 native
+passes, but the broad non-native run still has three resource lifecycle failures
+under investigation (2,602 passed with artifact tests excluded; 31 artifact cases
+passed separately on `/tmp`). Review, fresh installed public journeys, and new
+Claude live checks remain open. No full-pass or release-readiness claim follows.
+
+## 2026-09-11T22:45:20Z: Review fixes and installed offline journeys
+
+Provenance: integration review handoff, current doctor source, direct read of
+`/tmp/opencode/tetrabench-onboarding-journeys-proof/FINAL_REPORT.json`, and parent
+resource/validation checkpoint. Five P2 fixes are implemented; 249 focused cases
+passed. Hash seed 3 exposed retry-set JSON ordering; semantic-set comparison and
+seeded regressions supersede the unresolved three-resource-failure status above.
+The later 2,647-pass/one-obsolete-snippet-test run is not a full pass; the snippet
+test was replaced by CLI/SDK behavior coverage and full validation is underway.
+
+The dirty installed wheel passed 37 public CLI invocations with transport/terminal
+doubles and real Modal RPC construction, but synthetic Docker and graph-only
+deployment. No live login, score, remote setup, or Claude 2.1.269 proof is claimed.
+Pi requires Node >=22.19.0; verification used 24.21.0. Doctor's optional auth
+metadata check may refresh private custody without inference. Earlier Claude
+2.1.267 evidence and accepted transcript-recovery qualifications remain unchanged.
+
+## 2026-09-11T23:33:30Z: Complete dirty-candidate local validation
+
+Provenance: OpenCode validation in `/home/tetraslam/Programming/tetrabench`, retained
+logs/JUnit, before/after source manifests, and installed artifact reports under
+`/var/tmp/tetrabench-final-validation-20260911/`. No source changes, credentials,
+model/cloud calls, commits, pushes, or host sysctl changes were made.
+
+Complete selections passed 2,675 nonnative, 114 mandatory native, and 12 Docker
+tests, with zero skips. Nonnative/native used a private 6 GiB tmpfs over `/tmp`,
+actual UID 1000, and hash seed 3; nonnative retained host loopback. Native used
+network isolation, existing pinned consumers, and Node 24.21.0. Ruff/format, ty,
+Bandit over all source/tools, lock/dependency consistency and vulnerability audit,
+actionlint, strict package metadata, candidate-diff and history Gitleaks passed.
+Wheel/sdist reproduction, installed Docker reward one, offline Modal graph, and
+37 installed synthetic public CLI invocations passed. All 75 packaged source files
+matched the unchanged 216-file source/test/tool/dependency/workflow fingerprint.
+
+The initial nonnative selection had one `ENOTCONN` at
+`test_authority_fencing_calibration.py:478`; the complete rerun passed unchanged.
+The initial Docker selection had two admission-matrix failures; a child diagnostic
+proved shared `/tmp` quota exhaustion. All 12 passed with `/var/tmp` scratch.
+The whole-changed-file scan's sole finding was unchanged, previously allowlisted
+prose at NOTES line 1476; the actual diff scan was clean. Runner-only scan-config
+and metadata-file-selection mistakes were corrected and retained in the logs.
+Four empty networks from intentional failed-cleanup tests were identified by their
+trial directories and removed; Docker inventories returned to baseline and no
+validation test process remained. Live onboarding, current hosted CI, and release
+acceptance remain separate gates. Full hashes and qualifications are in `RESULTS.md`.
+
+## 2026-09-12T00:56:10Z: Recovered onboarding acceptance
+
+Provenance: direct reads of durable `FINAL_REPORT.json` and
+`installed-journey-report.json` under
+`~/.local/share/tetrabench-public-de6ad37-recovery/`; parent-reported successful
+[CI 34658759608](https://github.com/Tetraslam/tetrabench/actions/runs/34658759608)
+at `de6ad37`. Earlier `/tmp` evidence was erased by reboot and was not reread.
+
+The five improvements and scoped public journeys are accepted. Codex 0.154.0 OAuth,
+Claude 2.1.269 API key, and Claude 2.1.269 setup token each earned reward `1` with
+public result/verify/pull, stopped owners, and two empty sweeps. Claude preserved
+`[1m]` and reported context 1,000,000 on short tasks, not capacity/retention proof.
+The surviving wheel `c14b06098dc473353b94a4eb5dd4a31b05e9eb486bb9f35a20257a057d614f07`
+passed the 37-command offline rerun with doubles. Recovery scanned 107 objects with
+zero current-credential matches only; the original bank, configure receipts, and
+direct HOME/euid observations were lost. No exact recovered live-configure audit
+or new browser bootstrap is claimed. Recovery repeated no model/configure/deploy
+operation and created no credentials. Btrfs pull failed before successful private
+`/tmp` pulls and durable copying. Totals are approximately `$0.59887725`
+API-equivalent and `$0.04249612` provisional compute, not bills.
+
+This supersedes pending onboarding/2.1.269/CI status, not historical qualifications.
+Changes remain unmerged and 0.3.0 unpublished; implementation acceptance does not
+authorize immediate publication. No source behavior changed in this docs follow-up.

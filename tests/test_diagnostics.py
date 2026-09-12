@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from importlib.metadata import PackageNotFoundError
+from importlib.metadata import PackageNotFoundError, version
 
 import pytest
 from botocore import exceptions as boto_errors
@@ -243,7 +243,36 @@ def test_python_mismatch_precedes_dependency_inspection(monkeypatch, python_vers
         )
     assert caught.value.code == "unsupported_python"
     assert caught.value.operation == "run"
-    assert "uv tool install --python 3.12 tetrabench==0.2.0" in str(caught.value)
+    assert f"uv tool install --python 3.12 tetrabench=={version('tetrabench')}" in str(
+        caught.value
+    )
+
+
+@pytest.mark.parametrize(
+    "code",
+    ["unsupported_python", "unsupported_platform", "runtime_dependency_mismatch"],
+)
+@pytest.mark.parametrize("installed", ["0.2.0", "0.3.0", "0.4.0rc1"])
+def test_runtime_advice_uses_installed_distribution_version(
+    monkeypatch, code, installed
+):
+    monkeypatch.setattr("tetrabench.diagnostics.version", lambda name: installed)
+    error = PreflightError(code, operation="run")
+    assert f"tetrabench=={installed}" in str(error)
+    if code == "unsupported_python":
+        assert f"Tetrabench {installed} requires CPython 3.12" in str(error)
+
+
+def test_runtime_advice_without_package_metadata_does_not_guess_a_version(monkeypatch):
+    def missing(name):
+        raise PackageNotFoundError(PRIVATE)
+
+    monkeypatch.setattr("tetrabench.diagnostics.version", missing)
+    error = PreflightError("unsupported_python", operation="run")
+    assert "Tetrabench requires CPython 3.12" in str(error)
+    assert "uv tool install --python 3.12 tetrabench" in str(error)
+    assert "tetrabench==" not in str(error)
+    assert PRIVATE not in str(error)
 
 
 @pytest.mark.parametrize("platform_name", ["win32", "darwin", "freebsd", PRIVATE])

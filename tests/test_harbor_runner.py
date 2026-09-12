@@ -31,6 +31,7 @@ from tetrabench.harbor_api import (
     NativeJobArtifacts,
     NativeTrialArtifacts,
     _exact_model_value,
+    _job_config_value,
 )
 from tetrabench.harbor_runner import HarborRunner, compile_harbor_job
 from tetrabench.integration import prepare_fixture_submission, run_local_composition
@@ -212,6 +213,38 @@ def test_exact_job_config_comparison_does_not_use_harbor_relaxed_equality() -> N
     second = JobConfig(job_name="second")
     assert first == second
     assert _exact_model_value(first) != _exact_model_value(second)
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"include_exceptions": {"NewError"}},
+        {"exclude_exceptions": {"NewError"}},
+        {"exclude_exceptions": None},
+        {"exclude_exceptions": set()},
+        {"max_retries": 2},
+        {"wait_multiplier": 2.0},
+        {"min_wait_sec": 3.0},
+        {"max_wait_sec": 30.0},
+    ],
+)
+def test_job_config_retry_normalization_preserves_policy_changes(change):
+    expected = JobConfig()
+    different = expected.model_copy(
+        update={"retry": expected.retry.model_copy(update=change)}
+    )
+    assert _job_config_value(expected) != _job_config_value(different)
+
+
+def test_job_config_retry_normalization_preserves_unrelated_list_order():
+    expected = JobConfig(
+        agents=[
+            Harbor022Api.agent_config(name="oracle", model_name=None),
+            Harbor022Api.agent_config(name="nop", model_name=None),
+        ]
+    )
+    different = expected.model_copy(update={"agents": list(reversed(expected.agents))})
+    assert _job_config_value(expected) != _job_config_value(different)
 
 
 def test_modal_config_uses_public_import_path_and_observation_identity(

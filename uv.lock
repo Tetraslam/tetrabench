@@ -803,6 +803,15 @@ wheels = [
 ]
 
 [[package]]
+name = "json-with-comments"
+version = "1.3.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/63/8d/08b696af5b68210999c8f9f4ba1729ccbd4ae2bbf535f547a9d07ca36ce7/json_with_comments-1.3.0.tar.gz", hash = "sha256:8e9668f9aaa9f50cb546828da958c606e45f3866daceb51f16b0ee61985c0677", size = 7070, upload-time = "2026-08-24T01:33:14.494Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/cf/72/79259c11af4c22f187d0da18411982883428c2e915b2f9eb43bcd20d81fe/json_with_comments-1.3.0-py3-none-any.whl", hash = "sha256:cc96215e8960687180a6e60db8567c806ba40fb56187b2b8cf60ccc0bdfeb81e", size = 6603, upload-time = "2026-08-24T01:33:13.275Z" },
+]
+
+[[package]]
 name = "jsonschema"
 version = "4.26.0"
 source = { registry = "https://pypi.org/simple" }
@@ -1753,12 +1762,13 @@ wheels = [
 
 [[package]]
 name = "tetrabench"
-version = "0.2.0"
+version = "0.3.0"
 source = { editable = "." }
 dependencies = [
     { name = "boto3" },
     { name = "botocore", extra = ["crt"] },
     { name = "harbor", extra = ["modal"] },
+    { name = "json-with-comments" },
     { name = "modal" },
     { name = "platformdirs" },
     { name = "pydantic" },
@@ -1784,6 +1794,7 @@ requires-dist = [
     { name = "boto3", specifier = "==1.43.83" },
     { name = "botocore", extras = ["crt"], specifier = "==1.43.83" },
     { name = "harbor", extras = ["modal"], specifier = "==0.22.0" },
+    { name = "json-with-comments", specifier = "==1.3.0" },
     { name = "modal", specifier = "==1.5.4" },
     { name = "platformdirs", specifier = ">=4.11.5" },
     { name = "pydantic", specifier = "==2.13.5" },

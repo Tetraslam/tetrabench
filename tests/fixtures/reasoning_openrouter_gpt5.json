@@ -1,0 +1,14 @@
+{
+  "source_url": "https://openrouter.ai/api/v1/model/openai/gpt-5",
+  "observed_at": "2026-09-10T16:59:22.521660+00:00",
+  "full_response_sha256": "f39463fea713be0968ce32a178580da85c762b6d6c58af664cbbba97b3c2a828",
+  "capture": "Selected fields from explicit unauthenticated GET through discovery_http.refresh_public_metadata. Hash is of the full response, not this projection. No inference request.",
+  "model": {
+    "id": "openai/gpt-5",
+    "reasoning": {
+      "mandatory": true,
+      "supported_efforts": ["high", "medium", "low", "minimal"],
+      "default_effort": "medium"
+    }
+  }
+}

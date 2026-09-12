@@ -34,6 +34,8 @@ from harbor.models.trial.config import (
 )
 from harbor.models.trial.result import TrialResult
 
+from tetrabench.docker_environment import DOCKER_ENVIRONMENT_IMPORT_PATH
+
 HARBOR_API_VERSION = "0.22.0"
 
 
@@ -113,6 +115,14 @@ def _retry_semantics(retry: Any) -> Any:
     for field in ("include_exceptions", "exclude_exceptions"):
         if value[field] is not None:
             value[field] = sorted(value[field])
+    return value
+
+
+def _job_config_value(config: JobConfig) -> Any:
+    value = _exact_model_value(config)
+    # Harbor's exception filters are sets. JSON round-trips and hash seeds can
+    # change their iteration order without changing the retry policy.
+    value["retry"] = _retry_semantics(config.retry)
     return value
 
 
@@ -322,7 +332,17 @@ class Harbor022Api:
 
     @staticmethod
     def docker_environment() -> EnvironmentConfig:
-        return EnvironmentConfig(type=EnvironmentType.DOCKER)
+        return EnvironmentConfig(
+            type=EnvironmentType.DOCKER, import_path=DOCKER_ENVIRONMENT_IMPORT_PATH
+        )
+
+    @staticmethod
+    def is_docker_environment(config: EnvironmentConfig) -> bool:
+        """Recognize only native Docker and our exact transport adapter."""
+        return config.type == EnvironmentType.DOCKER and config.import_path in {
+            None,
+            DOCKER_ENVIRONMENT_IMPORT_PATH,
+        }
 
     @staticmethod
     def import_path_environment(
@@ -332,10 +352,7 @@ class Harbor022Api:
 
     @staticmethod
     async def _execute(config: JobConfig) -> JobResult:
-        if (
-            config.environment.type == EnvironmentType.DOCKER
-            and config.environment.import_path is None
-        ):
+        if Harbor022Api.is_docker_environment(config.environment):
             from tetrabench.docker_lifecycle import bind_docker
 
             bind_docker(config.jobs_dir)
@@ -343,10 +360,7 @@ class Harbor022Api:
         return await job.run()
 
     def execute(self, config: JobConfig) -> JobResult:
-        if (
-            config.environment.type == EnvironmentType.DOCKER
-            and config.environment.import_path is None
-        ):
+        if Harbor022Api.is_docker_environment(config.environment):
             from tetrabench.local_control import OwnerCancellation, read_owner_control
 
             control = read_owner_control(config.jobs_dir)
@@ -365,7 +379,25 @@ class Harbor022Api:
         lock_path = job_directory / "lock.json"
         result_path = job_directory / "result.json"
         persisted_config = JobConfig.model_validate_json(config_path.read_text())
-        if _exact_model_value(persisted_config) != _exact_model_value(config):
+        expected_config = config
+        if (
+            result is None
+            and config.environment.type == EnvironmentType.DOCKER
+            and config.environment.import_path == DOCKER_ENVIRONMENT_IMPORT_PATH
+            and persisted_config.environment.type == EnvironmentType.DOCKER
+            and persisted_config.environment.import_path is None
+        ):
+            # Read-only inspection recompiles old requests using today's adapter.
+            # Permit only that historical transport identity, never a live result
+            # mismatch or any other config difference. Do not rewrite old bytes.
+            expected_config = config.model_copy(
+                update={
+                    "environment": config.environment.model_copy(
+                        update={"import_path": None}
+                    )
+                }
+            )
+        if _job_config_value(persisted_config) != _job_config_value(expected_config):
             raise ValueError("Harbor job config changed after compilation")
         persisted_lock = JobLock.model_validate_json(lock_path.read_text())
         if persisted_lock.n_concurrent_trials != persisted_config.n_concurrent_trials:

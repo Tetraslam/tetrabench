@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 from contextlib import redirect_stdout
 from pathlib import Path
-from typing import Annotated, Protocol
+from typing import Annotated, Literal, Protocol
 
 import typer
 from botocore.exceptions import BotoCoreError, ClientError
@@ -86,9 +86,19 @@ app = typer.Typer(
 controller_app = typer.Typer(no_args_is_help=True)
 artifacts_app = typer.Typer(no_args_is_help=True)
 task_app = typer.Typer(no_args_is_help=True)
+auth_app = typer.Typer(
+    no_args_is_help=True,
+    help="Manage explicitly selected eval credentials, not your interactive login.",
+)
+models_app = typer.Typer(
+    no_args_is_help=True,
+    help="Inspect installed native reasoning metadata and adopt a bound configuration.",
+)
 app.add_typer(controller_app, name="controller")
 app.add_typer(artifacts_app, name="artifacts")
 app.add_typer(task_app, name="task")
+app.add_typer(auth_app, name="auth")
+app.add_typer(models_app, name="models")
 out = Console()
 err = Console(stderr=True)
 
@@ -97,10 +107,592 @@ class _ReadAccessStore(Protocol):
     def check_read_access(self) -> CoordinationTopology: ...
 
 
+def _auth_command(
+    action: Literal["login", "status", "logout", "reseed"],
+    harness_path: Path | None,
+    authority: Path | None,
+    local_filesystem: bool,
+    executable: str | None,
+    pi_module: Path | None,
+    json_output: bool,
+    device_auth: bool = True,
+    profile: str | None = None,
+    auth_config: Path | None = None,
+    agent: str | None = None,
+    backend: Path | None = None,
+    replace: bool = False,
+    online: bool = False,
+) -> None:
+    import shutil
+    from dataclasses import asdict
+
+    from platformdirs import user_runtime_path
+
+    from tetrabench import auth as authentication
+    from tetrabench.auth_config import NativeAuthReference
+    from tetrabench.auth_sessions import AuthError, LocalSessionStore
+    from tetrabench.config import load_harness_override
+
+    try:
+        if profile is not None:
+            if harness_path is not None or authority is not None or local_filesystem:
+                raise ValueError(
+                    "choose --profile/--auth-config or --harness/--authority"
+                )
+            if action == "login":
+                from tetrabench.auth_profiles import onboard_login
+
+                status = onboard_login(
+                    profile,
+                    agent=agent,
+                    backend_path=backend,
+                    replace=replace,
+                    config_path=auth_config,
+                    executable=executable,
+                    pi_module=pi_module,
+                    device_auth=device_auth,
+                )
+                if json_output:
+                    _canonical_echo(asdict(status))
+                else:
+                    out.print(f"Auth profile: {profile}", markup=False)
+                    out.print(
+                        f"{status.harness}: {status.mode}, {status.state}", markup=False
+                    )
+                    out.print(
+                        f"generation {status.generation}; account unverified",
+                        markup=False,
+                    )
+                return
+            from tetrabench.auth_profiles import (
+                auth_profile_command,
+                load_auth_config_file,
+            )
+
+            private = load_auth_config_file(auth_config)
+            selected = private.profiles.get(profile)
+            if selected is None:
+                raise ValueError("private auth profile is not configured")
+            binary = executable or shutil.which(
+                {"claude-code": "claude", "pi": "node"}.get(
+                    selected.harness, selected.harness
+                )
+            )
+            if binary is None and action != "status":
+                raise ValueError("native executable missing; supply --executable")
+            status = auth_profile_command(
+                action,
+                name=profile,
+                executable=binary or "",
+                config_path=auth_config,
+                pi_module=pi_module,
+                allow_online=online,
+                device_auth=device_auth,
+            )
+            document = asdict(status)
+            if json_output:
+                _canonical_echo(document)
+            else:
+                out.print(
+                    f"{status.harness}: {status.mode}, {status.state}", markup=False
+                )
+                out.print(
+                    f"Auth profile: {profile}; generation {status.generation}; "
+                    "account unverified",
+                    markup=False,
+                )
+            return
+        if agent is not None or backend is not None or replace:
+            raise ValueError(
+                "--agent, --backend and --replace require auth login --profile"
+            )
+        if harness_path is None or auth_config is not None:
+            raise ValueError(
+                "select --harness FILE or --profile NAME [--auth-config FILE]"
+            )
+        config = load_harness_override(harness_path)
+        from tetrabench.auth_config import ProfileAuthSpec
+
+        if isinstance(config.auth, ProfileAuthSpec):
+            raise ValueError(
+                "auth commands select managed logins with --profile NAME; "
+                "--harness retains explicit environment/local-authority references"
+            )
+        if config.auth is None:
+            raise ValueError(
+                "harness.auth must explicitly select the login mode and reference"
+            )
+        store = None
+        if isinstance(config.auth.reference, NativeAuthReference):
+            if authority is None or not local_filesystem:
+                raise ValueError(
+                    "local auth requires --authority DIR --local-filesystem; "
+                    "never use a shared mount"
+                )
+            store = LocalSessionStore(
+                authority.expanduser().absolute(),
+                binding=config.auth.reference.binding,
+                local_filesystem=True,
+            )
+        elif authority is not None:
+            raise ValueError(
+                "environment-reference auth does not use an authority directory"
+            )
+        binary = executable or shutil.which(
+            {"claude-code": "claude", "pi": "node"}.get(config.name, config.name)
+        )
+        if binary is None and not (action == "status" and store is not None):
+            raise ValueError(
+                "native executable missing; supply --executable for the exact pin"
+            )
+        options = {
+            "store": store,
+            "model": config.model,
+            "version": config.version,
+            "executable": binary or "",
+            "runtime_parent": user_runtime_path("tetrabench") / "native-auth",
+            "environment": dict(os.environ),
+            "artifact_roots": (),  # Auth commands collect no job artifacts.
+            "pi_module": pi_module.expanduser().absolute() if pi_module else None,
+        }
+        handler = getattr(authentication, "auth_" + action)
+        if action in {"login", "reseed"}:
+            options["device_auth"] = device_auth
+        status = handler(config.name, config.auth, **options)
+        document = asdict(status)
+    except (ValueError, AuthError, OSError, BotoCoreError, ClientError) as error:
+        _fail_command(error, json_output=json_output)
+    if json_output:
+        _canonical_echo(document)
+    else:
+        out.print(f"{status.harness}: {status.mode}, {status.state}", markup=False)
+        if status.generation is not None:
+            out.print(
+                f"generation {status.generation}; server acceptance is unverified",
+                markup=False,
+            )
+        if status.state == "setup_required":
+            out.print(
+                "Store the native setup token in your secret manager and supply "
+                "the declared environment reference. Tetrabench did not save it.",
+                markup=False,
+            )
+
+
+@auth_app.command("login")
+def auth_login_command(
+    harness: Annotated[
+        Path | None,
+        typer.Option(
+            "--harness", help="Run TOML containing an explicit harness.auth reference."
+        ),
+    ] = None,
+    profile: Annotated[str | None, typer.Option("--profile")] = None,
+    agent: Annotated[
+        str | None,
+        typer.Option("--agent", help="New OAuth profile harness: codex, opencode, pi."),
+    ] = None,
+    backend: Annotated[
+        Path | None,
+        typer.Option("--backend", help="Private existing S3 backend definition."),
+    ] = None,
+    replace: Annotated[
+        bool, typer.Option("--replace", help="Replace a ready eval login.")
+    ] = False,
+    auth_config: Annotated[Path | None, typer.Option("--auth-config")] = None,
+    authority: Annotated[
+        Path | None,
+        typer.Option(
+            "--authority", help="Private local native-session authority directory."
+        ),
+    ] = None,
+    local_filesystem: Annotated[
+        bool,
+        typer.Option(
+            "--local-filesystem",
+            help="Confirm authority is on a single-machine local filesystem.",
+        ),
+    ] = False,
+    executable: Annotated[str | None, typer.Option("--executable")] = None,
+    pi_module: Annotated[
+        Path | None,
+        typer.Option("--pi-module", help="Pinned Pi dist/index.js for native OAuth."),
+    ] = None,
+    device_auth: Annotated[bool, typer.Option("--device-auth/--browser-auth")] = True,
+    json_output: Annotated[bool, typer.Option("--json")] = False,
+) -> None:
+    """Start the selected native login. Browser approval happens in your terminal."""
+    _auth_command(
+        "login",
+        harness,
+        authority,
+        local_filesystem,
+        executable,
+        pi_module,
+        json_output,
+        device_auth,
+        profile,
+        auth_config,
+        agent=agent,
+        backend=backend,
+        replace=replace,
+    )
+
+
+@auth_app.command("status")
+def auth_status_command(
+    harness: Annotated[Path | None, typer.Option("--harness")] = None,
+    profile: Annotated[str | None, typer.Option("--profile")] = None,
+    auth_config: Annotated[Path | None, typer.Option("--auth-config")] = None,
+    authority: Annotated[Path | None, typer.Option("--authority")] = None,
+    local_filesystem: Annotated[bool, typer.Option("--local-filesystem")] = False,
+    executable: Annotated[str | None, typer.Option("--executable")] = None,
+    pi_module: Annotated[Path | None, typer.Option("--pi-module")] = None,
+    json_output: Annotated[bool, typer.Option("--json")] = False,
+    online: Annotated[
+        bool,
+        typer.Option("--online", help="Permit reading the remote auth authority."),
+    ] = False,
+) -> None:
+    """Read the selected auth state without refreshing an OAuth session."""
+    _auth_command(
+        "status",
+        harness,
+        authority,
+        local_filesystem,
+        executable,
+        pi_module,
+        json_output,
+        profile=profile,
+        auth_config=auth_config,
+        online=online,
+    )
+
+
+@auth_app.command("logout")
+def auth_logout_command(
+    harness: Annotated[Path | None, typer.Option("--harness")] = None,
+    profile: Annotated[str | None, typer.Option("--profile")] = None,
+    auth_config: Annotated[Path | None, typer.Option("--auth-config")] = None,
+    authority: Annotated[Path | None, typer.Option("--authority")] = None,
+    local_filesystem: Annotated[bool, typer.Option("--local-filesystem")] = False,
+    executable: Annotated[str | None, typer.Option("--executable")] = None,
+    pi_module: Annotated[Path | None, typer.Option("--pi-module")] = None,
+    yes: Annotated[bool, typer.Option("--yes")] = False,
+    json_output: Annotated[bool, typer.Option("--json")] = False,
+) -> None:
+    """Remove only this eval login; provider revocation is not implied."""
+    if not yes and (
+        json_output or not typer.confirm("Remove the selected eval login?")
+    ):
+        _fail_command(
+            ValueError("logout requires confirmation; use --yes"),
+            json_output=json_output,
+        )
+    _auth_command(
+        "logout",
+        harness,
+        authority,
+        local_filesystem,
+        executable,
+        pi_module,
+        json_output,
+        profile=profile,
+        auth_config=auth_config,
+    )
+
+
+@auth_app.command("reseed")
+def auth_reseed_command(
+    harness: Annotated[
+        Path | None,
+        typer.Option("--harness", help="Run TOML naming the next auth generation."),
+    ] = None,
+    profile: Annotated[str | None, typer.Option("--profile")] = None,
+    auth_config: Annotated[Path | None, typer.Option("--auth-config")] = None,
+    authority: Annotated[Path | None, typer.Option("--authority")] = None,
+    local_filesystem: Annotated[bool, typer.Option("--local-filesystem")] = False,
+    executable: Annotated[str | None, typer.Option("--executable")] = None,
+    pi_module: Annotated[Path | None, typer.Option("--pi-module")] = None,
+    device_auth: Annotated[bool, typer.Option("--device-auth/--browser-auth")] = True,
+    json_output: Annotated[bool, typer.Option("--json")] = False,
+) -> None:
+    """Start a fresh native login for the next generation; never copy old tokens."""
+    _auth_command(
+        "reseed",
+        harness,
+        authority,
+        local_filesystem,
+        executable,
+        pi_module,
+        json_output,
+        device_auth,
+        profile,
+        auth_config,
+    )
+
+
 def _fail(error: Exception) -> None:
     _, message = _safe_command_error(error)
     err.print(f"[red]error:[/red] {message}")
     raise typer.Exit(2)
+
+
+def _inspection_config(path: Path):
+    import tomllib
+
+    from tetrabench.harness_config import HarnessConfig, capability_config
+    from tetrabench.harnesses import prepare_harness, read_config_text
+
+    text = read_config_text(path)
+    values = tomllib.loads(text)
+    if set(values) != {"harness"}:
+        raise ValueError("model inspection requires a standalone [harness] file")
+    fields = dict(values["harness"])
+    fields.pop("capability_snapshot", None)
+    config = capability_config(
+        prepare_harness(HarnessConfig.model_validate(fields), path.parent)
+    )
+    return text, config
+
+
+@models_app.command("inspect")
+def models_inspect_command(
+    harness: Annotated[Path, typer.Option("--harness")],
+    native_modules: Annotated[Path | None, typer.Option("--native-modules")] = None,
+    node: Annotated[str | None, typer.Option("--node")] = None,
+    refresh: Annotated[bool, typer.Option("--refresh")] = False,
+    allow_config_execution: Annotated[
+        bool, typer.Option("--allow-config-execution")
+    ] = False,
+    no_native_cache: Annotated[bool, typer.Option("--no-native-cache")] = False,
+    allow_authenticated_read: Annotated[
+        bool,
+        typer.Option(
+            "--allow-authenticated-read",
+            help="Use declared auth for metadata; never starts browser login.",
+        ),
+    ] = False,
+    auth_config: Annotated[
+        Path | None,
+        typer.Option(
+            "--auth-config",
+            help="Private OAuth profile configuration; not used by API keys.",
+        ),
+    ] = None,
+    json_output: Annotated[bool, typer.Option("--json")] = False,
+) -> None:
+    """Inspect installed native metadata without inference or ambient auth reads."""
+    from tetrabench.discovery_auth import (
+        assert_safe_metadata,
+        authentication_evidence,
+        metadata_auth_context,
+    )
+    from tetrabench.native_discovery import inspect_installed_handler
+
+    try:
+        path = harness.expanduser().absolute()
+        _, config = _inspection_config(path)
+        if allow_authenticated_read:
+            from tetrabench.auth_selection import resolve_harness_auth
+
+            config = resolve_harness_auth(
+                config, allow_online=True, config_path=auth_config
+            )
+        with metadata_auth_context(
+            config,
+            allow_authenticated_read=allow_authenticated_read,
+            modules=native_modules,
+            node=node,
+            auth_config=auth_config,
+        ) as runtime:
+            if runtime is not None:
+                assert_safe_metadata(runtime, config.model_dump(mode="json"))
+            extra = (
+                {"runtime": runtime, "allow_authenticated_read": True}
+                if runtime is not None
+                else {}
+            )
+            result = inspect_installed_handler(
+                config,
+                base=path.parent,
+                modules=native_modules,
+                node=node,
+                refresh=refresh,
+                allow_config_execution=allow_config_execution,
+                reuse_native_cache=not no_native_cache and runtime is None,
+                **extra,
+            )
+            result["authentication"] = authentication_evidence(runtime)
+            if runtime is not None:
+                assert_safe_metadata(runtime, result)
+    except (ValueError, OSError, RuntimeError, BotoCoreError, ClientError) as error:
+        _fail_command(error, json_output=json_output)
+    if json_output:
+        _canonical_echo(result)
+    else:
+        capability = result["capability"]
+        out.print(
+            f"{config.name} {config.version}: {capability['status']}", markup=False
+        )
+        for control in capability["controls"]:
+            choices = ", ".join(choice["name"] for choice in control["choices"])
+            out.print(
+                f"  {control['name']}: {control['status']} {choices}", markup=False
+            )
+        for limitation in capability["limitations"]:
+            out.print(f"  {limitation}", markup=False)
+
+
+@models_app.command("adopt")
+def models_adopt_command(
+    harness: Annotated[Path, typer.Option("--harness")],
+    control: Annotated[str, typer.Option("--control")],
+    select: Annotated[str | None, typer.Option("--select")] = None,
+    budget: Annotated[int | None, typer.Option("--budget")] = None,
+    accept_normalization: Annotated[
+        bool, typer.Option("--accept-normalization")
+    ] = False,
+    write: Annotated[bool, typer.Option("--write")] = False,
+    native_modules: Annotated[Path | None, typer.Option("--native-modules")] = None,
+    node: Annotated[str | None, typer.Option("--node")] = None,
+    refresh: Annotated[bool, typer.Option("--refresh")] = False,
+    allow_authenticated_read: Annotated[
+        bool, typer.Option("--allow-authenticated-read")
+    ] = False,
+    auth_config: Annotated[Path | None, typer.Option("--auth-config")] = None,
+    json_output: Annotated[bool, typer.Option("--json")] = False,
+) -> None:
+    """Inspect afresh and preview a sealed adoption; --write applies the shown diff."""
+    import difflib
+
+    import tomlkit
+
+    from tetrabench.config import replace_harness_document
+    from tetrabench.discovery_auth import (
+        assert_safe_metadata,
+        authentication_evidence,
+        metadata_auth_context,
+    )
+    from tetrabench.harness_config import bind_capability_adoption
+    from tetrabench.native_discovery import collect_installed
+    from tetrabench.reasoning import harness_config_digest
+
+    try:
+        path = harness.expanduser().absolute()
+        before, source = _inspection_config(path)
+        authoring_source = source
+        from tetrabench.auth_config import ProfileAuthSpec
+
+        if isinstance(source.auth, ProfileAuthSpec) and not allow_authenticated_read:
+            raise ValueError(
+                "profile-auth adoption requires --allow-authenticated-read to pin "
+                "the selected generation; models inspect remains offline"
+            )
+        if allow_authenticated_read:
+            from tetrabench.auth_selection import resolve_harness_auth
+
+            source = resolve_harness_auth(
+                source, allow_online=True, config_path=auth_config
+            )
+        with metadata_auth_context(
+            source,
+            allow_authenticated_read=allow_authenticated_read,
+            modules=native_modules,
+            node=node,
+            auth_config=auth_config,
+        ) as runtime:
+            if runtime is not None:
+                assert_safe_metadata(runtime, source.model_dump(mode="json"))
+            extra = (
+                {
+                    "runtime": runtime,
+                    "allow_authenticated_read": True,
+                    "reuse_native_cache": False,
+                }
+                if runtime is not None
+                else {}
+            )
+            if refresh:
+                extra["refresh"] = True
+            snapshot = collect_installed(
+                source, base=path.parent, modules=native_modules, node=node, **extra
+            )
+            auth_evidence = authentication_evidence(runtime)
+            if runtime is not None:
+                assert_safe_metadata(runtime, snapshot.model_dump(mode="json"))
+        selection = {"control": control, "accept_normalization": accept_normalization}
+        if select is not None:
+            selection["select"] = select
+        if budget is not None:
+            selection["budget"] = budget
+        adopted = bind_capability_adoption(source, snapshot, **selection)
+        document = tomlkit.parse(before)
+        table = document["harness"]
+        if source.auth != authoring_source.auth and source.auth is not None:
+            table["auth"] = source.auth.model_dump(mode="python")
+        table.pop("args", None)
+        table["options"] = {
+            key: value for key, value in adopted.options.items() if value is not None
+        }
+        if adopted.native_config:
+            table["native_config"] = adopted.native_config.model_dump(exclude_none=True)
+        if adopted.resources:
+            table["resources"] = [
+                resource.model_dump() for resource in adopted.resources
+            ]
+        evidence = adopted.capability_snapshot
+        if evidence is None:
+            raise ValueError("adoption produced no capability binding")
+        table["capability_snapshot"] = evidence.model_dump(mode="python")
+        after = tomlkit.dumps(document)
+        # Prove TOML's null-free representation preserves the exact bound config.
+        from tetrabench.harness_config import HarnessConfig
+
+        HarnessConfig.model_validate(tomlkit.parse(after)["harness"].unwrap())
+        diff = "".join(
+            difflib.unified_diff(
+                before.splitlines(keepends=True),
+                after.splitlines(keepends=True),
+                fromfile=str(path),
+                tofile=str(path),
+            )
+        )
+        if write:
+            current_text, current_source = _inspection_config(path)
+            if current_text != before or harness_config_digest(
+                current_source
+            ) != harness_config_digest(authoring_source):
+                raise ValueError(
+                    "harness configuration/resources changed during collection; "
+                    "inspect again"
+                )
+            replace_harness_document(path, before.encode(), after)
+        result = {
+            "schema_version": 1,
+            "written": write,
+            "diff": diff,
+            "snapshot_sha256": snapshot.digest,
+            "effective_config_digest": evidence.snapshot().identity.config_digest,
+            "inference_validated": False,
+            "authentication": auth_evidence,
+        }
+    except (
+        ValueError,
+        OSError,
+        KeyError,
+        RuntimeError,
+        BotoCoreError,
+        ClientError,
+    ) as error:
+        _fail_command(error, json_output=json_output)
+    if json_output:
+        _canonical_echo(result)
+    else:
+        out.print(diff, markup=False)
+        out.print(
+            "Written." if write else "Preview only; use --write to apply.", markup=False
+        )
 
 
 def _safe_command_error(error: Exception) -> tuple[str | None, str]:
@@ -222,11 +814,38 @@ def agents(
         str | None, typer.Argument(help="Optional controlled harness name.")
     ] = None,
     json_output: Annotated[bool, typer.Option("--json")] = False,
+    resolve_version: Annotated[
+        str | None,
+        typer.Option(
+            "--resolve-version",
+            help="Resolve latest from official package metadata for authoring only.",
+        ),
+    ] = None,
 ) -> None:
     """Show supported harnesses, options and the run-level configuration shape."""
-    from tetrabench.harnesses import capabilities, get_harness
+    from tetrabench.harnesses import (
+        capabilities,
+        get_harness,
+        resolve_authoring_version,
+    )
 
     try:
+        if resolve_version is not None:
+            if name is None:
+                raise ValueError("version resolution requires a harness name")
+            version = resolve_authoring_version(name, resolve_version)
+            if json_output:
+                _canonical_echo(
+                    {
+                        "schema_version": 1,
+                        "harness": name,
+                        "version": version,
+                        "evidence": "registry metadata, not execution proof",
+                    }
+                )
+            else:
+                out.print(version, markup=False)
+            return
         if name is not None:
             get_harness(name)
         entries = [
@@ -261,7 +880,7 @@ def agents(
                 )
         out.print(
             "Use [harness]: name, version, model, options, args, env, "
-            "native_config, ancillary_models.",
+            "native_config, ancillary_models, resources, discovery, session, auth.",
             markup=False,
         )
         out.print(
@@ -400,6 +1019,11 @@ def plan(
     engine: Annotated[
         str | None, typer.Option(help="Execution engine; built-ins: docker, modal.")
     ] = None,
+    harness: Annotated[Path | None, typer.Option("--harness")] = None,
+    online: Annotated[
+        bool,
+        typer.Option("--online", help="Resolve remote auth profiles; no model calls."),
+    ] = False,
     json_output: Annotated[
         bool,
         typer.Option("--json", help="Emit canonical JSON to stdout."),
@@ -407,11 +1031,23 @@ def plan(
 ) -> None:
     """Resolve a section into a canonical, secret-free plan."""
     try:
+        from tetrabench.config import load_harness_override
+
+        overrides = _engine_override(engine)
+        if harness is not None:
+            overrides = ConfigOverrides(
+                engine=overrides.engine if overrides else None,
+                harness=load_harness_override(harness),
+            )
         resolved = resolve_plan(
-            Path.cwd(), section, profile, overrides=_engine_override(engine)
+            Path.cwd(),
+            section,
+            profile,
+            overrides=overrides,
+            allow_online_auth=online,
         )
-    except (ValueError, ValidationError) as error:
-        _fail(error)
+    except (ValueError, OSError, RuntimeError, BotoCoreError, ClientError) as error:
+        _fail_command(error, json_output=json_output)
     if json_output:
         typer.echo(canonical_model_bytes(resolved).decode("utf-8"))
         return
@@ -583,6 +1219,19 @@ def doctor(
         bool,
         typer.Option(help="Check read-only access to the selected storage profile."),
     ] = False,
+    harness: Annotated[Path | None, typer.Option("--harness")] = None,
+    engine: Annotated[str | None, typer.Option("--engine")] = None,
+    auth_profile: Annotated[
+        str | None,
+        typer.Option("--auth-profile", help="Assert selected OAuth profile name."),
+    ] = None,
+    auth_config: Annotated[Path | None, typer.Option("--auth-config")] = None,
+    check_provider: Annotated[
+        bool,
+        typer.Option(
+            "--check-provider", help="Authenticated metadata; no login or inference."
+        ),
+    ] = False,
     json_output: Annotated[
         bool,
         typer.Option("--json", help="Emit canonical JSON to stdout."),
@@ -595,7 +1244,15 @@ def doctor(
     topology: CoordinationTopology | None = None
     try:
         check_runtime("doctor")
-        config = load_project_config(root, profile=profile)
+        from tetrabench.config import load_harness_override
+
+        overrides = _engine_override(engine)
+        if harness is not None:
+            overrides = ConfigOverrides(
+                engine=overrides.engine if overrides else None,
+                harness=load_harness_override(harness),
+            )
+        config = load_project_config(root, profile=profile, overrides=overrides)
         catalog = load_catalog(root, config.catalog_path)
         resolve_context(root, config.context)
         configured_catalog_path = Path(config.catalog_path)
@@ -624,8 +1281,62 @@ def doctor(
                 topology = store.check_read_access()
             except (BotoCoreError, ClientError) as error:
                 _fail_doctor(error, json_output=json_output)
-    except (ValueError, ValidationError) as error:
+    except typer.Exit:
+        raise
+    except (ValueError, OSError, RuntimeError) as error:
         _fail_doctor(error, json_output=json_output)
+
+    from tetrabench.auth_diagnostics import (
+        check_controller_metadata,
+        doctor_auth_report,
+    )
+
+    try:
+        selected_engine_kind = config.execution.kind
+        controller_spec = (
+            controller_deployment_spec(config, profile)
+            if selected_engine_kind == "modal"
+            else None
+        )
+        auth_report = doctor_auth_report(
+            config.harness,
+            engine=selected_engine_kind,
+            concurrency=config.harbor.concurrency,
+            online=online,
+            check_provider=check_provider,
+            auth_profile=auth_profile,
+            auth_config=auth_config,
+            base=root,
+            artifact_buckets=[storage.bucket] if storage else (),
+        )
+        controller_report = None
+        if controller_spec is not None:
+            controller_report = check_controller_metadata(
+                controller_spec,
+                online=online and config.harness is not None,
+            )
+            auth_report["remote_runtime_checked"] = controller_report[
+                "remote_runtime_checked"
+            ]
+    except (
+        ValueError,
+        OSError,
+        RuntimeError,
+        BotoCoreError,
+        ClientError,
+        ModalError,
+    ) as error:
+        _fail_doctor(error, json_output=json_output)
+    auth_blocked = (
+        any(
+            auth_report[name]["status"] in {"blocked", "failed"}
+            for name in ("configured", "native_ready", "provider_checked")
+        )
+        or auth_report["provider_checked"].get("metadata_status") == "failed"
+    )
+    auth_blocked |= (
+        controller_report is not None and controller_report["status"] == "blocked"
+    )
 
     storage_report: dict[str, object] | None = None
     if storage is not None:
@@ -647,7 +1358,12 @@ def doctor(
                 "checks": [
                     {"name": "project_configuration", "status": "ok"},
                     {"name": "catalog_and_local_context", "status": "ok"},
-                    {"name": "cloud_controller", "status": "not_attempted"},
+                    {
+                        "name": "cloud_controller",
+                        "status": controller_report["status"]
+                        if controller_report is not None
+                        else "not_attempted",
+                    },
                     {"name": "storage_bucket", "status": storage_status},
                     {"name": "storage_prefix", "status": storage_status},
                     {
@@ -664,12 +1380,23 @@ def doctor(
                 "profile": profile,
                 "schema_version": 1,
                 "storage": storage_report,
+                "authentication": auth_report,
+                "controller": controller_report,
             }
         )
+        if auth_blocked:
+            raise typer.Exit(2)
         return
     out.print("[green]ok[/green] project configuration")
     out.print("[green]ok[/green] catalog and local context paths")
-    out.print("[dim]not attempted[/dim] cloud controller checks")
+    if controller_report is None or controller_report["status"] == "not_attempted":
+        out.print("[dim]not attempted[/dim] cloud controller checks")
+    else:
+        out.print(
+            f"cloud_controller: {controller_report['status']}; "
+            f"{controller_report['action']}",
+            markup=False,
+        )
     if online:
         if storage is None:
             raise RuntimeError("online doctor completed without storage configuration")
@@ -693,6 +1420,17 @@ def doctor(
     else:
         out.print("[dim]not attempted[/dim] storage provider checks (offline)")
     out.print("[yellow]unproven[/yellow] storage writes (not attempted)")
+    for name in (
+        "configured",
+        "native_ready",
+        "provider_checked",
+        "account_verified",
+        "remote_runtime_checked",
+    ):
+        item = auth_report[name]
+        out.print(f"{name}: {item['status']}; {item['action']}", markup=False)
+    if auth_blocked:
+        raise typer.Exit(2)
 
 
 @controller_app.command("info")
@@ -761,6 +1499,70 @@ def controller_deploy(
         if "wheel_filename" in report:
             out.print(f"[bold]Wheel:[/bold] {report['wheel_filename']}")
         out.print(f"[bold]Wheel SHA-256:[/bold] {report['wheel_sha256']}")
+
+
+@controller_app.command("configure")
+def controller_configure_command(
+    profile: Annotated[
+        str, typer.Option("--profile", help="Run profile selecting controller names.")
+    ],
+    auth_profile: Annotated[list[str] | None, typer.Option("--auth-profile")] = None,
+    harness: Annotated[Path | None, typer.Option("--harness")] = None,
+    env: Annotated[
+        list[str] | None,
+        typer.Option("--env", help="Explicit environment variable name; repeatable."),
+    ] = None,
+    auth_config: Annotated[Path | None, typer.Option("--auth-config")] = None,
+    write: Annotated[bool, typer.Option("--write")] = False,
+    update: Annotated[bool, typer.Option("--update")] = False,
+    create_environment: Annotated[bool, typer.Option("--create-environment")] = False,
+    yes: Annotated[bool, typer.Option("--yes")] = False,
+    json_output: Annotated[bool, typer.Option("--json")] = False,
+) -> None:
+    """Preview controller credential configuration; explicit --write transfers it."""
+    from tetrabench.controller_configure import configure_controller
+
+    try:
+        config = load_project_config(Path.cwd(), profile=profile)
+
+        def configure(*, perform_write: bool = False):
+            return configure_controller(
+                config,
+                profile=profile,
+                auth_profiles=auth_profile or (),
+                env_names=env or (),
+                harness=harness,
+                auth_config_path=auth_config,
+                update=update,
+                create_environment=create_environment,
+                write=perform_write,
+                confirmed=perform_write,
+            )
+
+        if write and json_output and not yes:
+            raise ValueError("controller configure --write --json requires --yes")
+        if write and not yes:
+            preview = configure()
+            _canonical_echo(preview)
+            if not typer.confirm(
+                "Write these selected values to this Modal Secret?", default=False
+            ):
+                raise typer.Exit(1)
+        report = configure(perform_write=write)
+    except typer.Exit:
+        raise
+    except (
+        ValueError,
+        OSError,
+        RuntimeError,
+        BotoCoreError,
+        ClientError,
+        ModalError,
+    ) as error:
+        _fail_command(error, json_output=json_output)
+    _canonical_echo(report)
+    if report.get("ok") is False:
+        raise typer.Exit(2)
 
 
 @app.command()

@@ -9,10 +9,14 @@ from __future__ import annotations
 import json
 import os
 import re
+import sqlite3
 import stat
 from collections.abc import Mapping, Sequence
+from contextlib import closing
+from datetime import UTC, datetime
 from decimal import Decimal, InvalidOperation, localcontext
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from typing import Annotated, Any, Literal
 
 from pydantic import Field, model_validator
@@ -24,6 +28,7 @@ Coverage = Literal["partial", "unknown", "complete"]
 Category = Literal["model", "auxiliary", "infrastructure"]
 DecimalAmount = Annotated[str, Field(pattern=r"^(?:0|[1-9][0-9]*)(?:\.[0-9]*[1-9])?$")]
 MAX_COST_ARTIFACT_BYTES = 16 * 1024 * 1024
+MAX_COST_SOURCE_BYTES = 32 * 1024 * 1024
 
 
 class CostEvidence(FrozenRecord):
@@ -220,8 +225,29 @@ def native_cost_evidence(
     transcript_artifacts: frozenset[str] | None = None,
     auxiliary_requested_model: str | None = None,
     pi_pricing: Mapping[tuple[str, str], bool] | None = None,
+    harness_version: str | None = None,
+    started_at: datetime | None = None,
+    seeded_entry_ids: frozenset[str] = frozenset(),
+    opencode_messages: Sequence[Mapping[str, Any]] | None = None,
+    opencode_artifacts: tuple[str, ...] = (),
 ) -> tuple[CostEvidence, ...]:
     """Pure helper for one native trial/step, with bounded, already-read sources."""
+    if (harness, harness_version) in {("pi", "0.85.1"), ("opencode", "1.18.30")}:
+        current = _current_native_costs(
+            harness=harness,
+            scope=scope,
+            streams=streams,
+            transcripts=transcript_artifacts,
+            requested_model=requested_model,
+            auxiliary_model=auxiliary_requested_model,
+            pi_pricing=pi_pricing or {},
+            started_at=started_at,
+            seeded_entry_ids=seeded_entry_ids,
+            opencode_messages=opencode_messages,
+            opencode_artifacts=opencode_artifacts,
+        )
+        if current is not None:
+            return current
     amounts: list[str] = []
     aggregates: list[str] = []
     observed: set[str] = set()
@@ -437,7 +463,352 @@ def native_cost_evidence(
     return primary, auxiliary
 
 
-def _read_native(path: Path) -> bytes | None:
+def _timestamp(value: object) -> datetime | None:
+    try:
+        if isinstance(value, str):
+            parsed = datetime.fromisoformat(value)
+        elif isinstance(value, (int, Decimal)) and not isinstance(value, bool):
+            parsed = datetime.fromtimestamp(float(value) / 1000, UTC)
+        else:
+            return None
+        return parsed if parsed.tzinfo is not None else None
+    except (ValueError, OverflowError, OSError):
+        return None
+
+
+def _unique_records(records):
+    """Repeated native identities are alternatives; contradictory copies are unknown."""
+    unique = {}
+    conflicts = set()
+    for identity, path, record in records:
+        previous = unique.get(identity)
+        if previous is not None and previous[1] != record:
+            conflicts.add(identity)
+        else:
+            unique[identity] = (path, record)
+    return [value for key, value in unique.items() if key not in conflicts], bool(
+        conflicts
+    )
+
+
+def _native_bucket(
+    records,
+    *,
+    harness,
+    category,
+    scope,
+    requested_model,
+    pi_pricing,
+    notes: Sequence[str] = (),
+    extra_paths: Sequence[str] = (),
+):
+    amounts = []
+    reported = []
+    models = set()
+    paths = set(extra_paths)
+    unpriced = False
+    missing = False
+    for path, record in records:
+        paths.add(path)
+        model = _model(record.get("model" if harness == "pi" else "modelID"))
+        if model:
+            models.add(model)
+        if harness == "pi":
+            usage = record.get("usage")
+            usage = usage if isinstance(usage, dict) else {}
+            cost = usage.get("cost")
+            amount = (
+                decimal_amount(cost.get("total")) if isinstance(cost, dict) else None
+            )
+            if amount is not None:
+                reported.append(amount)
+            pricing = pi_pricing.get((_model(record.get("provider")), model))
+            used = any(
+                isinstance(usage.get(key), (int, Decimal)) and usage[key] > 0
+                for key in ("input", "output", "cacheRead", "cacheWrite")
+            )
+            if amount == "0" and (pricing is False or (used and pricing is not True)):
+                unpriced = True
+                continue
+        else:
+            amount = decimal_amount(record.get("cost"))
+            if amount is not None:
+                reported.append(amount)
+            tokens = record.get("tokens")
+            tokens = tokens if isinstance(tokens, dict) else {}
+            cache = tokens.get("cache")
+            cache = cache if isinstance(cache, dict) else {}
+            if amount == "0" and any(
+                isinstance(value, (int, Decimal)) and value > 0
+                for value in (
+                    *(tokens.get(key) for key in ("input", "output", "reasoning")),
+                    cache.get("read"),
+                    cache.get("write"),
+                )
+            ):
+                # 1.18.30 Session.getUsage defaults absent catalog rates to zero.
+                # No rate snapshot is present in the message/part itself.
+                unpriced = True
+                continue
+        missing |= amount is None
+        if amount is not None:
+            amounts.append(amount)
+    limitations = list(notes)
+    limitations.append(
+        "Native money is harness-reported/catalog-priced, not provider settlement"
+    )
+    if unpriced:
+        limitations.append("Native unpriced zero is not a known zero charge")
+    if missing:
+        limitations.append("Some native usage records are missing or malformed")
+    if category == "auxiliary":
+        limitations.append(
+            "Observed native text summaries only; opaque OpenAI compaction "
+            "and other background calls are not covered"
+        )
+    if not models:
+        limitations.append(
+            "Observed model unavailable; requested identity is not observation"
+        )
+    amount = _sum(amounts)
+    return CostEvidence(
+        scope=scope,
+        category=category,
+        amount_usd=amount,
+        reported_amount_usd=_sum(reported) if unpriced else None,
+        source="harness_reported" if amounts or unpriced else "unknown",
+        coverage="partial" if amount is not None else "unknown",
+        requested_model=requested_model,
+        observed_models=tuple(sorted(models)[:64]),
+        source_artifacts=tuple(sorted(paths)),
+        limitations=tuple(limitations),
+    )
+
+
+def _current_native_costs(
+    *,
+    harness,
+    scope,
+    streams,
+    transcripts,
+    requested_model,
+    auxiliary_model,
+    pi_pricing,
+    started_at,
+    seeded_entry_ids,
+    opencode_messages,
+    opencode_artifacts,
+):
+    # Native print streams emit live events, not the contents of loaded sessions.
+    # Choose one stdout copy; journals, message snapshots and totals never add to it.
+    candidates = sorted(
+        path
+        for path in streams
+        if (path.endswith(".txt") if transcripts is None else path in transcripts)
+    )
+    path = candidates[0] if candidates else ""
+    data = streams.get(path, b"")
+    events, malformed = (
+        _events(data) if len(data) <= MAX_COST_ARTIFACT_BYTES else ([], True)
+    )
+    notes = []
+    if malformed:
+        notes.append("Native stream is malformed or exceeds the bounded reader")
+    if len(candidates) > 1:
+        notes.append("Selected one canonical stdout artifact; other copies not added")
+    primary = []
+    auxiliary = []
+    extra_paths = ()
+    if harness == "pi":
+        sessions = {
+            e["id"]
+            for e in events
+            if e.get("type") == "session"
+            and e.get("version") == 3
+            and _model(e.get("id"))
+        }
+        journals = []
+        excluded = False
+        for source, raw in sorted(streams.items()):
+            if (
+                not source.endswith(".jsonl")
+                or source == path
+                or len(raw) > MAX_COST_ARTIFACT_BYTES
+            ):
+                continue
+            entries, invalid = _events(raw)
+            if (
+                not entries
+                or entries[0].get("type") != "session"
+                or entries[0].get("version") != 3
+            ):
+                continue
+            session = _model(entries[0].get("id"))
+            if not session or (sessions and session not in sessions):
+                continue
+            if invalid:
+                notes.append("Malformed native journal; retained records are partial")
+            for entry in entries[1:]:
+                if _model(entry.get("type")) not in {
+                    "message",
+                    "compaction",
+                    "branch_summary",
+                }:
+                    continue
+                identifier = _model(entry.get("id"))
+                timestamp = _timestamp(entry.get("timestamp"))
+                if (
+                    not identifier
+                    or identifier in seeded_entry_ids
+                    or started_at is None
+                    or timestamp is None
+                    or timestamp < started_at
+                ):
+                    excluded = True
+                    continue
+                # Native branch exports preserve entry IDs and timestamps. A
+                # copied entry is not newly charged even under another header.
+                journals.append(((identifier, timestamp), source, entry))
+        if journals:
+            unique, conflict = _unique_records(journals)
+            for source, entry in unique:
+                if entry["type"] == "message":
+                    message = entry.get("message")
+                    if isinstance(message, dict) and message.get("role") == "assistant":
+                        primary.append((source, message))
+                else:
+                    auxiliary.append((source, entry))
+            notes.append(
+                "Selected native session entries; stdout and aggregates not added"
+            )
+        else:
+            live = []
+            for index, event in enumerate(events):
+                if event.get("type") == "message_end":
+                    message = event.get("message")
+                    if isinstance(message, dict) and message.get("role") == "assistant":
+                        identity = _model(message.get("responseId")) or ("line", index)
+                        live.append((identity, path, message))
+                elif (
+                    event.get("type") == "compaction_end"
+                    and event.get("aborted") is False
+                ):
+                    result = event.get("result")
+                    if isinstance(result, dict):
+                        auxiliary.append((path, result))
+            primary, conflict = _unique_records(live)
+            notes.append("Selected live stdout; snapshots and aggregates not added")
+        if excluded:
+            notes.append(
+                "Imported, pre-execution or undated entries excluded "
+                "from current-run cost"
+            )
+    else:
+        live = []
+        for index, event in enumerate(events):
+            if event.get("type") == "step_finish" and isinstance(
+                event.get("part"), dict
+            ):
+                part = event["part"]
+                identity = (
+                    _model(part.get("sessionID")),
+                    _model(part.get("id")) or index,
+                )
+                live.append((identity, path, part))
+        primary, conflict = _unique_records(live)
+        live_ids = {
+            (_model(p.get("sessionID")), _model(p.get("messageID"))) for _, p in primary
+        }
+        sessions = {session for session, _ in live_ids if session}
+        selected = []
+        for row in (opencode_messages or ()) if opencode_artifacts else ():
+            record = row.get("data")
+            if not isinstance(record, dict) or record.get("role") != "assistant":
+                continue
+            identity = (_model(row.get("session_id")), _model(row.get("id")))
+            if None in identity:
+                continue
+            time = record.get("time")
+            created = (
+                _timestamp(time.get("created")) if isinstance(time, dict) else None
+            )
+            if identity not in live_ids and not (
+                identity[0] in sessions
+                and started_at is not None
+                and created is not None
+                and created >= started_at
+            ):
+                continue
+            selected.append(
+                (
+                    identity,
+                    opencode_artifacts[0] if opencode_artifacts else path,
+                    record,
+                )
+            )
+        if selected:
+            unique, db_conflict = _unique_records(selected)
+            conflict |= db_conflict
+            # A partial DB can classify only some streamed messages. Keep unmatched
+            # live parts once rather than silently losing those observed charges.
+            selected_ids = {identity for identity, _, _ in selected}
+            primary = [
+                (source, part)
+                for source, part in primary
+                if (_model(part.get("sessionID")), _model(part.get("messageID")))
+                not in selected_ids
+            ]
+            for source, record in unique:
+                bucket = (
+                    auxiliary
+                    if record.get("summary") is True
+                    or _model(record.get("agent")) in {"compaction", "summary", "title"}
+                    else primary
+                )
+                bucket.append((source, record))
+            extra_paths = opencode_artifacts
+            notes.append(
+                "Selected native message costs; matching step_finish parts "
+                "and Harbor aggregates not added"
+            )
+        else:
+            notes.append(
+                "OpenCode stdout can include summaries; separate allocation unavailable"
+                " without native message metadata"
+            )
+    if conflict:
+        notes.append(
+            "Conflicting duplicate native identities excluded; partial coverage"
+        )
+    if (
+        not primary
+        and not auxiliary
+        and not conflict
+        and not (harness == "pi" and excluded)
+        and not seeded_entry_ids
+    ):
+        return None
+    return tuple(
+        _native_bucket(
+            records,
+            harness=harness,
+            category=category,
+            scope=scope,
+            requested_model=requested,
+            pi_pricing=pi_pricing,
+            notes=notes,
+            extra_paths=extra_paths,
+        )
+        for records, category, requested in (
+            (primary, "model", requested_model),
+            (auxiliary, "auxiliary", auxiliary_model),
+        )
+    )
+
+
+def _read_native(
+    path: Path, *, max_bytes: int = MAX_COST_ARTIFACT_BYTES
+) -> bytes | None:
     parent = os.open("/", os.O_RDONLY | os.O_DIRECTORY)
     try:
         for component in path.absolute().parts[1:-1]:
@@ -455,13 +826,77 @@ def _read_native(path: Path) -> bytes | None:
         os.close(parent)
     try:
         info = os.fstat(fd)
-        if not stat.S_ISREG(info.st_mode) or info.st_size > MAX_COST_ARTIFACT_BYTES:
+        if not stat.S_ISREG(info.st_mode) or info.st_size > max_bytes:
             return None
         with os.fdopen(fd, "rb", closefd=False) as stream:
-            data = stream.read(MAX_COST_ARTIFACT_BYTES + 1)
-        return data if len(data) <= MAX_COST_ARTIFACT_BYTES else None
+            data = stream.read(max_bytes + 1)
+        after = os.fstat(fd)
+        unchanged = all(
+            getattr(info, key) == getattr(after, key)
+            for key in ("st_dev", "st_ino", "st_size", "st_mtime_ns", "st_ctime_ns")
+        )
+        return data if len(data) <= max_bytes and unchanged else None
     finally:
         os.close(fd)
+
+
+def _opencode_messages(agent_directory: Path, *, max_bytes: int):
+    """Read the 1.18.30 message table on a private copy, including committed WAL."""
+    database = agent_directory / "opencode/xdg-data/opencode/opencode.db"
+    contents = {}
+    for suffix in ("", "-wal"):
+        path = Path(str(database) + suffix)
+        data = _read_native(path, max_bytes=min(MAX_COST_ARTIFACT_BYTES, max_bytes))
+        if data is None:
+            if not suffix or path.exists() or path.is_symlink():
+                return None, ()
+            continue
+        contents[path] = data
+        max_bytes -= len(data)
+    try:
+        with TemporaryDirectory(prefix="tetrabench-cost-") as temporary:
+            copy = Path(temporary) / "opencode.db"
+            for path, data in contents.items():
+                (Path(temporary) / path.name).write_bytes(data)
+            with closing(
+                sqlite3.connect(f"{copy.as_uri()}?mode=ro", uri=True)
+            ) as connection:
+                try:
+                    connection.setlimit(
+                        sqlite3.SQLITE_LIMIT_LENGTH, MAX_COST_ARTIFACT_BYTES
+                    )
+                    connection.execute("PRAGMA trusted_schema=OFF")
+                    connection.execute("PRAGMA query_only=ON")
+                    ticks = 0
+
+                    def bounded_query():
+                        nonlocal ticks
+                        ticks += 1
+                        return ticks > 1000
+
+                    connection.set_progress_handler(bounded_query, 1000)
+                    rows = []
+                    size = 0
+                    for identifier, session, raw in connection.execute(
+                        "SELECT id, session_id, data FROM message LIMIT 65537"
+                    ):
+                        if not isinstance(raw, str):
+                            return None, ()
+                        size += len(raw.encode())
+                        if len(rows) >= 65536 or size > MAX_COST_ARTIFACT_BYTES:
+                            return None, ()
+                        rows.append(
+                            {
+                                "id": identifier,
+                                "session_id": session,
+                                "data": json.loads(raw, parse_float=Decimal),
+                            }
+                        )
+                    return rows, tuple(contents)
+                finally:
+                    connection.set_progress_handler(None, 0)
+    except (OSError, sqlite3.Error, ValueError, RecursionError):
+        return None, ()
 
 
 def _supplemental_logs(agent_directory: Path):
@@ -540,6 +975,7 @@ def summarize_native_costs(
             )
     evidence = []
     pi_pricing = {}
+    seeded_entry_ids = frozenset()
     if harness == "pi" and plan.harness is not None:
         from tetrabench.harnesses import parse_native
 
@@ -549,6 +985,16 @@ def summarize_native_costs(
             pi_pricing[("harbor-endpoint", plan.harness.model.split("/", 1)[-1])] = (
                 False
             )
+        if plan.harness.session and plan.harness.session.load_trajectory:
+            seed = plan.harness.session.load_trajectory.removeprefix("resource:")
+            for resource in plan.harness.resources:
+                if resource.destination == seed:
+                    entries, _ = _events(resource.text.encode())
+                    seeded_entry_ids = frozenset(
+                        identifier
+                        for entry in entries
+                        if (identifier := _model(entry.get("id")))
+                    )
     for trial in artifacts.trials:
         steps = trial.result.step_results
         # Multistep trial agent_result may aggregate the steps. Process the steps
@@ -560,6 +1006,7 @@ def summarize_native_costs(
         )
         for directory, result in segments:
             streams = {}
+            remaining = MAX_COST_SOURCE_BYTES
             filename = {
                 "opencode": "opencode.txt",
                 "pi": "pi.txt",
@@ -571,13 +1018,27 @@ def summarize_native_costs(
                 data = _read_native(path)
                 if data is not None:
                     streams[logical_prefix + path.relative_to(root).as_posix()] = data
+                    remaining -= len(data)
             transcripts = frozenset(streams)
             for path in _supplemental_logs(directory / "agent"):
-                if sum(len(data) for data in streams.values()) >= 32 * 1024 * 1024:
+                if remaining <= 0:
                     break
-                data = _read_native(path)
+                data = _read_native(
+                    path, max_bytes=min(MAX_COST_ARTIFACT_BYTES, remaining)
+                )
                 if data is not None:
                     streams[logical_prefix + path.relative_to(root).as_posix()] = data
+                    remaining -= len(data)
+            messages, database_paths = None, ()
+            version = plan.harness.version if plan.harness else None
+            if harness == "opencode" and version == "1.18.30":
+                messages, database_paths = _opencode_messages(
+                    directory / "agent", max_bytes=remaining
+                )
+            execution = getattr(result, "agent_execution", None)
+            started_at = getattr(execution, "started_at", None)
+            if not isinstance(started_at, datetime) or started_at.tzinfo is None:
+                started_at = None
             evidence.extend(
                 native_cost_evidence(
                     harness=harness,
@@ -594,6 +1055,14 @@ def summarize_native_costs(
                     transcript_artifacts=transcripts,
                     auxiliary_requested_model=auxiliary_model,
                     pi_pricing=pi_pricing,
+                    harness_version=version,
+                    started_at=started_at,
+                    seeded_entry_ids=seeded_entry_ids,
+                    opencode_messages=messages,
+                    opencode_artifacts=tuple(
+                        logical_prefix + path.relative_to(root).as_posix()
+                        for path in database_paths
+                    ),
                     result_artifact=logical_prefix
                     + trial.result_path.relative_to(root).as_posix(),
                 )

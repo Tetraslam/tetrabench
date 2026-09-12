@@ -439,10 +439,20 @@ def build_modal_controller(
             S3ChildIdentitySource(store),
             environment_name=spec.environment_name,
         )
+        from tetrabench.runtime_auth import make_credential_context
+
         result = ControllerRuntime(
             store,
             volume,
-            HarborRunner(),
+            HarborRunner(
+                credential_context=make_credential_context(
+                    engine="modal",
+                    consumer_id=function_call_id,
+                    run_id=invocation.run_id,
+                    artifact_buckets=[invocation.storage.bucket],
+                    forbidden_runtime_roots=[Path(spec.controller_root)],
+                )
+            ),
             observer,
             controller_root=Path(spec.controller_root),
         ).run(invocation, function_call_id=function_call_id)

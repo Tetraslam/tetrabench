@@ -53,7 +53,7 @@ from tetrabench.rewards import (
 CONTROLLER_ROOT = Path("/tetrabench/controller")
 HARBOR_VERSION = "0.22.0"
 MODAL_VERSION = "1.5.4"
-_PROVIDER_ENVIRONMENT_PREFIXES = ("AWS_", "TIGRIS_")
+_PROVIDER_ENVIRONMENT_PREFIXES = ("AWS_", "TIGRIS_", "TETRABENCH_AUTH_")
 _LEGACY_PROVIDER_ENVIRONMENT_NAMES = frozenset(
     {"BOTO_CONFIG", "BOTOCORE_TCP_KEEPALIVE"}
 )
@@ -237,6 +237,10 @@ def _bounded_error_type(error: BaseException) -> str:
 
 
 def _failure_code(error: BaseException) -> str:
+    from tetrabench.auth_sessions import AuthError
+
+    if isinstance(error, AuthError):
+        return "native-auth-blocked"
     if isinstance(error, ChildCleanupError):
         return (
             "child-not-quiescent"
@@ -379,10 +383,12 @@ class ControllerRuntime:
 
         check_runtime("run")
         self._store.require_coordination_safe()
+        auth_environment = dict(os.environ)
         with credential_free_harbor_environment():
             return self._run_credential_free(
                 invocation,
                 function_call_id=function_call_id,
+                auth_environment=auth_environment,
             )
 
     def _run_credential_free(
@@ -390,6 +396,7 @@ class ControllerRuntime:
         invocation: ControllerInvocation,
         *,
         function_call_id: str,
+        auth_environment: dict[str, str] | None = None,
     ) -> ControllerRuntimeResult:
         attempt_id: str | None = None
         paths: AttemptPaths | None = None
@@ -423,7 +430,16 @@ class ControllerRuntime:
             from tetrabench.harnesses import validate_credentials
 
             preflight_request = self._admission.validate_invocation(invocation)
-            validate_credentials(preflight_request.plan.harness)
+            from tetrabench.runtime_auth import validate_runtime_auth_request
+
+            if (
+                preflight_request.plan.harness is None
+                or preflight_request.plan.harness.auth is None
+            ):
+                validate_credentials(preflight_request.plan.harness)
+            validate_runtime_auth_request(
+                preflight_request, environment=auth_environment
+            )
             phase = "admission-claim"
             decision = self._admission.claim(invocation, function_call_id)
             if not decision.admitted:
@@ -641,10 +657,19 @@ class ControllerRuntime:
                 detail="cancellation observed before run work",
             )
         except BaseException as error:
+            from tetrabench.auth_sessions import auth_failure_diagnostic
+
             error_code = _failure_code(error)
+            auth_diagnostic = auth_failure_diagnostic(error)
             print(
                 "tetrabench controller failed "
                 f"phase={phase} error={type(error).__name__} code={error_code}"
+                + (
+                    f" reason={auth_diagnostic['reason']}"
+                    f" action={auth_diagnostic['action']}"
+                    if auth_diagnostic
+                    else ""
+                )
                 + (f" detail={error}" if isinstance(error, ChildCleanupError) else ""),
                 flush=True,
             )
@@ -826,6 +851,15 @@ class ControllerRuntime:
         individual_files: tuple[Path, ...],
         directory: Path | None,
     ) -> tuple[ArtifactInventoryEntry, ...]:
+        from tetrabench.auth_retention import AuthRetentionError, outputs_blocked
+
+        if outputs_blocked(paths.root) and (
+            directory is not None
+            or any(path != paths.failure for path in individual_files)
+        ):
+            raise AuthRetentionError(
+                "native auth outputs are excluded from publication"
+            )
         inventory: list[ArtifactInventoryEntry] = []
         attempt_fd = _open_directory_no_follow(paths.root)
         try:
@@ -942,6 +976,9 @@ class ControllerRuntime:
         phase: str,
     ) -> None:
         try:
+            from tetrabench.auth_sessions import auth_failure_diagnostic
+
+            auth_diagnostic = auth_failure_diagnostic(error)
             _write_new(
                 paths.failure,
                 dumps_canonical_json(
@@ -952,24 +989,32 @@ class ControllerRuntime:
                         "phase": phase,
                         "run_id": invocation.run_id,
                         "schema_version": 1,
+                        **(
+                            {"auth_diagnostic": auth_diagnostic}
+                            if auth_diagnostic
+                            else {}
+                        ),
                     }
                 ),
             )
             self._volume.commit()
             self._volume.reload()
+            from tetrabench.auth_retention import outputs_blocked
+
+            blocked = outputs_blocked(paths.root)
             individual_files = tuple(
                 path
                 for path in (
-                    paths.controller_plan,
-                    paths.controller_result,
-                    paths.failure,
+                    (paths.failure,)
+                    if blocked
+                    else (paths.controller_plan, paths.controller_result, paths.failure)
                 )
                 if path.exists()
             )
             inventory = self._publish_artifacts(
                 paths,
                 individual_files=individual_files,
-                directory=paths.jobs if paths.jobs.exists() else None,
+                directory=paths.jobs if paths.jobs.exists() and not blocked else None,
             )
             self._store.publish_event(
                 AttemptEvent(

@@ -59,6 +59,7 @@ def resolve_plan(
     *,
     context: tuple[ResolvedContextFile, ...] | None = None,
     overrides: ConfigOverrides | None = None,
+    allow_online_auth: bool = False,
 ) -> ResolvedPlan:
     config = load_project_config(root, profile=profile, overrides=overrides)
     catalog = load_catalog(root, config.catalog_path)
@@ -68,6 +69,7 @@ def resolve_plan(
         section_name,
         tasks,
         context=(resolve_context(root, config.context) if context is None else context),
+        allow_online_auth=allow_online_auth,
     )
 
 
@@ -77,6 +79,7 @@ def resolved_plan_from_selection(
     tasks: tuple[CatalogTask, ...],
     *,
     context: tuple[ResolvedContextFile, ...],
+    allow_online_auth: bool = False,
 ) -> ResolvedPlan:
     """Build one plan from an already selected catalog and sealed context snapshot."""
     trials = tuple(
@@ -97,7 +100,10 @@ def resolved_plan_from_selection(
             raise ValueError(
                 "native harness paths must be sealed before plan resolution"
             )
-        harness["harness"] = seal_harness(config.harness, Path.cwd())
+        from tetrabench.auth_selection import resolve_harness_auth
+
+        selected = resolve_harness_auth(config.harness, allow_online=allow_online_auth)
+        harness["harness"] = seal_harness(selected, Path.cwd())
     return ResolvedPlan(
         schema_version=1,
         section=section_name,

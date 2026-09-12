@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
+from contextlib import AbstractContextManager, nullcontext
 from pathlib import Path
 from typing import Any, Literal, Protocol
 
@@ -9,8 +11,10 @@ from tetrabench.controller_runtime import AttemptPaths, HarborRunResult
 from tetrabench.costs import summarize_native_costs
 from tetrabench.harbor import ATTEMPT_LABEL, PLAN_LABEL, RUN_LABEL
 from tetrabench.harbor_api import Harbor022Api, NativeJobArtifacts
+from tetrabench.harness_config import ResolvedHarness
 from tetrabench.harnesses import compile_agent_config
 from tetrabench.records import RequestRecord
+from tetrabench.resources import materialize_resources
 from tetrabench.rewards import summarize_rewards
 
 
@@ -50,7 +54,7 @@ def compile_harbor_job(
     api: HarborApi,
     event_sink_key: str = "",
 ) -> Any:
-    """Compile one resolved request without interpreting model/provider names."""
+    """Reconstruct one resolved request's config without materializing resources."""
     expected_labels = {
         RUN_LABEL: request.run_id,
         ATTEMPT_LABEL: paths.root.name,
@@ -89,7 +93,9 @@ def compile_harbor_job(
         quiet=True,
         tasks=tasks,
         agents=[
-            compile_agent_config(plan.harness)
+            compile_agent_config(
+                plan.harness, resource_directory=paths.root / "harness-resources"
+            )
             if plan.harness is not None
             else api.agent_config(
                 name=plan.harbor.agent_name,
@@ -136,8 +142,17 @@ def _native_evidence(artifacts: NativeJobArtifacts) -> tuple[str, ...]:
 class HarborRunner:
     """Synchronous controller adapter for Harbor's asynchronous public API."""
 
-    def __init__(self, api: HarborApi | None = None) -> None:
+    def __init__(
+        self,
+        api: HarborApi | None = None,
+        *,
+        credential_context: Callable[
+            [ResolvedHarness, AttemptPaths], AbstractContextManager
+        ]
+        | None = None,
+    ) -> None:
         self._api = api or Harbor022Api()
+        self._credential_context = credential_context
 
     def validate_tasks(self, request: RequestRecord, context_root: Path) -> None:
         """Validate selected fixtures through Harbor's public Task model."""
@@ -163,7 +178,22 @@ class HarborRunner:
             event_sink_key=event_sink_key,
             api=self._api,
         )
-        result = self._api.execute(config)
+        harness = request.plan.harness
+        if harness is not None and harness.resources:
+            materialize_resources(harness.resources, paths.root / "harness-resources")
+        credentials = nullcontext()
+        if harness is not None and harness.auth is not None:
+            if self._credential_context is None:
+                from tetrabench.harness_agents import native_credential_hooks_available
+
+                if not native_credential_hooks_available():
+                    raise ValueError(
+                        "explicit auth requires the credential-session runtime hook"
+                    )
+            else:
+                credentials = self._credential_context(harness, paths)
+        with credentials:
+            result = self._api.execute(config)
         job_directory = paths.jobs / config.job_name
         artifacts = self._api.validate_native_artifacts(job_directory, result, config)
         summary = summarize_rewards(request.plan, paths.context, artifacts)

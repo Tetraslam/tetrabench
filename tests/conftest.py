@@ -4,6 +4,8 @@ import os
 
 import pytest
 
+pytest_plugins = ["native_consumer_support"]
+
 
 @pytest.fixture(autouse=True)
 def isolated_local_state(tmp_path, monkeypatch):

@@ -1,0 +1,18 @@
+{
+  "name": "tetrabench-native-consumers",
+  "private": true,
+  "version": "0.0.0",
+  "engines": {
+    "node": "24.21.0",
+    "npm": "11.19.0"
+  },
+  "dependencies": {
+    "@anthropic-ai/claude-code": "2.1.269",
+    "@anthropic-ai/claude-code-linux-x64": "2.1.269",
+    "@earendil-works/pi-coding-agent": "0.85.1",
+    "@openai/codex": "0.154.0",
+    "@openai/codex-linux-x64": "npm:@openai/codex@0.154.0-linux-x64",
+    "opencode-ai": "1.18.30",
+    "opencode-linux-x64": "1.18.30"
+  }
+}

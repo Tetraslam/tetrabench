@@ -54,16 +54,33 @@ existing catalog content. The catalog and its lock must be outside the fixture
 tree. A sibling advisory lock serializes tetrabench writers; arbitrary programs
 editing the catalog concurrently are outside that cooperative lock.
 
-`tetrabench plan SECTION [--profile PROFILE] [--engine docker|modal]` prints a
-secret-free plan and its digest. JSON mode emits the plan alone. An empty
-selection is valid but not runnable.
+`tetrabench plan SECTION [--profile PROFILE] [--engine docker|modal]
+[--harness FILE] [--online]` prints a secret-free plan and its digest. JSON mode
+emits the plan alone. An empty selection is valid but not runnable. A local OAuth
+profile resolves read-only; an S3-backed profile requires `--online`. Run preparation
+resolves the selected authority before sealing the immutable request.
 
 `tetrabench doctor` checks project configuration, catalog selection, section
-READMEs, and explicit context. It does not construct a provider client unless
-`--online` is present. Online mode calls only bucket and prefix read operations:
-`HeadBucket`, `GetBucketLocation`, and a list limited to one key. It reports
-whether the bucket topology is safe for mutable admission and never tests or
-claims write access.
+READMEs, explicit context, and auth setup. `--harness FILE` and `--engine` select
+what to diagnose; `--auth-profile NAME` asserts the selected login, not a billing
+override. The default performs no provider calls, login, refresh, or inference.
+
+`--online` checks storage via `HeadBucket`, `GetBucketLocation`, and a one-key list.
+With an explicit Modal harness it also checks named environment/Secret/Function
+metadata, not Secret values or a running child's credentials. Storage writes and
+remote runtime readiness remain unproven. `--online` alone does not authorize
+model-provider metadata access.
+
+Optional `doctor --harness FILE --check-provider` uses declared credentials for
+native metadata, with native refresh/private write-back if needed. It requires
+the matching host CLI but performs no login or inference and sends no paid prompt.
+Read `metadata_status` separately: bundled/cached metadata is not an attested
+provider GET, verified account, or universal entitlement. For Modal this checks
+from the submitter, not the remote controller; ordinary remote API-key checks do
+not require the model key on the submitter.
+Operational metadata failures exit 2; unsupported or unproven metadata alone may
+exit 0 and does not imply successful provider verification. Doctor configuration
+errors are canonical JSON on stderr with exit 2 when `--json` is selected.
 
 ## Engine configuration
 
@@ -150,18 +167,33 @@ still contain workload-emitted secrets and must be treated as private.
 
 ### Controlled harness configuration
 
+Earlier 0.3.0 candidates have live API-key and normal subscription evidence for
+all four harnesses, plus native OAuth refresh/fresh-controller consumption for
+Codex, OpenCode, and Pi. Separate recovered `de6ad37` runs passed Codex OAuth and
+preferred Claude 2.1.269 API-key/setup-token execution; historical 2.1.267 evidence
+is unchanged. Onboarding journeys are accepted within the recovery limits in
+[testing limits](#testing-and-limitations); this is not a fully verified or
+published 0.3.0 release.
+
 `tetrabench agents [NAME] [--json]` lists the registered harnesses. JSON includes
 package identity, supported native formats, option types/choices/defaults,
 credential variables, version restrictions, and limitations. Only the four
 listed adapters are registered; arbitrary agent import paths or shell arguments
 are not accepted.
 
-| Name | Native package | Native configuration | Supported options |
+| Name | Native package | Preferred pin (frozen 2026-09-11) | Native configuration |
 | --- | --- | --- | --- |
-| `opencode` | `opencode-ai` | JSON | `variant`, `title` |
-| `codex` | `@openai/codex` | TOML or JSON | `reasoning_effort`, `reasoning_summary`, `web_search` |
-| `claude-code` | `@anthropic-ai/claude-code` | JSON | `max_turns`, `reasoning_effort`, `max_budget_usd`, `fallback_model`, `append_system_prompt`, `allowed_tools`, `disallowed_tools`, `permission_mode`, `max_thinking_tokens` |
-| `pi` | `@earendil-works/pi-coding-agent` | JSON with `settings` and/or `models` objects | `thinking`, `model_api` |
+| `opencode` | `opencode-ai` | `1.18.30` | JSON or JSONC |
+| `codex` | `@openai/codex` | `0.154.0` | TOML or JSON |
+| `claude-code` | `@anthropic-ai/claude-code` | `2.1.269` | JSON |
+| `pi` | `@earendil-works/pi-coding-agent` | `0.85.1` | JSON with `settings` and/or `models` objects |
+
+Use `agents NAME --json` for the complete option types and conflicts. OpenCode
+exposes `variant`, `title`, `agent`, and `pure`; Codex exposes `reasoning_effort`,
+`reasoning_summary`, and `web_search`. Claude Code adds native output/thinking,
+autocompaction, tool, prompt, MCP, settings-source, and persistence controls.
+Pi adds native tool, extension/skill, prompt, offline/discovery, and session
+controls. An accepted option name alone does not prove a model supports it.
 
 Use `[harness]` in the project, `[profiles.NAME.harness]` in user configuration,
 or a separate TOML file passed to `run --harness FILE`. That separate file must
@@ -173,11 +205,14 @@ with legacy agent/model selection in the same configuration layer; a later
 legacy agent/model override clears the controlled harness.
 
 Required fields are `name`, exact `version = "x.y.z"`, and `model = "provider/model"`.
-Controlled OpenCode accepts only `1.18.29`, the verified native CLI pin. Its run
+Controlled OpenCode accepts `1.18.29` and `1.18.30`. Its run
 command uses `--auto`, not Harbor 0.22's unsupported
 `--dangerously-skip-permissions`. Other OpenCode pins, including `1.2.15`, fail
-validation before installation. `agents opencode --json` reports this restriction
-in `supported_versions`; the other adapters do not have that allowlist.
+validation before installation. `agents NAME --json` reports version restrictions;
+Claude accepts exactly 2.1.267 and 2.1.269 for these native controls. New
+controls, resource/session configuration, discovery policy, and explicit auth
+use the pins above; Claude's exact 2.1.267 contract remains accepted for explicit
+runs and historical records. `latest` is not accepted in a run configuration.
 OpenCode and Pi preserve nested model IDs; Codex and Claude Code reject them
 because their Harbor adapters truncate them. Pi requires version 0.74.0 or later
 and uses Harbor's native Earendil installer. During setup, tetrabench probes the
@@ -207,10 +242,18 @@ Optional fields:
   Code's default tiers/subagent model. OpenCode gets a fixed title to avoid title
   generation; conflicting explicit ancillary models are rejected. Codex role
   `config_file` entries, including roles inside native `profiles`, require
-  `"native"` because role files can override model selection. These referenced
-  files are not automatically bundled by `native_config`; provide them in the
-  task environment. Native allows the harness's ancillary choices. Neither policy
-  intercepts every possible model call or guarantees a universal billing cap.
+  `"native"` because role files can override model selection. At the baseline pin,
+  referenced files must be sealed as portable harness resources, not assumed
+  present on the remote host. Native allows the harness's ancillary choices.
+  Neither policy intercepts every possible model call or guarantees a universal
+  billing cap.
+- `auth`: an explicit billing mode and credential reference; see
+  [authentication](#explicit-authentication). Do not combine it with model-auth
+  selectors in `env` or native provider credential/endpoint overrides.
+- `resources`, `discovery`, `session`: run-level inputs and native lifecycle
+  controls, described [below](#resource-bundles-and-session-controls).
+- `capability_snapshot`: model/route/config-bound evidence written by
+  `models adopt`; do not hand-edit it.
 
 The [README OpenCode example](../README.md#project-configuration) is a complete
 portable file. Equivalent examples for the other adapters follow. Save each in
@@ -224,15 +267,16 @@ endpoint availability.
 ```toml
 [harness]
 name = "codex"
-version = "0.114.0"
+version = "0.154.0"
 model = "openai/gpt-5"
 
 [harness.options]
 reasoning_effort = "medium"
 web_search = "disabled"
 
-[harness.env]
-OPENAI_API_KEY = "${MODEL_API_KEY}"
+[harness.auth]
+mode = "api_key"
+reference = { kind = "env", name = "OPENAI_EVAL_KEY" }
 
 [harness.native_config]
 format = "toml"
@@ -244,14 +288,15 @@ text = 'model_context_window = 100000'
 ```toml
 [harness]
 name = "claude-code"
-version = "2.1.63"
+version = "2.1.269"
 model = "anthropic/claude-sonnet-4-6"
 
 [harness.options]
 max_turns = 3
 
-[harness.env]
-ANTHROPIC_API_KEY = "${MODEL_API_KEY}"
+[harness.auth]
+mode = "api_key"
+reference = { kind = "env", name = "ANTHROPIC_EVAL_KEY" }
 
 [harness.native_config]
 format = "json"
@@ -263,14 +308,15 @@ text = '{"permissions":{"allow":["Read"]}}'
 ```toml
 [harness]
 name = "pi"
-version = "0.74.0"
+version = "0.85.1"
 model = "openai/gpt-5"
 
 [harness.options]
 thinking = "high"
 
-[harness.env]
-OPENAI_API_KEY = "${MODEL_API_KEY}"
+[harness.auth]
+mode = "api_key"
+reference = { kind = "env", name = "PI_EVAL_KEY" }
 
 [harness.native_config]
 format = "json"
@@ -283,15 +329,16 @@ for Codex). Pi's wrapper writes its `settings` and `models` objects as native
 an explicit `model_api` option; this endpoint route cannot also supply a native
 `models` object. Use `agents pi --json` for accepted API names.
 
-Pi's native `models` configuration uses a bare agent environment variable name
-for `apiKey`, such as `"TOKEN"`, not `"$TOKEN"` or `"${TOKEN}"`. The outer
-`harness.env` still maps that name to `"${HOST_TOKEN}"`. For example, save this
+At Pi 0.85.1, native `models` configuration uses `"${TOKEN}"` for `apiKey`.
+Older supported Pi configurations used a bare `"TOKEN"`; do not carry that
+syntax into the current pin. The outer `harness.env` maps `TOKEN` to
+`"${HOST_TOKEN}"`. For example, save this
 portable custom-endpoint configuration as `pi-custom-run.toml`:
 
 ```toml
 [harness]
 name = "pi"
-version = "0.74.0"
+version = "0.85.1"
 model = "custom/model"
 
 [harness.env]
@@ -303,7 +350,7 @@ text = '''
 {"models":{"providers":{"custom":{
   "baseUrl":"https://example.test/v1",
   "api":"openai-responses",
-  "apiKey":"TOKEN",
+  "apiKey":"${TOKEN}",
   "models":[{"id":"model"}]
 }}}}
 '''
@@ -319,12 +366,525 @@ table. Direct `bearer_token` and `experimental_bearer_token` fields are rejected
 even if their values look like environment references. Use the native selectors
 instead of literal secrets or shell interpolation.
 
-Controlled runs use declared environment references, not ambient interactive
+Controlled runs use declared credential references, not ambient interactive
 logins or home configuration. Anonymous endpoints require explicit native
 endpoint configuration. Native adapters still own execution. The agent artifact
 `tetrabench-harness.json` records requested/observed CLI versions, options,
 credential references, and effective native configs with resolved credential
 values replaced by references. Treat the rest of the native artifacts as private.
+
+### Native context management
+
+Unspecified context controls retain the pinned native defaults. OpenCode's
+`compaction` configuration, Codex's native compaction/context settings, Claude
+Code's `autocompact`/`disable_auto_compact`, and Pi's `settings.compaction` and
+`settings.branchSummary` retain their own semantics. Claude's `autocompact`
+accepts `"auto"` or a native token window from 100k to 1M; it conflicts with
+`disable_auto_compact = true`.
+
+Server-side OpenAI compaction returns opaque state; client-managed text
+summarization and pruning are different mechanisms. Tetrabench does not replace
+them with a generic summarizer or infer opaque compaction from a setting named
+`compaction`. Config provenance records requested controls with
+`evidence = "configuration_only"`, an unobserved mechanism, and
+unknown compaction counts; that snapshot alone does not establish execution.
+The bounded live continuation evidence is listed [below](#testing-and-limitations).
+
+Codex retains Harbor's `--dangerously-bypass-approvals-and-sandbox` override.
+Changing native context settings does not restore Codex's own sandbox or approval
+prompts; the task's Docker/Modal boundary still matters.
+
+### Explicit authentication
+
+In `[harness.auth]`, `schema_version` defaults to `1`, `mode` selects billing, and
+`reference` selects authority. Authoring files support:
+
+| Mode | Harnesses | Reference | Operator owns |
+| --- | --- | --- | --- |
+| `api_key` | All four | `{ kind = "env", name = "SOURCE_VARIABLE" }` | Key provisioning and rotation |
+| `chatgpt_oauth` | Codex, OpenCode, Pi | `{ kind = "profile", profile = "NAME" }` | Separate native login per harness and private state backend |
+| `claude_setup_token` | Claude Code only | `{ kind = "env", name = "SOURCE_VARIABLE" }` | Long-lived subscription setup token and renewal |
+
+Profile references resolve once to an exact `native_session` before immutable
+sealing. Existing `{ kind = "native_session", profile = "NAME", generation = 1,
+binding = "BINDING" }` inputs remain supported and fixed; canonical run records
+never contain a floating profile reference.
+
+The four API-key examples are the [README OpenCode file](../README.md#project-configuration)
+and `codex-run.toml`, `claude-run.toml`, `pi-run.toml` above. Supply the named
+source variable through your secret manager in the local Docker process or
+controller Secret. Codex selects direct OpenAI billing; Claude Code selects
+direct Anthropic billing. OpenCode/Pi use the selected provider's native key
+variable (for example, `openrouter/...` selects OpenRouter). Unsupported provider
+contracts fail validation rather than guessing a variable.
+
+Use distinct run files or user profiles for API keys and subscriptions. Explicit
+auth rejects competing ambient credentials/config selectors and never silently
+falls back to another account. Unset competing selectors before login or a run.
+API keys and setup tokens need no OAuth lineage file or private `auth.toml`.
+Codex uses noninteractive native `login --with-api-key`, passing the referenced
+key over stdin into private ephemeral native state. This does not open a browser
+or persist a refreshable OAuth lineage. It also applies when authenticated model
+inspection needs a Codex API-key session.
+
+#### Local eval login
+
+API-key and existing Claude setup-token evals need no host agent CLI: Harbor
+installs it in the sandbox. Native login and model metadata inspection need the
+matching host installation. Install only the harness you use:
+
+| Harness | Host installation |
+| --- | --- |
+| Codex | `npm install --global @openai/codex@0.154.0` |
+| OpenCode | `npm install --global opencode-ai@1.18.30` |
+| Pi | `npm install --global @earendil-works/pi-coding-agent@0.85.1` |
+| Claude Code | `npm install --global @anthropic-ai/claude-code@2.1.269` |
+
+Pi requires Node **22.19.0 or later** and the installed package; Node 24.21.0 was
+used for verification, not imposed as the general minimum. Normal discovery
+uses `pi` on `PATH`; `--executable` selects Node, not the Pi script, and optional
+`--pi-module` selects that package's `dist/index.js`. For other harnesses,
+`--executable` selects the actual `codex`, `opencode`, or `claude` file. Explicit
+historical Claude 2.1.267 runs/inspection require that exact host version.
+
+From a project with a network-enabled agent task and `[harbor] concurrency = 1`:
+
+```console
+tetrabench auth login --profile codex-local --agent codex
+tetrabench auth status --profile codex-local
+```
+
+The helper checks the installed pin, creates private configuration/state, generates
+the binding, and asks the native client to obtain approval in an isolated eval
+home. It does not copy an interactive login. No manual `auth.toml`, generation, or
+runtime path is needed. Save `codex-oauth-run.toml`:
+
+```toml
+[harness]
+name = "codex"
+version = "0.154.0"
+model = "openai/gpt-6-astra"
+
+[harness.auth]
+mode = "chatgpt_oauth"
+reference = { kind = "profile", profile = "codex-local" }
+```
+
+```console
+tetrabench doctor --harness ./codex-oauth-run.toml
+tetrabench run example --harness ./codex-oauth-run.toml --run-id oauth-local
+tetrabench result oauth-local
+```
+
+`auth login/status/logout/reseed --profile` selects a **login profile** in private
+`auth.toml`; `run/plan/doctor/controller --profile` selects a **run profile** in
+`config.toml`. New logins require `--agent`; existing logins infer it. Local runs
+load the default `auth.toml`; for another path, set
+`TETRABENCH_AUTH_CONFIG_FILE` in the runtime environment. Auth commands also
+accept `--auth-config FILE`. Do not set both file and content sources.
+
+Ready logins require explicit `auth login --profile codex-local --replace`.
+`auth logout --profile codex-local`, then `auth login --profile codex-local`, uses
+the next generation. Future profile-based runs resolve it automatically; old
+sealed runs and capability snapshots stay unchanged. Replacement cannot rebind
+the harness/backend or take over a claimed session. Managed profiles omit a fixed
+generation; existing fixed-generation profiles remain fixed.
+
+Native device approval is the default; `--browser-auth` selects browser approval.
+`status` never refreshes or proves server acceptance. A failed first login may leave
+an uninitialized profile; inspect status after an ambiguous result rather than
+automatically repeating login. The lower-level `--harness FILE` auth form remains
+available but cannot be combined with `--profile`.
+
+For OpenCode or Pi, use `auth login --profile NAME --agent opencode` or
+`auth login --profile NAME --agent pi` with a distinct name, then a separate run
+file with that harness/pin and profile reference.
+OpenCode's ChatGPT route requires `openai/...`; Pi's requires `openai-codex/...`.
+Never clone one harness's tokens into another. Parallel trials sharing a lineage
+are rejected. Keep private auth state outside task, resource, output, and artifact
+trees; it is not portable project content.
+
+#### Claude subscription token
+
+Save `claude-subscription-run.toml` separately from the API-key configuration:
+
+```toml
+[harness]
+name = "claude-code"
+version = "2.1.269"
+model = "anthropic/claude-opus-5"
+
+[harness.auth]
+mode = "claude_setup_token"
+reference = { kind = "env", name = "CLAUDE_EVAL_TOKEN" }
+```
+
+For a network-enabled agent task, inject an existing setup token as
+`CLAUDE_EVAL_TOKEN` through your secret manager:
+
+```console
+tetrabench run example --harness ./claude-subscription-run.toml --run-id claude-local
+tetrabench result claude-local
+```
+
+To obtain a token, first install the matching host CLI above, then run
+`tetrabench auth login --harness ./claude-subscription-run.toml`. It invokes native
+`claude setup-token` in an isolated home; complete approval and store the result
+in your secret manager. Tetrabench does not save the setup token. You own
+renewal on expiry; an intermediary cannot refresh it as a Codex OAuth lineage.
+Claude subscription credentials are not supported in OpenCode, Codex, or Pi.
+
+#### Remote private auth state
+
+Use an existing private artifact bucket and a **different private auth bucket**.
+The CLI provisions neither buckets, keys, IAM policies, nor accounts. A local
+auth directory or a token snapshot in a Modal Secret cannot replace the durable
+remote auth backend. This journey uses a new `cloud-oauth` run profile, separate
+from any API-key controller.
+
+In `~/.config/tetrabench/config.toml`, add the following (keep only one top-level
+`schema_version` if the file already exists):
+
+```toml
+schema_version = 1
+
+[profiles.cloud-oauth.engine]
+kind = "modal"
+
+[profiles.cloud-oauth.engine.settings]
+app_name = "tetrabench-oauth"
+function_name = "controller"
+secret_name = "tetrabench-oauth-controller"
+
+[profiles.cloud-oauth.storage]
+provider = "tigris"
+bucket = "your-private-artifact-bucket"
+region = "auto"
+prefix = "tetrabench"
+```
+
+Save `~/.config/tetrabench/cloud-auth-backend.toml` outside the project, mode `0600`,
+with this root-level backend definition, not an `[auth]` or `[profiles]` wrapper:
+
+```toml
+kind = "s3"
+approved_private_backend = true
+trust_organization_admins = false
+access_key = { kind = "env", name = "TETRABENCH_AUTH_ACCESS_KEY_ID" }
+secret_key = { kind = "env", name = "TETRABENCH_AUTH_SECRET_ACCESS_KEY" }
+
+[storage]
+provider = "tigris"
+bucket = "your-private-auth-bucket"
+region = "auto"
+endpoint_url = "https://t3.storage.dev"
+prefix = "eval-auth"
+```
+
+Supply the dedicated auth variables through your secret manager. Install the
+host Codex pin, configure Modal access, and obtain a fresh remote-backed login:
+
+```console
+npm install --global @openai/codex@0.154.0
+uvx --from modal==1.5.4 modal setup
+tetrabench auth login --profile codex-cloud --agent codex \
+  --backend ~/.config/tetrabench/cloud-auth-backend.toml
+tetrabench auth status --profile codex-cloud --online
+```
+
+Save `codex-cloud-run.toml` in your project:
+
+```toml
+[harness]
+name = "codex"
+version = "0.154.0"
+model = "openai/gpt-6-astra"
+
+[harness.auth]
+mode = "chatgpt_oauth"
+reference = { kind = "profile", profile = "codex-cloud" }
+```
+
+Inject the controller's separate artifact credentials as `AWS_ACCESS_KEY_ID` and
+`AWS_SECRET_ACCESS_KEY`, plus the auth-backend variables, into the configure process.
+Preview first; `--write` prompts before creating the named Secret/environment:
+
+```console
+tetrabench controller configure --profile cloud-oauth --auth-profile codex-cloud \
+  --harness ./codex-cloud-run.toml --create-environment \
+  --env AWS_ACCESS_KEY_ID --env AWS_SECRET_ACCESS_KEY \
+  --env TETRABENCH_AUTH_ACCESS_KEY_ID --env TETRABENCH_AUTH_SECRET_ACCESS_KEY
+tetrabench controller configure --profile cloud-oauth --auth-profile codex-cloud \
+  --harness ./codex-cloud-run.toml --create-environment --write \
+  --env AWS_ACCESS_KEY_ID --env AWS_SECRET_ACCESS_KEY \
+  --env TETRABENCH_AUTH_ACCESS_KEY_ID --env TETRABENCH_AUTH_SECRET_ACCESS_KEY
+```
+
+From the submitter's artifact credential environment, with the auth-backend variables
+still supplied, deploy and run your network-enabled task (`[harbor] concurrency = 1`):
+
+```console
+tetrabench controller deploy --profile cloud-oauth
+tetrabench doctor --profile cloud-oauth --harness ./codex-cloud-run.toml --online
+tetrabench run example --profile cloud-oauth --harness ./codex-cloud-run.toml --wait --run-id oauth-cloud
+tetrabench result oauth-cloud
+```
+
+The helper transports only selected auth profiles and explicit env names. It
+omits the host runtime path; the actual controller selects its private runtime
+directory. Manual runtime paths or JSON transport are unnecessary. Explicit custom
+runtime paths remain supported but must be absolute, without `~` or env expansion.
+`approved_private_backend` records approval, not proof of privacy. Configure checks
+privacy before transfer, not login readiness. Auth storage never falls back to the
+artifact credential chain. Optional session credentials require their own explicit
+env references and `--env` selections. See [controller configuration](#controller-deployment)
+for updates and partial failures.
+
+The backend needs privacy-read permissions as well as scoped object access:
+
+- AWS: `GetBucketPublicAccessBlock`, `GetBucketPolicyStatus`, `GetBucketAcl`,
+  `GetBucketLocation`, scoped `GetObject`/`PutObject`, and KMS permissions when
+  selecting `kms_key_id`. All public-access blocks and owner-only ACLs are required.
+- Tigris: `GetBucketLocation`, `GetBucketPolicyStatus`, `GetBucketAcl`,
+  `GetObjectAcl`, and scoped `GetObject`/`PutObject`/`PutObjectAcl`. Unknown or
+  unsupported privacy metadata blocks transfer. Managed encryption alone does
+  not prove private access. The admission topology restrictions still apply.
+
+For a shared Tigris organization, `trust_organization_admins` defaults to `false`.
+Set it to `true` under the S3 backend only after explicitly approving that
+organization's administrators: it permits the native
+`https://groups.tigris.dev/org/admins` full-control ACL grant alongside the owner.
+That is not a public group; public and other unapproved grants remain rejected.
+This opt-in neither provisions a backend nor replaces its privacy checks.
+
+Native clients own token refresh. The session framework serializes each refresh
+lineage, requires private native write-back and proof that the previous consumer
+stopped, and leaves ambiguous claims blocked. There is no timeout takeover,
+parallel copying, or automatic reuse after uncertain refresh. Use a separate
+login for concurrent work. `auth reseed --profile NAME` requires a fresh native
+login and retained run/physical-stop evidence for a claimed predecessor; it does
+not stop compute for you. Managed profiles select the next generation, while fixed
+profiles must explicitly target it. Future authoring profile references resolve
+the new generation; old sealed runs never change. `auth logout --profile NAME` asks
+before removing that eval login (`--yes` for JSON); provider revocation is not
+implied.
+
+Normal deployed OAuth delivery passed for Codex, OpenCode, and Pi using fresh
+independent logins and the approved backend. Separate pinned-native refresh proofs
+changed both access and refresh credentials, persisted them, and verified their
+use by fresh actual Modal controllers, each with reward `1` and clean shutdown.
+This does not prove every refresh-failure recovery scenario. See the scoped backend
+and artifact evidence [below](#testing-and-limitations). Keep native logs private:
+excluding known credential files is not universal secret scrubbing.
+
+### Model inspection and adoption
+
+```console
+tetrabench models inspect --harness ./codex-run.toml --json
+# Explicitly permit use of the declared key for native metadata:
+tetrabench models inspect --harness ./codex-run.toml --allow-authenticated-read --json
+# Use a control/choice actually reported as supported:
+tetrabench models adopt --harness ./codex-run.toml --control effort --select high --allow-authenticated-read
+# Repeat with --write only after reviewing the preview.
+```
+
+Inspection automatically collects installed native metadata; users do not need
+to capture JSON or write a Python collector. The callable
+`collect_installed(config, base=...)` provides the same acquisition for API
+consumers. Metadata comes from OpenCode's provider interface, Codex's app-server
+`model/list`, Claude's supported-model interface, or Pi's model registry/runtime.
+Claude metadata uses exact CLI/SDK pairs: preferred 2.1.269 / 0.3.269 and historical
+2.1.267 / 0.3.267, distinct from the tetrabench package version. Old snapshots are
+not rewritten or reused for a different CLI pin.
+
+The matching CLI must be installed on the inspection host's `PATH` with required
+Node tooling. `--native-modules DIRECTORY` selects an existing `node_modules`
+tree; `--node PATH` selects Node. Inspection never installs an absent package.
+The source-only consumer installer in [Development](../README.md#development)
+is for tests, not an end-user prerequisite.
+
+Default inspection uses isolated home/cwd, sealed native config/resources, and
+Linux PID/network namespaces. It makes no inference request and reads no ambient
+auth store. It may copy native **model metadata caches**; `--no-native-cache`
+disables that reuse. Missing binaries, pin mismatches, or unavailable namespace
+support produce unavailable evidence rather than an unsafe fallback.
+
+`--refresh` permits public unauthenticated metadata reads for OpenCode/Pi; it does
+not authorize account access. For Codex/Claude, that CLI flag alone does not
+perform authenticated refresh. Add `--allow-authenticated-read` to `models inspect`
+or `models adopt` to acquire the file's explicit `harness.auth` reference and
+verify its native auth mode before collection. API keys and Claude setup tokens
+use the declared environment variable without an auth profile file. OAuth uses
+the matching private profile (`--auth-config FILE` selects it), a serialized
+claim, native refresh write-back, and private CLI operation evidence for recovery.
+No browser login starts implicitly, and authenticated collection does not copy
+global model caches. A missing key, profile, or matching native status is an error.
+
+This permission makes credentials available; it does not force an HTTP request.
+Native control metadata may still be bundled, cached, or heuristic, not a remote
+entitlement check. In inspection JSON, `capability.identity.auth_mode` is the configured
+mode; `authentication.observed.mode` records native status only when observed.
+`authentication.provided` does not prove server acceptance. Account verification,
+account-capability checks, and provider metadata fetches retain their explicit
+unverified/not-observed labels. Known credential literals are refused in output.
+Config that can execute plugins/hooks/helpers requires `--allow-config-execution`
+for offline inspection and is refused for authenticated collection. Session-bearing
+configs are also refused; use a separate metadata-only configuration. The callable
+API requires both `allow_authenticated_read=True` and an acquired `NativeRuntime`.
+
+Offline inspection accepts authoring profile references without reading authority.
+For a profile reference, `models adopt` requires `--allow-authenticated-read`, even
+for preview; adoption writes a concrete generation-bound `native_session` and
+capability snapshot. Login/replacement never rewrites that snapshot. Ordinary
+API-key or concrete-reference offline adoption is unchanged.
+
+`adopt` collects afresh, previews the change, and writes only with `--write`, after
+rechecking the source configuration and referenced resource bytes.
+Choose `--select NAME` or a supported numeric `--budget N`; native normalization
+requires `--accept-normalization`. It writes the actual option/native-config
+binding and a `capability_snapshot` tied to harness version, model, route, auth
+reference, and resulting config digest. Later config drift invalidates that
+snapshot. It does not silently clamp a choice or impose one effort enum across
+providers.
+
+Read each control's status and provenance. `unknown`, `unsupported`, and
+`unavailable` differ; a known native choice can still have an unknown endpoint or
+provider route. Adoption requires sufficient evidence. `inference_validated` is
+false for metadata inspection, and no all-model/all-provider execution guarantee
+is implied. A successful API-key eval does not validate every metadata choice or
+subscription entitlement.
+
+### Resource bundles and session controls
+
+At the current pins, `[[harness.resources]]` selects a UTF-8 file or directory
+relative to the declaring TOML. Tetrabench seals it separately from task bytes,
+with a destination, digest, and normalized mode. Limits are 128 files, 128 KiB per
+file, and 512 KiB total; symlinks, special files, unsupported binary types, and
+credential filenames are rejected. Supported referenced local native paths are
+also bundled; remote execution never depends on your host home paths.
+
+For example, create `rules.md` alongside this `opencode-resources.toml`:
+
+```toml
+[harness]
+name = "opencode"
+version = "1.18.30"
+model = "openai/gpt-5"
+discovery = "isolated"
+
+[harness.auth]
+mode = "api_key"
+reference = { kind = "env", name = "MODEL_API_KEY" }
+
+[[harness.resources]]
+source = "rules.md"
+destination = "prompts/rules.md"
+
+[harness.native_config]
+format = "json"
+text = '{"instructions":["resource:prompts/rules.md"]}'
+```
+
+Use `directory = true` for a selected tree, such as a `skills/example` bundle
+containing `SKILL.md`. `resource:DESTINATION` aliases are rewritten to sandbox
+resource paths. Native configs, instructions, roles, MCP config, and supported
+session seeds remain user-owned inputs; do not bundle an entire home. Never
+include auth stores, `.env`, private keys, or credential-bearing transcripts.
+Filename/content checks do not make arbitrary user code or transcripts safe to
+publish.
+
+`discovery = "native"` preserves native discovery; `"isolated"` suppresses the
+supported automatic discovery surfaces for OpenCode, Claude Code, and Pi. Codex
+rejects `"isolated"`; use its native config. Explicit resources still use each
+client's native config/user-data paths, independently of the private credential
+store. Native user-data ownership stays with OpenCode's XDG directories,
+Codex's `CODEX_HOME`, Claude's `CLAUDE_CONFIG_DIR`, and Pi's
+`PI_CODING_AGENT_DIR`; do not override these with global credential directories.
+This policy is distinct from `models inspect`'s network isolation.
+
+Under `[harness.session]`, `resume_trajectory = true` uses Harbor's trajectory lifecycle.
+`load_trajectory = "resource:sessions/FILE.jsonl"` must name a sealed seed;
+loading is supported for Codex, Claude Code, and Pi, not OpenCode. Pi requires
+native JSONL rather than ATIF. Use the selected harness's native session format
+and naming, not an invented common transcript. Resume conflicts with disabled
+session persistence. Pi's `session_id` also conflicts with Harbor continuation.
+These controls do not resume another run's auth session or prove fact retention
+across multiple compactions.
+
+### Testing and limitations
+
+The onboarding implementation and scoped journeys are accepted at `de6ad37`, with
+full local validation and passing CI. After reboot, 37 installed offline invocations
+passed on the exact surviving wheel with transport/terminal doubles, synthetic
+Docker execution, and graph-only deployment. Recovered live Codex 0.154.0 OAuth and
+Claude 2.1.269 API-key/setup-token runs each earned reward `1`; public result,
+verification, pull, stopped owners, and two empty sweeps passed.
+
+Both Claude runs preserved `anthropic/claude-opus-5[1m]` and reported context window
+1,000,000, but exercised only short inputs. The 107-object recovery scan found zero
+current-credential matches; the historical credential bank was lost. Original
+configure receipts and direct controller HOME/euid observations were not recovered,
+so remote success and offline setup tests do not prove that exact live setup audit
+or a new browser bootstrap. Changes remain unmerged and 0.3.0 unpublished.
+
+The source candidate passed API-key eval flows through the public CLI for
+OpenCode, Codex, Claude Code, and Pi. Subscription evidence combines the normal
+smokes at `55dc637` with installed Claude and renewal/successor proofs at `2d1ca9a`
+on 2026-09-11. Neither candidate is a published 0.3.0 artifact:
+
+| Harness | Normal subscription smoke | Refresh or renewal acceptance |
+| --- | --- | --- |
+| Codex 0.154.0 | Astra, reward `1` | Access and refresh changed, persisted; fresh Modal controller verified claimed/staged bytes and earned reward `1` |
+| OpenCode 1.18.30 | Astra, reward `1` | Access and refresh changed, persisted; fresh Modal controller verified claimed/staged bytes and earned reward `1` |
+| Pi 0.85.1 | Astra, reward `1` | Access and refresh changed, persisted; fresh Modal controller verified claimed/staged bytes and earned reward `1` |
+| Claude Code 2.1.267 | Setup token; exact `[1m]` applied, response `claude-opus-5`, reward `1` | Natural setup-token expiry/renewal is user-owned and was not observed |
+
+Owners stopped and two empty child sweeps passed; OAuth profiles returned
+ready/unowned after private write-back. Initial normal-smoke scans covered 91
+objects; Claude's later scan covered 35 objects/17 inventory entries. The final
+successor-phase scan covered 65 objects, including three binary objects, with zero
+known credential/private-auth-resource matches in literal, base64, and URL-encoded
+forms. Scans are phase-local: the last parent held current Codex/OpenCode values
+and initial/renewed Pi values, not a historical credential bank across parents.
+Unknown transformations and workload-emitted secrets are not covered. These
+short tasks establish neither subscription long-context retention nor actual
+subscription charges/quota; a native zero cost is not proof of free usage.
+
+The dedicated Tigris backend passed scoped S3SessionStore CAS/private ACL checks
+under the approved single-person organization-admin opt-in. A later auth-store-key
+HEAD against a known retained artifact returned 403 without reading its payload.
+`GetBucketPolicyStatus` still revealed an unrelated bucket's public/private bit
+despite explicit deny, an accepted metadata limitation. These probes do not prove
+general IAM isolation, effective encryption, or live AWS behavior; the public
+trust default remains false.
+
+Bounded continuation tests separately established:
+
+- Two Codex V2 compaction boundaries and standalone OpenAI opaque-state
+  checkpoints succeeded.
+- OpenCode crossed three text-summary boundaries and Pi crossed two, with fact
+  retention in those tests.
+- Claude crossed two native text boundaries and continued to grade `1`, but read
+  back its transcript in violation of the verification protocol. This does not
+  establish clean, within-protocol fact retention.
+
+Those continuation tests used reduced verification thresholds, not stock-window
+performance settings. Claude's `[1m]` is a native
+[extended-context model suffix](https://code.claude.com/docs/en/model-config#extended-context).
+Applied selection and catalog metadata prove neither entitlement nor context
+capacity; catalog omission does not prove server rejection. The live setup-token
+smoke preserved the requested `anthropic/claude-opus-5[1m]` selector and reported
+native usage `contextWindow = 1000000`. It did not exercise a million-token input
+or establish million-token retention or universal entitlement. Local error-handling
+tests do not establish natural setup-token expiry/renewal; no token-aging experiment
+is required. Hosted CI passed at `de6ad37`; scoped onboarding/live acceptance is
+recorded above. Final release review, merge, exact-release-artifact validation, and
+publication remain separate open work. The user accepted the observed native
+mechanism/continuation/transcript
+recovery for 0.3.0. Claude summary-only/clean within-protocol retention remains
+unproven; acceptance does not establish that the summaries retained the facts.
+Current blockers and retained provenance belong in the [project record](../IMPLEMENTATION_PLAN.md#native-fidelity-and-authentication-working-record).
+None of these tests guarantees all models, routes, or future native versions.
 
 ## Running an evaluation
 
@@ -379,7 +939,15 @@ subtotals, retains the raw reported subtotal in `reported_amount_usd`, and adds
 an unpriced-usage limitation. A wholly unpriced scope has `amount_usd = null`
 and unknown coverage. Explicit complete model pricing can distinguish a
 configured zero from Pi's default zero; it still does not establish provider
-billing. Pi's message stream also excludes compaction and branch-summary costs.
+billing. Pi's `message_end` stream alone excludes compaction and branch-summary
+costs; the cost reader supplements it with eligible native session/summary records.
+
+Known native OpenCode text-summary and Pi compaction/branch-summary costs enter
+the auxiliary subtotal when their native records are available. Matching stream,
+session/database, and Harbor aggregate records are alternatives, not additive
+charges. Imported or pre-run Pi entries are excluded. Unpriced zero stays unknown;
+coverage remains partial and does not include all opaque OpenAI compaction or
+background calls. Native/catalog-priced costs are not provider settlement.
 
 If Claude Code's raw result stream is unavailable, its Harbor `cost_usd`
 aggregate remains `harness_reported` with a limitation that the amount may be
@@ -426,14 +994,24 @@ requiring a source checkout. Successful deployment reports the wheel's SHA-256
 in human output and as `wheel_sha256` in JSON.
 `controller info` determines the exact environment where the named Secret must
 exist. That namespace includes the profile and package version. On first deploy,
-create the environment and Secret there, not in the default or an older
-version's environment. The [first-deploy commands](../README.md#detached-modal-runs)
-use Modal's native API to create the Secret from explicitly named process
-environment variables, without a secrets file or secret values in argv. Inject
-the controller credentials for that command, then use the submitter credentials
-for deployment and runs. Model runs also need their model API variables in the
-Secret. Tetrabench does not create credentials or automatically copy your local
-environment into the Secret.
+use `controller configure --profile NAME --env NAME ... --create-environment`
+for an offline preview. Add `--write` to confirm creation; JSON writes require
+`--yes`. Include `--harness FILE` for its credential names and repeat
+`--auth-profile NAME` for each selected remote OAuth login. All required artifact,
+auth-backend, and model env names must be explicitly selected; values are read only
+for the confirmed write. See the [API-key example](../README.md#detached-modal-runs)
+or [remote OAuth journey](#remote-private-auth-state).
+
+Configuration creates a Secret by default; `--update --write` uses Modal's merge
+update. Unrelated keys, including stale credentials, remain. Selected auth-profile
+JSON replaces that one variable, not every other Secret key. Prefer separate run
+profiles/Secrets for different billing modes. Configure does not deploy, remove
+stale keys, refresh running containers, or establish credential/runtime readiness.
+Run `controller deploy` separately. Environment creation and Secret write are
+separate operations; partial/unknown state is printed with `ok = false` and exit 2.
+Inspect that state before retrying. There is no application retry or rollback;
+the native SDK may retry transport with its idempotency key. Use one writer per
+Secret. No bucket, key, IAM, or account provisioning is performed.
 
 The deployed Function has zero retries, a 24-hour timeout, and the selected
 Volume. Submission calls it by name with canonical invocation bytes and their
@@ -624,6 +1202,15 @@ Harbor 0.22.0 and Modal 1.5.4. `run`/`submit`, controller deployment, and Modal
 `cancel`/`recover` reject an unsupported runtime before provider mutation.
 Execution preflight also precedes provider clients, image builds, and output
 reservation.
+
+If the active CLI uses another Python, reinstall with
+`uv tool install --python 3.12 tetrabench --reinstall`, or use the
+[hash-preserving local-wheel install](../README.md#development) for this checkout.
+The 0.3.0 diagnostics use fixed public messages and identify the installed version
+when available; they fall back to the unversioned install command when package
+metadata is absent. A diagnostic naming 0.3.0 does not prove that release is on
+PyPI. Do not change dependencies or bypass preflight to force an incompatible
+serialized controller to run.
 
 Read-only remote `result`, `status`, and `artifacts verify` do not invoke that
 execution guard, so it does not block inspecting an existing run under another

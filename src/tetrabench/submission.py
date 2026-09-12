@@ -209,6 +209,7 @@ def _prepare_submission_from_authority(
         section,
         tasks,
         context=resolved_context,
+        allow_online_auth=True,
     )
     from tetrabench.harnesses import validate_credential_configuration
 
