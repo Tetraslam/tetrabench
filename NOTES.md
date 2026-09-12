@@ -2272,3 +2272,40 @@ API-equivalent and `$0.04249612` provisional compute, not bills.
 This supersedes pending onboarding/2.1.269/CI status, not historical qualifications.
 Changes remain unmerged and 0.3.0 unpublished; implementation acceptance does not
 authorize immediate publication. No source behavior changed in this docs follow-up.
+
+## 2026-09-12: Version 0.3.0 published and publicly verified
+
+Provenance: explicit user release authorization; PR 35 merge `dca68b4`; Codex's
+valid Oracle online-doctor finding fixed in PR 36 (`a5a33fe`), with completed clean
+automatic review, 2,677 local non-native tests, and passing reviewed/post-merge CI.
+Release workflow `34667440222` built artifact `10290025002` once. Its unchanged
+wheel SHA-256 is `2a92d33212a72f724fd52c4ad5f2159029da9a0e46254b255afc7767b5b7fbc8`;
+sdist SHA-256 is `a6bc3ddc99c2d144eca31bf4344ae09744a136ed5d4e3ad0dcd17b4227082146`.
+
+The exact wheel passed isolated Docker Oracle, all 37 installed synthetic journeys,
+and public-CLI configured/deployed remote Oracle and Claude 2.1.269 API-key runs.
+Both remote runs earned reward one on identical six-file inputs; public deep
+verification and pulls rehashed all artifacts. Owners stopped and two child sweeps
+were empty. The private driver initially checked Oracle owner completion too soon
+after terminal publication; cleanup confirmed stop, and continuation verified the
+same Oracle without resubmitting or redeploying. No model attempt preceded that
+correction. The 56-object scan found zero current-process credential matches;
+no binary object occurred in this release namespace, and universal scrubbing is
+not claimed. The first parent bank was not retained across the observation fix.
+
+After those proofs, normal `pypi` environment approval released the unchanged
+artifact through GitHub OIDC. PyPI downloads matched both hashes. A fresh isolated
+public `uv tool install --python 3.12 tetrabench==0.3.0` passed dependency checks,
+MIT/Python metadata, exact public wheel resolution, local Oracle reward one, and
+fresh-process result/status lookup. Public dependency resolution may select newer
+compatible transitive packages than the embedded controller lock.
+
+Added native model cost was about $0.0525465; release compute was $0.00488663,
+provisional. Cumulative tracked totals are approximately $0.65142375 API-equivalent
+and $0.04738275 compute, not subscription bills or reconciled invoices. The fresh
+release deployment/Secret/Volume and private evidence are retained; no run-owned
+compute remains. No login, forced renewal, or compaction experiment was repeated.
+Reports are durable under `~/.local/share/tetrabench-release-030-final/`, including
+`FINAL_REPORT.json`, `journeys/REPORT.json`, and `public/REPORT.json`.
+
+Generated with [OpenCode](https://opencode.ai) (model: openai/gpt-6-astra).

@@ -3,13 +3,25 @@
 ## Status
 
 - Project state: P0 through P6 are complete for their local/static contracts. Live Tigris/Modal evidence includes cancellation, forced controller interruption/recovery, and the E-046 Single-region `iad` cutover. Scoped auth-backend CAS/privacy evidence is recorded below; general provider IAM/privacy/encryption guarantees, AWS behavior, and true provider preemption remain `unproven`.
-- Published baseline: Tetrabench 0.2.0 is published on PyPI. PR 33 merged with passing CI; the unchanged GitHub release artifacts passed installed local/Modal Oracle and controlled Astra proofs before protected publication. Public installation and artifact hashes were independently verified.
-- Current state: the five onboarding improvements and scoped public journeys are implemented and accepted at `de6ad37`, with green CI and recovered live proofs below. The changes are not merged and 0.3.0 is unpublished; implementation acceptance does not initiate publication. Final release review and exact-release-artifact/public-install gates remain separate. The user's acceptance of observed Claude 2.1.267 continuation/recovery stands; summary-only retention remains unproven. Future eval choice belongs to the user.
+- Published baseline: Tetrabench 0.3.0 is published on PyPI from `a5a33fe` after PR 35 and the reviewed Oracle online-doctor correction in PR 36. Release workflow `34667440222` passed; unchanged GitHub artifacts passed installed local/remote proofs before protected publication, and public installation/hash verification passed.
+- Current state: onboarding and 0.3.0 release gates are complete. The user's acceptance of observed Claude 2.1.267 continuation/recovery stands; summary-only retention remains unproven. Prior source-candidate auth/renewal evidence and recovery limitations below are not relabeled as new release-artifact experiments. Future eval choice belongs to the user.
 - Task-catalog gate: E-132's corrected-byte local/detached execution and audit gates and E-143's exact-four calibration all pass. `authority-fencing` is admitted in `benchmarks/catalog.toml`; later systems and GitHub-workflow tasks remain absent pending their own complete gates.
 - Authoring UX: D-127 is merged through PR 26 with focused local and real-Docker evidence. It creates user-owned starter projects and tasks independently of the repository catalog.
 - Canonical record updated: 2026-09-12.
 
 ### Onboarding candidate working record
+
+Release evidence: artifact `10290025002`; wheel SHA-256
+`2a92d33212a72f724fd52c4ad5f2159029da9a0e46254b255afc7767b5b7fbc8`;
+sdist SHA-256 `a6bc3ddc99c2d144eca31bf4344ae09744a136ed5d4e3ad0dcd17b4227082146`.
+Installed local Oracle and 37 synthetic journeys passed. Remote Oracle and Claude
+2.1.269 API-key runs earned reward one with identical six-file inputs, public
+verify/pull, stopped owners, and two empty sweeps. The 56-object release scan found
+zero current-credential matches. A private-driver observation race was corrected
+without redeploying or repeating Oracle/model work. Added model cost was about
+`$0.0525465`; observed compute was `$0.00488663`, provisional. Cumulative tracked
+totals are about `$0.65142375` API-equivalent and `$0.04738275` compute, not invoices.
+Durable release/public-install reports: `~/.local/share/tetrabench-release-030-final/`.
 
 | Boundary | Contract |
 | --- | --- |

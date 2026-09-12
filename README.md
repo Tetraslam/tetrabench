@@ -42,12 +42,13 @@ The installed CLI works outside its source checkout. For a development build,
 install a local wheel instead (see [Development](#development)).
 These docs describe this checkout; features absent from your installed release
 require that local build, not an unpublished version from PyPI.
-The 0.3.0 candidate passed API-key and normal subscription evals for all four
+Version 0.3.0 is published on PyPI. Its source passed API-key and normal subscription evals for all four
 harnesses, plus actual native OAuth refresh and fresh-controller consumption for
 Codex, OpenCode, and Pi. The onboarding implementation passed local validation,
 installed offline journeys, and scoped live Codex OAuth and Claude 2.1.269 API-key/
-setup-token runs. CI passed at `de6ad37`. Recovery evidence has the limits below;
-these changes are not yet merged or published as a 0.3.0 release. See
+setup-token runs. The unchanged GitHub release artifacts passed installed Docker
+Oracle, 37 offline onboarding invocations, and remote Oracle/Claude API-key proofs
+before protected publication. Public installation and hashes were verified. See
 [testing limits](docs/cli-reference.md#testing-and-limitations) for
 the source-candidate evidence, separate from published-release proofs.
 

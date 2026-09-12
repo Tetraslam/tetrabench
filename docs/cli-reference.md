@@ -825,7 +825,8 @@ Both Claude runs preserved `anthropic/claude-opus-5[1m]` and reported context wi
 current-credential matches; the historical credential bank was lost. Original
 configure receipts and direct controller HOME/euid observations were not recovered,
 so remote success and offline setup tests do not prove that exact live setup audit
-or a new browser bootstrap. Changes remain unmerged and 0.3.0 unpublished.
+or a new browser bootstrap. Version 0.3.0 is published; those recovery limitations
+remain unchanged.
 
 The source candidate passed API-key eval flows through the public CLI for
 OpenCode, Codex, Claude Code, and Pi. Subscription evidence combines the normal
@@ -878,8 +879,13 @@ native usage `contextWindow = 1000000`. It did not exercise a million-token inpu
 or establish million-token retention or universal entitlement. Local error-handling
 tests do not establish natural setup-token expiry/renewal; no token-aging experiment
 is required. Hosted CI passed at `de6ad37`; scoped onboarding/live acceptance is
-recorded above. Final release review, merge, exact-release-artifact validation, and
-publication remain separate open work. The user accepted the observed native
+recorded above. The unchanged GitHub-built 0.3.0 distributions passed installed
+Docker Oracle, 37 offline onboarding invocations, and remote Oracle/Claude 2.1.269
+API-key proofs before protected publication. Public installation and artifact
+hashes matched. Both remote runs earned reward one on identical task bytes, passed
+deep verification/pull, and ended with stopped owners and two empty sweeps. The
+56-object release scan found no current-credential matches; it is not universal
+scrubbing or a repeat of subscription/compaction proofs. The user accepted the observed native
 mechanism/continuation/transcript
 recovery for 0.3.0. Claude summary-only/clean within-protocol retention remains
 unproven; acceptance does not establish that the summaries retained the facts.
